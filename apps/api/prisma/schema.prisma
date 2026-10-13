@@ -1,0 +1,13 @@
+// Prisma schema for the Operations App API.
+// Phase 1 contains only the datasource and generator. Models are added in Phase 2.
+// The connection URL is supplied by prisma.config.ts (Prisma 7), not by this file.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}

@@ -1,0 +1,7 @@
+{
+  "extends": ["expo/tsconfig.base", "@ops/config/tsconfig/strict.json"],
+  "compilerOptions": {
+    "types": ["jest"]
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}

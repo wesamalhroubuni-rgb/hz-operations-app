@@ -1,0 +1,112 @@
+.card {
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.heading {
+  margin: 0 0 1rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.status {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.dot {
+  flex: none;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-top: 0.4rem;
+  border-radius: 50%;
+}
+
+.pending {
+  background: var(--text-muted);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.good {
+  background: var(--good);
+}
+
+.warning {
+  background: var(--warning);
+}
+
+.bad {
+  background: var(--bad);
+}
+
+.title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.detail {
+  margin: 0.125rem 0 0;
+  color: var(--text-muted);
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.url {
+  min-width: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.button {
+  padding: 0.5rem 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--text-muted);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pending {
+    animation: none;
+  }
+}

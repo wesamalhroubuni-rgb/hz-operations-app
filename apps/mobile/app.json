@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Operations App",
+    "slug": "operations-app",
+    "version": "0.1.0",
+    "scheme": "operationsapp",
+    "platforms": ["ios", "android"],
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.kaneri.operations"
+    },
+    "android": {
+      "package": "ai.kaneri.operations",
+      "predictiveBackGestureEnabled": false
+    }
+  }
+}

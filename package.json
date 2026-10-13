@@ -1,0 +1,29 @@
+{
+  "name": "operations-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Operations App by Kaneri.ai: workers log work from their phones, managers monitor it, an AI layer assists.",
+  "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f postgres"
+  },
+  "prettier": "@ops/config/prettier.config.mjs",
+  "devDependencies": {
+    "@ops/config": "workspace:*",
+    "prettier": "^3.9.10",
+    "turbo": "^2.11.7",
+    "typescript": "~6.0.3"
+  }
+}

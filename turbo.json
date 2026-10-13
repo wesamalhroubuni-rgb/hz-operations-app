@@ -1,0 +1,35 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "globalDependencies": [".env"],
+  "globalPassThroughEnv": [
+    "DATABASE_URL",
+    "DATABASE_CONNECT_TIMEOUT_MS",
+    "API_HOST",
+    "API_PORT",
+    "CORS_ORIGINS",
+    "LOG_LEVEL",
+    "WEB_PORT",
+    "NEXT_PUBLIC_API_URL",
+    "EXPO_PUBLIC_API_URL"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+    },
+    "dev": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "dependsOn": ["^build"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"]
+    },
+    "test": {
+      "dependsOn": ["^build"]
+    }
+  }
+}

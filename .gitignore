@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Tooling caches
+.turbo/
+coverage/
+
+# Expo / React Native
+.expo/
+web-build/
+expo-env.d.ts
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Prisma generated client
+apps/api/src/generated/
+
+# Environment files (only .env.example is committed)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Local Claude Code settings
+.claude/settings.local.json

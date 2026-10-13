@@ -1,0 +1,10 @@
+node_modules
+dist
+.next
+.expo
+.turbo
+coverage
+pnpm-lock.yaml
+apps/api/src/generated
+next-env.d.ts
+expo-env.d.ts
