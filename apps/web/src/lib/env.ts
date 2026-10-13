@@ -9,14 +9,24 @@ import { z } from 'zod';
  */
 const apiUrlSchema = z.url({ protocol: /^https?$/ });
 
+/** Shown when NEXT_PUBLIC_BRAND_NAME is not set. Deliberately not a client's name. */
+const DEFAULT_BRAND_NAME = 'Operations';
+
 function readUrl(value: string | undefined): string | null {
   const parsed = apiUrlSchema.safeParse(value?.trim());
   return parsed.success ? parsed.data.replace(/\/+$/, '') : null;
 }
 
+function readText(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : fallback;
+}
+
 export const env = {
   /** Base URL of the API without a trailing slash, or null when it is missing or invalid. */
   apiUrl: readUrl(process.env.NEXT_PUBLIC_API_URL),
+  /** Name of the client's product this deployment is branded as. */
+  brandName: readText(process.env.NEXT_PUBLIC_BRAND_NAME, DEFAULT_BRAND_NAME),
 } as const;
 
 export const MISSING_API_URL_MESSAGE =

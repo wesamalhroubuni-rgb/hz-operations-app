@@ -2,7 +2,10 @@
   "extends": "@ops/config/tsconfig/library.json",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "dist"
+    "outDir": "dist",
+    // DOM is included only for the types of fetch, AbortController and timers, which exist in
+    // Node, browsers and React Native alike. Do not use any other DOM API in this package.
+    "lib": ["ES2022", "DOM"]
   },
   "include": ["src"]
 }

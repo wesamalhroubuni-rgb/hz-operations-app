@@ -1,0 +1,180 @@
+import { z } from 'zod';
+import type { ApiResult, ApiTransport } from '../api-client/client.js';
+import {
+  paginatedSchema,
+  paginationQuerySchema,
+  sortQuerySchema,
+  type Paginated,
+} from '../common/pagination.js';
+import { idSchema, isoDateTimeSchema, queryBooleanSchema } from '../common/primitives.js';
+import { customFieldValuesInputSchema, customFieldValuesSchema } from './custom-fields.js';
+import { workLogSourceSchema, workLogStatusSchema } from './enums.js';
+import {
+  AT_LEAST_ONE_FIELD,
+  atLeastOneField,
+  longTextSchema,
+  nullableIsoDateTimeSchema,
+  type ListQueryParams,
+} from './shared.js';
+import { latitudeSchema, longitudeSchema } from './sites.js';
+
+/**
+ * How far ahead of the server clock `occurredAt` may be. Work happens in the past; the margin
+ * only absorbs a phone clock that runs fast.
+ */
+export const WORK_LOG_MAX_FUTURE_MS = 60 * 60 * 1000;
+
+/** GPS position of a work log. Latitude and longitude always come together. */
+export const workLogLocationSchema = z.strictObject({
+  latitude: latitudeSchema,
+  longitude: longitudeSchema,
+  /** Accuracy radius in metres. */
+  accuracy: z.number().min(0).nullable().optional(),
+});
+export type WorkLogLocationInput = z.infer<typeof workLogLocationSchema>;
+
+/**
+ * A worker's entry. `occurredAt` is when the work happened, `createdAt` when the server stored
+ * it. `clientId` is generated on the device and makes creation idempotent.
+ */
+export const workLogSchema = z.object({
+  id: idSchema,
+  organizationId: idSchema,
+  clientId: idSchema,
+  authorId: idSchema,
+  occurredAt: isoDateTimeSchema,
+  taskId: idSchema.nullable(),
+  siteId: idSchema.nullable(),
+  teamId: idSchema.nullable(),
+  logTypeId: idSchema.nullable(),
+  /** Version of the log type the custom fields were validated against. */
+  logTypeVersion: z.number().int().nullable(),
+  text: z.string().nullable(),
+  customFields: customFieldValuesSchema,
+  location: z
+    .object({
+      latitude: z.number(),
+      longitude: z.number(),
+      accuracy: z.number().nullable(),
+    })
+    .nullable(),
+  status: workLogStatusSchema,
+  source: workLogSourceSchema,
+  /** Reserved for AI-derived data. Always null today. */
+  aiMetadata: z.record(z.string(), z.unknown()).nullable(),
+  createdAt: isoDateTimeSchema,
+  updatedAt: isoDateTimeSchema,
+  archivedAt: nullableIsoDateTimeSchema,
+});
+export type WorkLog = z.infer<typeof workLogSchema>;
+
+/**
+ * `clientId` is a UUID generated on the device: sending the same one again returns the log that
+ * already exists (HTTP 200 instead of 201) and changes nothing. `authorId` defaults to the
+ * acting user. `customFields` is validated against the log type; without a log type it must be
+ * empty.
+ */
+export const createWorkLogSchema = z.strictObject({
+  clientId: idSchema,
+  authorId: idSchema.optional(),
+  occurredAt: isoDateTimeSchema,
+  taskId: idSchema.nullable().optional(),
+  siteId: idSchema.nullable().optional(),
+  teamId: idSchema.nullable().optional(),
+  logTypeId: idSchema.nullable().optional(),
+  text: longTextSchema.nullable().optional(),
+  customFields: customFieldValuesInputSchema.default({}),
+  location: workLogLocationSchema.nullable().optional(),
+  status: workLogStatusSchema.default('submitted'),
+  source: workLogSourceSchema.default('manual'),
+  /** Reserved for the AI phases; only null is accepted today. */
+  aiMetadata: z.null().optional(),
+});
+export type CreateWorkLog = z.infer<typeof createWorkLogSchema>;
+export type CreateWorkLogInput = z.input<typeof createWorkLogSchema>;
+
+/**
+ * A field left out is unchanged; `null` clears it. When `logTypeId` or `customFields` is sent,
+ * the resulting custom fields are validated again against the current log type definition.
+ */
+export const updateWorkLogSchema = z
+  .strictObject({
+    occurredAt: isoDateTimeSchema.optional(),
+    taskId: idSchema.nullable().optional(),
+    siteId: idSchema.nullable().optional(),
+    teamId: idSchema.nullable().optional(),
+    logTypeId: idSchema.nullable().optional(),
+    text: longTextSchema.nullable().optional(),
+    customFields: customFieldValuesInputSchema.optional(),
+    location: workLogLocationSchema.nullable().optional(),
+  })
+  .refine(atLeastOneField, AT_LEAST_ONE_FIELD);
+export type UpdateWorkLog = z.infer<typeof updateWorkLogSchema>;
+
+export const changeWorkLogStatusSchema = z.strictObject({ status: workLogStatusSchema });
+export type ChangeWorkLogStatus = z.infer<typeof changeWorkLogStatusSchema>;
+
+export const WORK_LOG_SORT_FIELDS = ['occurredAt', 'createdAt'] as const;
+
+/** `occurredFrom` is inclusive, `occurredTo` is exclusive. */
+export const listWorkLogsQuerySchema = paginationQuerySchema.extend({
+  sort: sortQuerySchema(WORK_LOG_SORT_FIELDS, { field: 'occurredAt', direction: 'desc' }),
+  authorId: idSchema.optional(),
+  siteId: idSchema.optional(),
+  teamId: idSchema.optional(),
+  taskId: idSchema.optional(),
+  logTypeId: idSchema.optional(),
+  status: workLogStatusSchema.optional(),
+  source: workLogSourceSchema.optional(),
+  occurredFrom: isoDateTimeSchema.optional(),
+  occurredTo: isoDateTimeSchema.optional(),
+  includeArchived: queryBooleanSchema.default(false),
+});
+export type ListWorkLogsQuery = z.infer<typeof listWorkLogsQuerySchema>;
+
+export const workLogListSchema = paginatedSchema(workLogSchema);
+
+export function workLogsEndpoints(transport: ApiTransport) {
+  return {
+    list(
+      query: ListQueryParams<typeof listWorkLogsQuerySchema> = {},
+    ): Promise<ApiResult<Paginated<WorkLog>>> {
+      return transport.request({ path: '/work-logs', query, schema: workLogListSchema });
+    },
+    get(id: string): Promise<ApiResult<WorkLog>> {
+      return transport.request({ path: `/work-logs/${id}`, schema: workLogSchema });
+    },
+    /** Resolves with status 201 for a new log and 200 when the `clientId` already existed. */
+    create(body: CreateWorkLogInput): Promise<ApiResult<WorkLog>> {
+      return transport.request({
+        method: 'POST',
+        path: '/work-logs',
+        body,
+        schema: workLogSchema,
+      });
+    },
+    update(id: string, body: UpdateWorkLog): Promise<ApiResult<WorkLog>> {
+      return transport.request({
+        method: 'PATCH',
+        path: `/work-logs/${id}`,
+        body,
+        schema: workLogSchema,
+      });
+    },
+    changeStatus(id: string, body: ChangeWorkLogStatus): Promise<ApiResult<WorkLog>> {
+      return transport.request({
+        method: 'PATCH',
+        path: `/work-logs/${id}/status`,
+        body,
+        schema: workLogSchema,
+      });
+    },
+    archive(id: string): Promise<ApiResult<WorkLog>> {
+      return transport.request({
+        method: 'POST',
+        path: `/work-logs/${id}/archive`,
+        schema: workLogSchema,
+      });
+    },
+  };
+}

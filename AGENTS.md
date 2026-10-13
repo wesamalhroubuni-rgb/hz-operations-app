@@ -1,7 +1,7 @@
 # AGENTS.md
 
-Rules for AI agents working on the Operations App monorepo. `CLAUDE.md` imports this file, so it
-is loaded into every session. Keep it short and true.
+Rules for AI agents working on the HZ monorepo (folder `Operations_App`, packages `@ops/*`).
+`CLAUDE.md` imports this file, so it is loaded into every session. Keep it short and true.
 
 ## Working directory
 
@@ -22,11 +22,19 @@ Decisions are recorded in [docs/decisions/](docs/decisions/README.md). Human set
 
 ## What this project is
 
-Workers log their work from their phones (text, photos, location, later voice). Supervisors and
-managers monitor it on a web dashboard. A later AI layer summarises, flags anomalies, and proposes
-actions that a human approves. Built by Kaneri.ai. Roles: worker, supervisor, manager, admin. Users
-see only the data their role and scope (team/site) allow, and the AI layer is bound by the same
-rule.
+**HZ** is the client's product; Kaneri.ai builds and powers it. Workers log their work from their
+phones (text, photos, location, later voice). Supervisors and managers monitor it on a web
+dashboard. A later AI layer summarises, flags anomalies, and proposes actions that a human
+approves. Roles: worker, supervisor, manager, admin. Users see only the data their role and scope
+(sites and teams, through memberships) allow, and the AI layer is bound by the same rule.
+
+Naming: never hard-code a client name. The name shown in the apps comes from
+`NEXT_PUBLIC_BRAND_NAME` / `EXPO_PUBLIC_BRAND_NAME` through each app's brand module. "Operations"
+stays as the technical name (folder, `@ops/*`, `src/operations`, database `operations_app`).
+
+State on 2026-10-13: the backend core exists (data model, 38 API paths, audit log, outbox, scope
+resolution). **There is no sign-in and no permission enforcement** (Phase 3). The acting user comes
+from a TEMPORARY development header; see Gotchas.
 
 ## Engineering principles
 
@@ -39,9 +47,11 @@ rule.
 - Automated actions need clear error handling, logging, and traceability.
 - Add or update tests when behaviour changes.
 - Recommend one option. Do not list unranked alternatives.
-- Reusable platform components (auth, permissions, notifications, audit log, AI layer,
-  configuration) live in self-contained modules with no Operations-specific imports, so they can be
-  extracted into shared Kaneri packages later. See [ARCHITECTURE.md](ARCHITECTURE.md).
+- Reusable platform components (request context, HTTP conventions, audit log, outbox, auth,
+  permissions, notifications, AI layer, configuration) live in self-contained modules with no
+  Operations-specific imports, so they can be extracted into shared Kaneri packages later. In the
+  API that is `src/platform`; `src/operations` may import it, never the reverse (ESLint enforces
+  it). See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Before a substantial feature, state
 
@@ -81,17 +91,24 @@ not what was intended.
 All from the repo root. Package names: `@ops/api`, `@ops/web`, `@ops/mobile`, `@ops/shared`,
 `@ops/config`.
 
-| Task                    | Command                                                               |
-| ----------------------- | --------------------------------------------------------------------- |
-| Install                 | `pnpm install`                                                        |
-| Start / stop PostgreSQL | `pnpm db:up` / `pnpm db:down` (logs: `pnpm db:logs`)                  |
-| Run everything          | `pnpm dev`                                                            |
-| Run one app             | `pnpm --filter @ops/api dev` (same for `@ops/web`, `@ops/mobile`)     |
-| Checks                  | `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`              |
-| Formatting              | `pnpm format` (writes), `pnpm format:check`                           |
-| Prisma                  | `pnpm --filter @ops/api db:migrate` (also `db:generate`, `db:studio`) |
+| Task                    | Command                                                                                |
+| ----------------------- | -------------------------------------------------------------------------------------- |
+| Install                 | `pnpm install`                                                                         |
+| Start / stop PostgreSQL | `pnpm db:up` / `pnpm db:down` (logs: `pnpm db:logs`)                                   |
+| Run everything          | `pnpm dev`                                                                             |
+| Run one app             | `pnpm --filter @ops/api dev` (same for `@ops/web`, `@ops/mobile`)                      |
+| Checks                  | `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`                               |
+| Integration tests       | `pnpm test:integration` (needs PostgreSQL and `DATABASE_URL_TEST`; not in `pnpm test`) |
+| Formatting              | `pnpm format` (writes), `pnpm format:check`                                            |
+| Migrations              | `pnpm db:migrate` (`prisma migrate dev`); `pnpm --filter @ops/api db:deploy`           |
+| Demo data               | `pnpm db:seed` (idempotent). `pnpm db:reset` wipes the dev database: **owner only**    |
+| Other Prisma            | `pnpm --filter @ops/api db:generate`, `db:studio`                                      |
 
-Ports: API 3001 (`/health`), web 3000, Metro 8081, PostgreSQL 5432.
+Ports: API 3001 on `127.0.0.1` (`/health`; in development also `/docs`, `/docs-json`,
+`/docs-yaml`), web 3000, Metro 8081, PostgreSQL 5432.
+
+Calling the API in development: send `x-dev-user-id: <user id>`. `pnpm db:seed` prints the ids
+when it seeds; they change on every reset. PowerShell examples are in [README.md](README.md).
 
 If `node`, `pnpm`, or `git` are not found in an agent shell, prefix the command with:
 
@@ -112,48 +129,111 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
 - PostgreSQL is published on `127.0.0.1` only. Do not widen the port mapping in
   `docker-compose.yml`; only the API (3001) and Metro (8081) need to be reachable from a phone.
 - The API validates its environment with Zod at boot and exits with one line per bad variable.
-  All six API variables are required, including `DATABASE_CONNECT_TIMEOUT_MS`.
-- `NEXT_PUBLIC_*` and `EXPO_PUBLIC_*` values are inlined at bundle time. Restart the dev server
-  after changing them; `expo export` needs `--clear`.
+  Required: `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_MS`, `API_HOST`, `API_PORT`, `CORS_ORIGINS`,
+  `LOG_LEVEL`. Optional: `DEV_AUTH_ENABLED` (default `false`) and `NODE_ENV` (default
+  `production`).
+- `NODE_ENV` is not in `.env`. The API package scripts set it with `dotenv -v`: `dev` and
+  `db:seed` use `development`, `start` uses `production`. Unset means production.
+- A running process keeps the environment it started with. After changing `.env`, restart
+  `pnpm dev`; `NEXT_PUBLIC_*` and `EXPO_PUBLIC_*` values are also inlined at bundle time
+  (`expo export` needs `--clear`).
+
+**Dev header (TEMPORARY, removed in Phase 3)**
+
+- The acting user comes from `x-dev-user-id`, honoured only when `NODE_ENV=development` AND
+  `DEV_AUTH_ENABLED=true`. The API refuses to boot with the flag in any other `NODE_ENV`, so
+  `pnpm --filter @ops/api start` fails while `.env` has it set. With dev auth off, every route
+  except `/health` answers 401. Swagger is served in development only.
+- Keep `API_HOST=127.0.0.1` while the flag is on. `0.0.0.0` is for a phone test on a trusted
+  network only.
+- No route enforces role or scope yet. Do not describe any endpoint as protected.
+
+**API rules**
+
+- Every write is one `prisma.$transaction` that writes the business row and then calls
+  `ChangeRecorder.record(tx, ...)`, which writes the audit event and the outbox event. Never
+  write a business row outside that pattern, and never call `AuditService` or `OutboxService`
+  from a domain service directly.
+- `src/platform/**` must not import `src/operations/**` (ESLint error).
+- The organization always comes from the acting user (`requireActor()`), never from the URL or
+  body. Check ids in a body with `assertActiveReferences`.
+- Request and response schemas live in `@ops/shared`. Request bodies are `z.strictObject`: an
+  unknown key is a 400. Validate with `ZodPipe`; document with `ApiDocs`.
+- Status conventions: 404 for a missing or other-organization record, 409 for changing an archived
+  record or a duplicate unique value, 422 for a bad reference in a body. Date ranges are
+  inclusive lower bound, exclusive upper bound.
+- Audit and outbox redact by key name at any depth (`password`, `secret`, `token`, `hash` suffix,
+  ...). A field or custom-field key that matches is stored as `"[redacted]"` in both.
+- The enum arrays in `packages/shared/src/domain/enums.ts` must match the Prisma enums, in order.
+
+**Database safety**
+
+- **Never run `pnpm db:reset` (or `prisma migrate reset`) as an agent.** It wipes whatever
+  `DATABASE_URL` points at and has no guard. Prisma also refuses it in an agent environment. Ask
+  the owner.
+- Integration tests use `DATABASE_URL_TEST` only and truncate every table. Their guard refuses a
+  database whose name does not end in `_test` or equals the one in `DATABASE_URL`. Do not weaken
+  it.
+- `AuditEvent` is append-only (a trigger blocks `UPDATE` and `DELETE`). Do not write code or
+  migrations that change or remove audit rows.
 
 **Build order**
 
 - `@ops/shared` compiles to CommonJS in `packages/shared/dist` and must be built before anything
   that depends on it can typecheck, lint, test, or build. Turbo's `^build` dependency does this, so
   use the root scripts. If you run a tool directly inside an app, build `@ops/shared` first.
-- `prisma generate` runs on API `postinstall` and before API `dev`, `build`, `typecheck`, and
-  `test`. The client is generated into `apps/api/src/generated/` (git-ignored). Never edit it.
+- `prisma generate` runs on API `postinstall` and before API `dev`, `build`, `typecheck`, `test`,
+  `test:integration`, and `db:seed`. The client is generated into `apps/api/src/generated/`
+  (git-ignored). Never edit it.
+- `nest build` (and so `pnpm build`) deletes `apps/api/dist`, which a running `pnpm dev` API is
+  executing. Do not build while the owner's dev server is running, or tell them to restart it.
+- `pnpm db:seed` compiles the API into `apps/api/node_modules/.cache/ops-seed` (not `dist`) and
+  runs the real services there, so it does not disturb a running dev server.
 
 **pnpm 12**
 
 - Supply-chain policy: pnpm appends `minimumReleaseAgeExclude` entries to `pnpm-workspace.yaml` for
   very recently published packages. Review those entries whenever you add or update a dependency.
 - Dependency build scripts are blocked until decided under `allowBuilds` in `pnpm-workspace.yaml`.
-  `pnpm install` exits 1 while any is undecided. Current decisions: `prisma` and `@prisma/engines`
-  allowed; `@parcel/watcher` and `unrs-resolver` denied (their prebuilt binaries work).
+  `pnpm install` exits 1 while any is undecided. Current decisions: `prisma`, `@prisma/engines`,
+  and `esbuild` allowed; `@parcel/watcher`, `unrs-resolver`, and `@scarf/scarf` denied.
 - `pnpm run` and `pnpm exec` perform an implicit install when a manifest has changed.
 - From PowerShell, `pnpm exec dotenv ... -- <cmd>` loses the arguments after `--`. For ad-hoc
   commands call `node_modules\.bin\dotenv.cmd` directly. Package scripts are not affected.
+- The dotenv-cli shim sets `NODE_PATH` to pnpm's hoisted store, where the mobile app's Jest 29
+  packages live. Jest 30 started under it loads the wrong runner and fails on the ESM-only Nest
+  packages. That is why `test:integration` goes through `apps/api/test/run-integration.mjs`, which
+  starts Jest in a child process without `NODE_PATH`. Do not call Jest through dotenv directly.
 
 **Version pins (do not bump casually; see [ADR-0001](docs/decisions/0001-tech-stack.md))**
 
-| Pin                                         | Why                                                                                               |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| TypeScript `~6.0.3` everywhere              | npm `latest` is 7.0; typescript-eslint 8 supports `<6.1`; Nest CLI and Expo templates are on 6.0. |
-| Prisma exactly `7.10.0` (three packages)    | The npm `latest` tag points to an 8.0 release candidate.                                          |
-| React exactly `19.2.3` in web and mobile    | The version Expo SDK 57 pins. One React version across the repo.                                  |
-| Expo SDK 57 / React Native `0.86.3`         | Must match each other and Expo Go. Upgrade them together.                                         |
-| NestJS 12 with a CommonJS API               | Nest 12 packages are ESM-only; Node 24 loads them via `require`. Do not add `"type": "module"`.   |
-| Jest 30 (api), Jest 29 + jest-expo (mobile) | The API test script needs `node --experimental-vm-modules`. jest-expo 57 is built for Jest 29.    |
+| Pin                                              | Why                                                                                               |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| TypeScript `~6.0.3` everywhere                   | npm `latest` is 7.0; typescript-eslint 8 supports `<6.1`; Nest CLI and Expo templates are on 6.0. |
+| Prisma exactly `7.10.0` (three packages)         | The npm `latest` tag points to an 8.0 release candidate.                                          |
+| React exactly `19.2.3` in web and mobile         | The version Expo SDK 57 pins. One React version across the repo.                                  |
+| Expo SDK 57 / React Native `0.86.3`              | Must match each other and Expo Go. Upgrade them together.                                         |
+| NestJS 12 with a CommonJS API                    | Nest 12 packages are ESM-only; Node 24 loads them via `require`. Do not add `"type": "module"`.   |
+| Jest 30 (api), Jest 29 + jest-expo (mobile)      | The API test script needs `node --experimental-vm-modules`. jest-expo 57 is built for Jest 29.    |
+| `expo-splash-screen`, `expo-system-ui` `~57.0.x` | Expo SDK 57 packages, like `expo-status-bar`. They move with the SDK, not on their own.           |
 
 **Per app**
 
 - API: `/health` logs an error on every call while the database is down. Do not poll it tightly.
+  Unit tests are `src/**/*.spec.ts` (no database); integration tests are `test/*.int-spec.ts`.
+  The package is CommonJS; relative imports have no `.js` extension.
+- Shared: relative imports must end in `.js`. The DOM lib is enabled only for the types of
+  `fetch`, `AbortController`, and timers; use no other DOM, Node, or React Native API there.
 - Web: `scripts/next.mjs` maps `WEB_PORT` to `PORT`. `agentRules: false` in `next.config.ts` stops
   Next.js generating its own `AGENTS.md` in `apps/web`. `typecheck` runs `next typegen` first.
+  Stylesheets use only the CSS variables generated from the tokens in `@ops/shared`. The favicon
+  is `src/app/icon.png` (picked up by file name).
 - Mobile: no `metro.config.js` or `babel.config.js` (Expo defaults handle the pnpm layout). ESLint
   sets `settings.react.version` to `'19.2'` by hand; bump it when React changes. No `build` script
-  by design. A phone cannot reach `localhost`; `EXPO_PUBLIC_API_URL` must be the PC's LAN address.
+  by design. Expo config is `app.config.ts` (there is no `app.json`); it repeats the brand-name
+  fallback from `src/config/env.ts` because it cannot import it. Expo Go shows its own icon and
+  splash. A phone cannot reach `localhost`: a phone test needs `EXPO_PUBLIC_API_URL` set to the
+  PC's LAN address and `API_HOST=0.0.0.0`. No phone test has been done (planned for Phase 4).
 
 **This file**
 

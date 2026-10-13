@@ -1,6 +1,7 @@
 # packages/config memory
 
-Package `@ops/config`. Last updated: 2026-10-12.
+Package `@ops/config`. Last updated: 2026-10-13 (the package itself did not change in Phase 2; only
+the "Who uses what" table below was corrected).
 
 ## Purpose
 
@@ -9,7 +10,7 @@ code style and strictness are the same across the monorepo.
 
 ## Current state
 
-Complete for Phase 1. The package holds configuration files only: no source code, no scripts, no
+Complete since Phase 1. The package holds configuration files only: no source code, no scripts, no
 build step, no tests.
 
 ## Key files
@@ -31,13 +32,13 @@ It ignores `node_modules`, `dist`, `.next`, `.expo`, `.turbo`, `coverage`, and `
 
 ## Who uses what
 
-| Consumer          | ESLint                                 | TypeScript                                       |
-| ----------------- | -------------------------------------- | ------------------------------------------------ |
-| `packages/shared` | The base, unchanged                    | `tsconfig/library.json`                          |
-| `apps/api`        | The base plus decorator parser options | `tsconfig/base.json`                             |
-| `apps/web`        | The base plus `eslint-config-next`     | `tsconfig/base.json`                             |
-| `apps/mobile`     | `eslint-config-expo` then the base     | `expo/tsconfig.base` plus `tsconfig/strict.json` |
-| Repo root         | none                                   | none                                             |
+| Consumer          | ESLint                                                                                              | TypeScript                                       |
+| ----------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `packages/shared` | The base, unchanged                                                                                 | `tsconfig/library.json`, plus the `DOM` lib      |
+| `apps/api`        | The base, decorator parser options, and a rule forbidding `src/platform` to import `src/operations` | `tsconfig/base.json`                             |
+| `apps/web`        | The base plus `eslint-config-next`                                                                  | `tsconfig/base.json`                             |
+| `apps/mobile`     | `eslint-config-expo` then the base                                                                  | `expo/tsconfig.base` plus `tsconfig/strict.json` |
+| Repo root         | none                                                                                                | none                                             |
 
 Prettier is wired once, in the root `package.json`: `"prettier": "@ops/config/prettier.config.mjs"`.
 The root scripts `pnpm format` and `pnpm format:check` run it over the whole repo, with exclusions

@@ -1,83 +1,78 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { colors, fontSizes, fontWeights, radii, spacing } from '@ops/shared';
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { CHECK_AGAIN_LABEL, describeHealth, type StatusTone } from '@ops/shared';
+import { brand } from '../config/brand';
 import { env, MISSING_API_URL_MESSAGE } from '../config/env';
-import { useApiHealth, type ApiHealthState } from '../hooks/useApiHealth';
+import { useApiHealth } from '../hooks/useApiHealth';
 
-const COLORS = {
-  background: '#F5F7FA',
-  card: '#FFFFFF',
-  border: '#D9DEE5',
-  text: '#16202B',
-  muted: '#5B6877',
-  ok: '#1E8E4E',
-  warn: '#B7791F',
-  error: '#C0392B',
-  button: '#1F4FD8',
-  buttonText: '#FFFFFF',
-} as const;
-
-interface StatusLine {
-  label: string;
-  detail: string;
-  color: string;
-}
-
-function describe(state: ApiHealthState): StatusLine {
-  if (state.phase === 'not-configured') {
-    return { label: 'API not configured', detail: MISSING_API_URL_MESSAGE, color: COLORS.error };
-  }
-  if (state.phase === 'loading') {
-    return { label: 'Checking API…', detail: '', color: COLORS.muted };
-  }
-  const { result } = state;
-  if (!result.reachable) {
-    return { label: 'API unreachable', detail: result.message, color: COLORS.error };
-  }
-  if (result.health.database === 'up') {
-    return { label: 'API reachable', detail: 'Database: up', color: COLORS.ok };
-  }
-  return { label: 'API reachable', detail: 'Database: down', color: COLORS.warn };
-}
+const TONE_COLORS: Record<StatusTone, string> = {
+  pending: colors.info,
+  good: colors.success,
+  warning: colors.warning,
+  bad: colors.danger,
+};
 
 export function HomeScreen() {
-  const { state, retry } = useApiHealth(env.apiUrl);
-  const status = describe(state);
-  const isLoading = state.phase === 'loading';
+  const { state, check } = useApiHealth();
+  const view = describeHealth(state, MISSING_API_URL_MESSAGE);
+  const toneColor = TONE_COLORS[view.tone];
+  // A manual check is pointless without a URL or while the first answer is still on its way.
+  const cannotCheck = state === null || state.result === null;
 
   return (
     <SafeAreaView style={styles.screen}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Operations App</Text>
-        <Text style={styles.subtitle}>Worker app — Phase 1 placeholder</Text>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.cardHeading}>API status</Text>
-        <View style={styles.statusRow}>
-          {isLoading ? (
-            <ActivityIndicator color={COLORS.muted} />
-          ) : (
-            <View style={[styles.dot, { backgroundColor: status.color }]} />
-          )}
-          <Text style={[styles.statusLabel, { color: status.color }]}>{status.label}</Text>
+      <View style={styles.content}>
+        <View style={styles.header}>
+          <Image
+            source={brand.logo.source}
+            style={styles.logo}
+            accessible
+            accessibilityRole="image"
+            accessibilityLabel={brand.logo.accessibilityLabel}
+          />
+          <Text style={styles.title} accessibilityRole="header">
+            {brand.name}
+          </Text>
+          <Text style={styles.label}>{brand.appLabel}</Text>
+          <View style={styles.rule} />
         </View>
-        {status.detail ? <Text style={styles.detail}>{status.detail}</Text> : null}
-        {env.apiUrl ? <Text style={styles.url}>{env.apiUrl}</Text> : null}
 
-        <Pressable
-          accessibilityRole="button"
-          disabled={isLoading || !env.apiUrl}
-          onPress={retry}
-          style={({ pressed }) => [
-            styles.button,
-            (isLoading || !env.apiUrl) && styles.buttonDisabled,
-            pressed && styles.buttonPressed,
-          ]}
-        >
-          <Text style={styles.buttonText}>Retry</Text>
-        </Pressable>
+        <View style={styles.card}>
+          <Text style={styles.cardHeading}>API status</Text>
+          <View accessible accessibilityLiveRegion="polite" style={styles.status}>
+            <View style={styles.statusRow}>
+              {view.busy ? (
+                <ActivityIndicator color={toneColor} size="small" />
+              ) : (
+                <View style={[styles.dot, { backgroundColor: toneColor }]} />
+              )}
+              <Text style={styles.statusTitle}>{view.title}</Text>
+            </View>
+            <Text style={styles.detail}>{view.detail}</Text>
+          </View>
+          {env.apiUrl ? <Text style={styles.url}>{`${env.apiUrl}/health`}</Text> : null}
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: cannotCheck }}
+            disabled={cannotCheck}
+            onPress={check}
+            style={({ pressed }) => [
+              styles.button,
+              pressed && styles.buttonPressed,
+              cannotCheck && styles.buttonDisabled,
+            ]}
+          >
+            <Text style={[styles.buttonText, cannotCheck && styles.buttonTextDisabled]}>
+              {CHECK_AGAIN_LABEL}
+            </Text>
+          </Pressable>
+        </View>
       </View>
+
+      <Text style={styles.poweredBy}>{brand.poweredBy}</Text>
     </SafeAreaView>
   );
 }
@@ -85,42 +80,66 @@ export function HomeScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: COLORS.background,
-    paddingHorizontal: 20,
+    backgroundColor: colors.background,
+    paddingHorizontal: spacing.xl,
+  },
+  content: {
+    flex: 1,
     justifyContent: 'center',
-    gap: 24,
+    gap: spacing.xxl,
   },
   header: {
     alignItems: 'center',
-    gap: 6,
+  },
+  logo: {
+    width: 160,
+    height: 160,
   },
   title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: COLORS.text,
+    marginTop: spacing.sm,
+    fontSize: fontSizes.xxl,
+    fontWeight: fontWeights.bold,
+    letterSpacing: 1,
+    color: colors.primary,
   },
-  subtitle: {
-    fontSize: 15,
-    color: COLORS.muted,
+  label: {
+    marginTop: spacing.xs,
+    fontSize: fontSizes.sm,
+    fontWeight: fontWeights.semibold,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    color: colors.textSecondary,
+  },
+  // The one use of the brand red: a short decorative rule, never text.
+  rule: {
+    marginTop: spacing.lg,
+    width: 48,
+    height: 3,
+    borderRadius: radii.pill,
+    backgroundColor: colors.accent,
   },
   card: {
-    backgroundColor: COLORS.card,
-    borderColor: COLORS.border,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 16,
-    gap: 10,
+    borderRadius: radii.lg,
+    padding: spacing.xl,
+    gap: spacing.md,
   },
   cardHeading: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.muted,
+    fontSize: fontSizes.xs,
+    fontWeight: fontWeights.semibold,
+    letterSpacing: 1,
     textTransform: 'uppercase',
+    color: colors.textMuted,
+  },
+  status: {
+    gap: spacing.xs,
   },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: spacing.md,
     minHeight: 24,
   },
   dot: {
@@ -128,34 +147,51 @@ const styles = StyleSheet.create({
     height: 12,
     borderRadius: 6,
   },
-  statusLabel: {
-    fontSize: 18,
-    fontWeight: '600',
+  statusTitle: {
+    flexShrink: 1,
+    fontSize: fontSizes.lg,
+    fontWeight: fontWeights.semibold,
+    color: colors.textPrimary,
   },
   detail: {
-    fontSize: 14,
-    color: COLORS.text,
+    fontSize: fontSizes.sm,
+    lineHeight: 20,
+    color: colors.textSecondary,
   },
   url: {
-    fontSize: 12,
-    color: COLORS.muted,
+    fontSize: fontSizes.xs,
+    color: colors.textMuted,
   },
   button: {
-    marginTop: 6,
-    backgroundColor: COLORS.button,
-    borderRadius: 8,
-    paddingVertical: 12,
+    marginTop: spacing.sm,
+    minHeight: 48,
     alignItems: 'center',
-  },
-  buttonDisabled: {
-    opacity: 0.5,
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: radii.md,
+    backgroundColor: colors.primary,
   },
   buttonPressed: {
-    opacity: 0.8,
+    borderColor: colors.primaryHover,
+    backgroundColor: colors.primaryHover,
+  },
+  buttonDisabled: {
+    borderColor: colors.borderStrong,
+    backgroundColor: 'transparent',
   },
   buttonText: {
-    color: COLORS.buttonText,
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: fontSizes.md,
+    fontWeight: fontWeights.semibold,
+    color: colors.onPrimary,
+  },
+  buttonTextDisabled: {
+    color: colors.textMuted,
+  },
+  poweredBy: {
+    paddingVertical: spacing.lg,
+    fontSize: fontSizes.xs,
+    textAlign: 'center',
+    color: colors.textMuted,
   },
 });

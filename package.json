@@ -12,12 +12,16 @@
     "build": "turbo run build",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "test:integration": "pnpm --filter @ops/shared build && pnpm --filter @ops/api test:integration",
     "typecheck": "turbo run typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
-    "db:logs": "docker compose logs -f postgres"
+    "db:logs": "docker compose logs -f postgres",
+    "db:migrate": "pnpm --filter @ops/api db:migrate",
+    "db:seed": "pnpm --filter @ops/shared build && pnpm --filter @ops/api db:seed",
+    "db:reset": "pnpm --filter @ops/shared build && pnpm --filter @ops/api db:reset"
   },
   "prettier": "@ops/config/prettier.config.mjs",
   "devDependencies": {

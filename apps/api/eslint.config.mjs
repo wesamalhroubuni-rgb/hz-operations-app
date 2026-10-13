@@ -14,4 +14,21 @@ export default [
       },
     },
   },
+  {
+    // Platform modules are reusable across products: they must not know the Operations domain.
+    files: ['src/platform/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/operations/**', '**/operations'],
+              message: 'Platform modules must not import from src/operations.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ];

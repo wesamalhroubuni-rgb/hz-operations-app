@@ -7,7 +7,8 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <HomeScreen />
-      <StatusBar style="dark" />
+      {/* Light status bar icons: the brand theme is dark. */}
+      <StatusBar style="light" />
     </SafeAreaProvider>
   );
 }

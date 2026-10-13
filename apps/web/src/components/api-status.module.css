@@ -1,59 +1,63 @@
 .card {
-  padding: 1.25rem;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
+  padding: var(--space-xl);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
 }
 
 .heading {
-  margin: 0 0 1rem;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  margin: 0 0 var(--space-lg);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--color-text-muted);
 }
 
 .status {
   display: flex;
   align-items: flex-start;
-  gap: 0.75rem;
+  gap: var(--space-md);
 }
 
 .dot {
   flex: none;
   width: 0.75rem;
   height: 0.75rem;
-  margin-top: 0.4rem;
+  margin-top: 0.45rem;
   border-radius: 50%;
 }
 
 .pending {
-  background: var(--text-muted);
-  animation: pulse 1.2s ease-in-out infinite;
+  background: var(--color-info);
 }
 
 .good {
-  background: var(--good);
+  background: var(--color-success);
 }
 
 .warning {
-  background: var(--warning);
+  background: var(--color-warning);
 }
 
 .bad {
-  background: var(--bad);
+  background: var(--color-danger);
+}
+
+.busy {
+  animation: pulse 1.2s ease-in-out infinite;
 }
 
 .title {
   margin: 0;
-  font-size: 1.125rem;
-  font-weight: 600;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
 }
 
 .detail {
-  margin: 0.125rem 0 0;
-  color: var(--text-muted);
+  margin: var(--space-xs) 0 0;
+  color: var(--color-text-secondary);
 }
 
 .footer {
@@ -61,41 +65,46 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  margin-top: 1.25rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border);
+  gap: var(--space-md);
+  margin-top: var(--space-xl);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--color-border);
 }
 
 .url {
   min-width: 0;
-  font-size: 0.8125rem;
-  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
   overflow-wrap: anywhere;
 }
 
 .button {
-  padding: 0.5rem 0.875rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
+  padding: var(--space-sm) var(--space-lg);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
   font: inherit;
-  font-size: 0.875rem;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
 }
 
 .button:hover:not(:disabled) {
-  border-color: var(--text-muted);
+  border-color: var(--color-primary-hover);
+  background: var(--color-primary-hover);
 }
 
 .button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: 2px solid var(--color-primary-hover);
+  outline-offset: 3px;
 }
 
+/* A disabled control is exempt from contrast rules; it keeps readable text all the same. */
 .button:disabled {
-  opacity: 0.6;
+  border-color: var(--color-border-strong);
+  background: transparent;
+  color: var(--color-text-muted);
   cursor: default;
 }
 
@@ -106,7 +115,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pending {
+  .busy {
     animation: none;
   }
 }

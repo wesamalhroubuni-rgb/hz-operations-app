@@ -1,6 +1,13 @@
-// Prisma schema for the Operations App API.
-// Phase 1 contains only the datasource and generator. Models are added in Phase 2.
+// Prisma schema for the API.
 // The connection URL is supplied by prisma.config.ts (Prisma 7), not by this file.
+//
+// Conventions:
+// - Every business record carries organizationId (multi-tenant-ready; one tenant in use today).
+// - Users, sites, teams, memberships, log types, tasks, work logs and attachments are archived
+//   (archivedAt), never deleted, so history and the audit trail stay intact.
+// - AuditEvent and OutboxEvent are platform tables: no foreign keys to business tables, and
+//   AuditEvent is append-only (enforced by a trigger in the first migration).
+// See docs/decisions/0002 and 0003 for the reasoning.
 
 generator client {
   provider     = "prisma-client"
@@ -10,4 +17,379 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+enum Role {
+  worker
+  supervisor
+  manager
+  admin
+}
+
+enum TaskStatus {
+  todo
+  in_progress
+  blocked
+  done
+  cancelled
+}
+
+enum TaskPriority {
+  low
+  normal
+  high
+  urgent
+}
+
+enum WorkLogStatus {
+  draft
+  submitted
+  approved
+  rejected
+}
+
+/// How a work log was captured. Everything is `manual` until the AI phases.
+enum WorkLogSource {
+  manual
+  voice
+  photo
+  ai
+}
+
+enum AuditActorType {
+  user
+  system
+}
+
+// ---------------------------------------------------------------------------
+// Organization structure
+// ---------------------------------------------------------------------------
+
+/// The tenant. Every business record belongs to exactly one organization.
+model Organization {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  name       String
+  slug       String    @unique
+  /// Free-form organization settings (time zone, locale, feature switches).
+  settings   Json      @default("{}")
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @db.Timestamptz(3)
+  archivedAt DateTime? @db.Timestamptz(3)
+
+  users       User[]
+  sites       Site[]
+  teams       Team[]
+  memberships Membership[]
+  logTypes    LogType[]
+  tasks       Task[]
+  workLogs    WorkLog[]
+  attachments Attachment[]
+}
+
+model User {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @db.Uuid
+  email          String
+  displayName    String
+  phone          String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+  archivedAt     DateTime? @db.Timestamptz(3)
+
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  memberships     Membership[]
+  createdTasks    Task[]         @relation("TaskCreatedBy")
+  taskAssignments TaskAssignee[]
+  workLogs        WorkLog[]
+  attachments     Attachment[]
+
+  @@unique([organizationId, email])
+  @@index([organizationId, archivedAt])
+}
+
+/// A physical location or project. Optional hierarchy through parentId.
+model Site {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @db.Uuid
+  parentId       String?   @db.Uuid
+  name           String
+  code           String?
+  description    String?
+  address        String?
+  latitude       Float?
+  longitude      Float?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+  archivedAt     DateTime? @db.Timestamptz(3)
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  parent       Site?            @relation("SiteHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children     Site[]           @relation("SiteHierarchy")
+  memberships  MembershipSite[]
+  tasks        Task[]
+  workLogs     WorkLog[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, archivedAt])
+  @@index([organizationId, parentId])
+}
+
+/// A group of people. Optional hierarchy through parentId.
+model Team {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @db.Uuid
+  parentId       String?   @db.Uuid
+  name           String
+  description    String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+  archivedAt     DateTime? @db.Timestamptz(3)
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  parent       Team?            @relation("TeamHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children     Team[]           @relation("TeamHierarchy")
+  memberships  MembershipTeam[]
+  tasks        Task[]
+  workLogs     WorkLog[]
+
+  @@index([organizationId, archivedAt])
+  @@index([organizationId, parentId])
+}
+
+/// A role held by a user, with a scope: the whole organization (orgWide), any number of sites,
+/// and/or any number of teams. Site and team scopes are a union, not an intersection. A user may
+/// hold several memberships (different roles in different scopes).
+model Membership {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @db.Uuid
+  userId         String    @db.Uuid
+  role           Role
+  orgWide        Boolean   @default(false)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+  archivedAt     DateTime? @db.Timestamptz(3)
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  user         User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  sites        MembershipSite[]
+  teams        MembershipTeam[]
+
+  @@index([organizationId, userId])
+  @@index([organizationId, role])
+}
+
+model MembershipSite {
+  membershipId   String @db.Uuid
+  siteId         String @db.Uuid
+  organizationId String @db.Uuid
+
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  site       Site       @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  @@id([membershipId, siteId])
+  @@index([organizationId, siteId])
+}
+
+model MembershipTeam {
+  membershipId   String @db.Uuid
+  teamId         String @db.Uuid
+  organizationId String @db.Uuid
+
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  team       Team       @relation(fields: [teamId], references: [id], onDelete: Restrict)
+
+  @@id([membershipId, teamId])
+  @@index([organizationId, teamId])
+}
+
+// ---------------------------------------------------------------------------
+// Work data
+// ---------------------------------------------------------------------------
+
+/// A kind of work log configurable per organization ("Inspection", "Delivery", ...).
+/// `fields` is an ordered array of custom field definitions (see @ops/shared). `version` is
+/// incremented whenever `fields` changes; each work log records the version it was validated
+/// against.
+model LogType {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @db.Uuid
+  key            String
+  name           String
+  description    String?
+  fields         Json      @default("[]")
+  version        Int       @default(1)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+  archivedAt     DateTime? @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  workLogs     WorkLog[]
+
+  @@unique([organizationId, key])
+  @@index([organizationId, archivedAt])
+}
+
+model Task {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  organizationId String       @db.Uuid
+  title          String
+  description    String?
+  status         TaskStatus   @default(todo)
+  priority       TaskPriority @default(normal)
+  siteId         String?      @db.Uuid
+  teamId         String?      @db.Uuid
+  createdById    String       @db.Uuid
+  dueAt          DateTime?    @db.Timestamptz(3)
+  completedAt    DateTime?    @db.Timestamptz(3)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+  archivedAt     DateTime?    @db.Timestamptz(3)
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  site         Site?          @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  team         Team?          @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  createdBy    User           @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  assignees    TaskAssignee[]
+  workLogs     WorkLog[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, siteId])
+  @@index([organizationId, teamId])
+  @@index([organizationId, dueAt])
+  @@index([organizationId, createdAt])
+}
+
+model TaskAssignee {
+  taskId         String   @db.Uuid
+  userId         String   @db.Uuid
+  organizationId String   @db.Uuid
+  assignedAt     DateTime @default(now()) @db.Timestamptz(3)
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([taskId, userId])
+  @@index([organizationId, userId])
+}
+
+/// A worker's entry. `occurredAt` is when the work happened; `createdAt` is when the server
+/// stored it (they differ once offline sync exists). `clientId` is generated on the device so a
+/// retried upload is idempotent.
+model WorkLog {
+  id               String        @id @default(uuid(7)) @db.Uuid
+  organizationId   String        @db.Uuid
+  clientId         String        @db.Uuid
+  authorId         String        @db.Uuid
+  occurredAt       DateTime      @db.Timestamptz(3)
+  taskId           String?       @db.Uuid
+  siteId           String?       @db.Uuid
+  teamId           String?       @db.Uuid
+  logTypeId        String?       @db.Uuid
+  /// LogType.version the custom fields were validated against.
+  logTypeVersion   Int?
+  text             String?
+  /// Custom field values keyed by field key, validated against the log type's definition.
+  customFields     Json          @default("{}")
+  latitude         Float?
+  longitude        Float?
+  /// GPS accuracy radius in metres.
+  locationAccuracy Float?
+  status           WorkLogStatus @default(submitted)
+  source           WorkLogSource @default(manual)
+  /// Reserved for AI-derived data (Phase 7). Always null today.
+  aiMetadata       Json?
+  createdAt        DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime      @updatedAt @db.Timestamptz(3)
+  archivedAt       DateTime?     @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  author       User         @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  task         Task?        @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  site         Site?        @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  team         Team?        @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  logType      LogType?     @relation(fields: [logTypeId], references: [id], onDelete: Restrict)
+  attachments  Attachment[]
+
+  @@unique([organizationId, clientId])
+  @@index([organizationId, occurredAt])
+  @@index([organizationId, authorId, occurredAt])
+  @@index([organizationId, siteId, occurredAt])
+  @@index([organizationId, teamId, occurredAt])
+  @@index([organizationId, status])
+  @@index([organizationId, taskId])
+  @@index([organizationId, logTypeId])
+}
+
+/// Metadata of a file attached to a work log. The bytes live behind the storage interface
+/// (Phase 4); only the key is stored here.
+model Attachment {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @db.Uuid
+  workLogId      String    @db.Uuid
+  uploadedById   String    @db.Uuid
+  fileName       String
+  mimeType       String
+  sizeBytes      Int
+  storageKey     String
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  archivedAt     DateTime? @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  workLog      WorkLog      @relation(fields: [workLogId], references: [id], onDelete: Restrict)
+  uploadedBy   User         @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, storageKey])
+  @@index([organizationId, workLogId])
+}
+
+// ---------------------------------------------------------------------------
+// Platform tables (reusable across Kaneri products; no foreign keys to business tables)
+// ---------------------------------------------------------------------------
+
+/// Append-only record of who did what. Rows are never updated or deleted (database trigger).
+model AuditEvent {
+  id             String         @id @default(uuid(7)) @db.Uuid
+  organizationId String?        @db.Uuid
+  actorType      AuditActorType
+  /// The acting user's id, or null when actorType is `system`.
+  actorId        String?
+  /// Dotted action name, for example "work_log.created".
+  action         String
+  entityType     String
+  entityId       String
+  before         Json?
+  after          Json?
+  /// Field-level diff: { field: { from, to } }. Null on create and when nothing is comparable.
+  changes        Json?
+  correlationId  String?
+  occurredAt     DateTime       @default(now()) @db.Timestamptz(3)
+
+  @@index([organizationId, occurredAt])
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, actorId, occurredAt])
+  @@index([organizationId, action, occurredAt])
+  @@index([correlationId])
+}
+
+/// Domain events written in the same transaction as the change they describe. Consumers
+/// (the AI layer in Phase 7) read them in `sequence` order.
+model OutboxEvent {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  sequence       BigInt    @unique @default(autoincrement())
+  organizationId String?   @db.Uuid
+  /// Dotted event name, for example "task.status_changed".
+  eventType      String
+  aggregateType  String
+  aggregateId    String
+  payload        Json
+  actorId        String?
+  correlationId  String?
+  occurredAt     DateTime  @default(now()) @db.Timestamptz(3)
+  /// Set by a consumer once handled. Nothing sets it yet.
+  processedAt    DateTime? @db.Timestamptz(3)
+
+  @@index([organizationId, sequence])
+  @@index([organizationId, eventType, sequence])
+  @@index([aggregateType, aggregateId])
+  @@index([processedAt, sequence])
 }

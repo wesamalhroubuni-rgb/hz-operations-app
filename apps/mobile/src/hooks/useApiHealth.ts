@@ -1,43 +1,37 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 
-import { fetchHealth, type HealthCheckResult } from '../api/health';
+import { apiClient, HEALTH_TIMEOUT_MS } from '../api/client';
+import { createHealthMonitor, type HealthMonitor, type HealthMonitorState } from '@ops/shared';
 
-export type ApiHealthState =
-  { phase: 'not-configured' } | { phase: 'loading' } | { phase: 'done'; result: HealthCheckResult };
-
-interface Answer {
-  attempt: number;
-  result: HealthCheckResult;
+function subscribeToNothing(): () => void {
+  return () => {};
 }
 
-/** Checks the API health on mount and again each time `retry` is called. */
-export function useApiHealth(apiUrl: string | null): { state: ApiHealthState; retry: () => void } {
-  const [attempt, setAttempt] = useState(0);
-  const [answer, setAnswer] = useState<Answer | null>(null);
+/**
+ * Checks the API's health when the screen mounts, retries on its own while the API does not
+ * answer, and stops when the screen unmounts. `state` is null when no API URL is configured.
+ * All the logic is in the health monitor; this hook only connects it to React.
+ */
+export function useApiHealth(): { state: HealthMonitorState | null; check: () => void } {
+  const [monitor] = useState<HealthMonitor | null>(() => {
+    const client = apiClient;
+    return client === null
+      ? null
+      : createHealthMonitor({ check: () => client.health.get({ timeoutMs: HEALTH_TIMEOUT_MS }) });
+  });
+
+  const state = useSyncExternalStore(
+    monitor?.subscribe ?? subscribeToNothing,
+    () => monitor?.getState() ?? null,
+  );
 
   useEffect(() => {
-    if (!apiUrl) {
+    if (monitor === null) {
       return;
     }
-    let cancelled = false;
-    void fetchHealth(apiUrl).then((result) => {
-      // Ignore the answer when a newer attempt started or the screen was closed.
-      if (!cancelled) {
-        setAnswer({ attempt, result });
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [apiUrl, attempt]);
+    monitor.check();
+    return () => monitor.stop();
+  }, [monitor]);
 
-  const retry = useCallback(() => setAttempt((current) => current + 1), []);
-
-  if (!apiUrl) {
-    return { state: { phase: 'not-configured' }, retry };
-  }
-  if (!answer || answer.attempt !== attempt) {
-    return { state: { phase: 'loading' }, retry };
-  }
-  return { state: { phase: 'done', result: answer.result }, retry };
+  return { state, check: () => monitor?.check() };
 }

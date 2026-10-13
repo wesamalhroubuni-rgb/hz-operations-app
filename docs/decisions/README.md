@@ -55,6 +55,8 @@ What follows from the decision: rules to obey, work it creates, things to revisi
 
 ## Index
 
-| ADR                        | Title      | Status   | Date       |
-| -------------------------- | ---------- | -------- | ---------- |
-| [0001](0001-tech-stack.md) | Tech stack | Accepted | 2026-10-12 |
+| ADR                                                       | Title                                     | Status   | Date       |
+| --------------------------------------------------------- | ----------------------------------------- | -------- | ---------- |
+| [0001](0001-tech-stack.md)                                | Tech stack                                | Accepted | 2026-10-12 |
+| [0002](0002-flexible-organization-and-scope-model.md)     | Flexible organization and scope model     | Accepted | 2026-10-13 |
+| [0003](0003-configurable-log-types-with-custom-fields.md) | Configurable log types with custom fields | Accepted | 2026-10-13 |

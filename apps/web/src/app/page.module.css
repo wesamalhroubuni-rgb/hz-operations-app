@@ -1,37 +1,74 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
 .main {
+  flex: 1;
   width: 100%;
   max-width: 40rem;
   margin: 0 auto;
-  padding: 3rem 1rem;
+  padding: var(--space-xxl) var(--space-lg);
 }
 
 .header {
-  margin-bottom: 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: var(--space-xxl);
+  text-align: center;
 }
 
-.eyebrow {
-  margin: 0 0 0.5rem;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--accent);
+.logo {
+  width: 10rem;
+  height: 10rem;
 }
 
 .title {
-  margin: 0;
-  font-size: clamp(1.5rem, 5vw, 2rem);
+  margin: var(--space-sm) 0 0;
+  font-size: var(--font-size-xxl);
+  font-weight: var(--font-weight-bold);
   line-height: 1.2;
-  text-wrap: balance;
+  letter-spacing: 0.04em;
+  color: var(--color-primary);
+}
+
+.label {
+  margin: var(--space-xs) 0 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+/* The one use of the brand red: a short decorative rule, never text. */
+.rule {
+  width: 3rem;
+  height: 3px;
+  margin-top: var(--space-lg);
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
 }
 
 .note {
-  margin: 0.75rem 0 0;
-  color: var(--text-muted);
+  max-width: 30rem;
+  margin: var(--space-lg) 0 0;
+  color: var(--color-text-muted);
+  text-wrap: balance;
+}
+
+.footer {
+  padding: var(--space-lg);
+  font-size: var(--font-size-xs);
+  text-align: center;
+  color: var(--color-text-muted);
 }
 
 @media (min-width: 40rem) {
   .main {
-    padding: 5rem 1.5rem;
+    padding: var(--space-xxxl) var(--space-xl);
   }
 }

@@ -1,4 +1,4 @@
-import { HttpStatus, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { HttpStatus, Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaService } from '../prisma/prisma.service';
 import { HealthController } from './health.controller';
@@ -6,10 +6,13 @@ import { HealthService } from './health.service';
 
 describe('GET /health', () => {
   const ping = jest.fn<Promise<void>, []>();
+  const status = jest.fn();
+  const response = { status };
   let controller: HealthController;
 
   beforeEach(async () => {
     ping.mockReset();
+    status.mockReset();
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
     const moduleRef = await Test.createTestingModule({
@@ -27,9 +30,10 @@ describe('GET /health', () => {
   it('reports ok / up when the database answers', async () => {
     ping.mockResolvedValue(undefined);
 
-    const body = await controller.getHealth();
+    const body = await controller.getHealth(response);
 
     expect(ping).toHaveBeenCalledTimes(1);
+    expect(status).not.toHaveBeenCalled();
     expect(body.status).toBe('ok');
     expect(body.database).toBe('up');
     expect(new Date(body.timestamp).toISOString()).toBe(body.timestamp);
@@ -38,22 +42,17 @@ describe('GET /health', () => {
   it('responds 503 with error / down when the database is unreachable', async () => {
     ping.mockRejectedValue(new Error('connect ECONNREFUSED'));
 
-    const failure = await controller.getHealth().then(
-      () => undefined,
-      (error: unknown) => error,
-    );
+    const body = await controller.getHealth(response);
 
-    expect(failure).toBeInstanceOf(ServiceUnavailableException);
-    const exception = failure as ServiceUnavailableException;
-    expect(exception.getStatus()).toBe(HttpStatus.SERVICE_UNAVAILABLE);
-    expect(exception.getResponse()).toMatchObject({ status: 'error', database: 'down' });
+    expect(status).toHaveBeenCalledWith(HttpStatus.SERVICE_UNAVAILABLE);
+    expect(body).toMatchObject({ status: 'error', database: 'down' });
   });
 
   it('never writes the connection string to the logs', async () => {
     const errorLog = jest.spyOn(Logger.prototype, 'error');
     ping.mockRejectedValue(new Error('cannot reach postgresql://user:secret@db:5432/app'));
 
-    await expect(controller.getHealth()).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await controller.getHealth(response);
 
     const logged = errorLog.mock.calls.flat().join(' ');
     expect(logged).toContain('Database health check failed');

@@ -1,30 +1,8 @@
-:root {
-  color-scheme: light dark;
-
-  --background: #f6f7f9;
-  --surface: #ffffff;
-  --border: #dcdfe5;
-  --text: #16191f;
-  --text-muted: #5b6472;
-  --accent: #2456d6;
-  --good: #1a8a4c;
-  --warning: #b86e00;
-  --bad: #c9302c;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0f1115;
-    --surface: #181b21;
-    --border: #2b303a;
-    --text: #eceef2;
-    --text-muted: #9aa3b2;
-    --accent: #7ea2ff;
-    --good: #3fc47a;
-    --warning: #f0a93b;
-    --bad: #f0645f;
-  }
-}
+/*
+ * Colours, spacing, radii and type sizes are CSS custom properties generated from the design
+ * tokens in @ops/shared and set on <html> by the root layout. Do not define values here: use
+ * var(--color-...), var(--space-...), var(--radius-...), var(--font-size-...).
+ */
 
 *,
 *::before,
@@ -34,12 +12,15 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  background: var(--color-background);
 }
 
 body {
   margin: 0;
-  background: var(--background);
-  color: var(--text);
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--color-background);
+  color: var(--color-text-primary);
   font-family:
     system-ui,
     -apple-system,
@@ -48,10 +29,28 @@ body {
     'Helvetica Neue',
     Arial,
     sans-serif;
-  font-size: 1rem;
+  font-size: var(--font-size-md);
   line-height: 1.5;
 }
 
 code {
   font-family: ui-monospace, 'Cascadia Code', Consolas, Menlo, monospace;
+}
+
+a {
+  color: var(--color-primary);
+}
+
+a:hover {
+  color: var(--color-primary-hover);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-primary-hover);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
 }

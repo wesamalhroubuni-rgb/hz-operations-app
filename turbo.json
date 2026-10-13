@@ -10,7 +10,12 @@
     "LOG_LEVEL",
     "WEB_PORT",
     "NEXT_PUBLIC_API_URL",
-    "EXPO_PUBLIC_API_URL"
+    "EXPO_PUBLIC_API_URL",
+    "NODE_ENV",
+    "DEV_AUTH_ENABLED",
+    "DATABASE_URL_TEST",
+    "NEXT_PUBLIC_BRAND_NAME",
+    "EXPO_PUBLIC_BRAND_NAME"
   ],
   "tasks": {
     "build": {

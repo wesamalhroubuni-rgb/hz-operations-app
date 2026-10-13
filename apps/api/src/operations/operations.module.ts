@@ -1,0 +1,30 @@
+import { Module } from '@nestjs/common';
+import { AttachmentsModule } from './attachments/attachments.module';
+import { OperationsCommonModule } from './common/operations-common.module';
+import { LogTypesModule } from './log-types/log-types.module';
+import { MembershipsModule } from './memberships/memberships.module';
+import { OrganizationModule } from './organization/organization.module';
+import { ScopeModule } from './scope/scope.module';
+import { SitesModule } from './sites/sites.module';
+import { TasksModule } from './tasks/tasks.module';
+import { TeamsModule } from './teams/teams.module';
+import { UsersModule } from './users/users.module';
+import { WorkLogsModule } from './work-logs/work-logs.module';
+
+/** The Operations domain: organization structure and work data. Imports platform, never the reverse. */
+@Module({
+  imports: [
+    OperationsCommonModule,
+    OrganizationModule,
+    UsersModule,
+    MembershipsModule,
+    SitesModule,
+    TeamsModule,
+    LogTypesModule,
+    TasksModule,
+    WorkLogsModule,
+    AttachmentsModule,
+    ScopeModule,
+  ],
+})
+export class OperationsModule {}
