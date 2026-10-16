@@ -442,7 +442,7 @@ describe('organization structure', () => {
   });
 
   describe('users', () => {
-    it('creates a user with a lower-cased email and no memberships', async () => {
+    it('creates a user with a lower-cased email, a normalised phone and no memberships', async () => {
       const response = await api.post('/users', {
         email: '  New.Person@Example.TEST ',
         displayName: 'New Person',
@@ -454,7 +454,8 @@ describe('organization structure', () => {
         organizationId: orgId(),
         email: 'new.person@example.test',
         displayName: 'New Person',
-        phone: '+90 555 000 00 00',
+        // Phase 3: phones are login identifiers, stored as digits with an optional leading +.
+        phone: '+905550000000',
         memberships: [],
         archivedAt: null,
       });
@@ -820,7 +821,7 @@ describe('organization structure', () => {
     });
   });
 
-  describe('scope endpoints (inspection only in this phase)', () => {
+  describe('scope endpoints', () => {
     it('resolves a site+team supervisor from the database: union, descendants, colleagues', async () => {
       const north = await createSite(ctx.prisma, orgId(), { name: 'North' });
       const yard = await createSite(ctx.prisma, orgId(), { name: 'Yard', parentId: north.id });
@@ -861,6 +862,8 @@ describe('organization structure', () => {
         siteIds: [north.id, yard.id].sort(),
         teamIds: [electrical.id, night.id].sort(),
         userIds: [supervisor.id, yardWorker.id, nightWorker.id].sort(),
+        // A supervisor who works nowhere as a worker has only themselves as colleague.
+        colleagueIds: [supervisor.id],
         memberOf: { orgWide: false, siteIds: [], teamIds: [] },
       });
       expect(response.body.siteIds).not.toContain(south.id);
@@ -995,12 +998,14 @@ describe('organization structure', () => {
       expect((await api.get('/users/not-a-uuid/scope')).status).toBe(400);
     });
 
-    it('does not enforce the scope yet: a worker can still list every site (Phase 3)', async () => {
+    it('enforces the scope (Phase 3): a worker placed nowhere lists no site', async () => {
       await createSite(ctx.prisma, orgId());
       const worker = await createUser(ctx.prisma, orgId());
       await createMembership(ctx.prisma, orgId(), worker.id, 'worker');
       expect((await ctx.as(worker.id).get('/scope/me')).body.siteIds).toEqual([]);
-      expect((await ctx.as(worker.id).get('/sites')).body.total).toBe(1);
+      const sites = await ctx.as(worker.id).get('/sites');
+      expect(sites.status).toBe(200);
+      expect(sites.body.total).toBe(0);
     });
   });
 });

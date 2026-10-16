@@ -1,37 +1,41 @@
 import { Controller, Get, HttpStatus, Param } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { idSchema, resolvedScopeSchema, type ResolvedScope } from '@ops/shared';
-import { ApiDocs, requireActor, ZodPipe } from '../../platform/http';
+import { Authenticated, Policy } from '../../platform/authz';
+import { ApiDocs, ZodPipe } from '../../platform/http';
+import { AccessService } from '../access';
 import { ScopeService } from './scope.service';
 
-/**
- * Read-only views of the scope resolution, for development and testing. No route enforces
- * scope yet; that is Phase 3.
- */
+/** Read-only views of the scope resolution: one's own, and (admins) anybody's. */
 @ApiTags('scope')
 @Controller()
 export class ScopeController {
-  constructor(private readonly scope: ScopeService) {}
+  constructor(
+    private readonly scope: ScopeService,
+    private readonly access: AccessService,
+  ) {}
 
   @Get('scope/me')
+  @Authenticated()
   @ApiDocs({
-    summary: 'What the acting user may see',
-    description: 'Inspection only: no route enforces this scope until Phase 3.',
+    summary: 'What the signed-in user may see',
+    description: 'The scope every route filters by, resolved from the active memberships.',
     response: resolvedScopeSchema,
   })
-  me(): Promise<ResolvedScope> {
-    const actor = requireActor();
-    return this.scope.resolveForUser(actor.organizationId, actor.userId);
+  async me(): Promise<ResolvedScope> {
+    return (await this.access.context()).scope;
   }
 
   @Get('users/:id/scope')
+  @Policy('user.read_scope')
   @ApiDocs({
     summary: 'What a given user may see',
-    description: 'Inspection only: no route enforces this scope until Phase 3.',
+    description: 'Admins only.',
     response: resolvedScopeSchema,
-    errors: [HttpStatus.NOT_FOUND],
+    errors: [HttpStatus.FORBIDDEN, HttpStatus.NOT_FOUND],
   })
-  forUser(@Param('id', new ZodPipe(idSchema)) id: string): Promise<ResolvedScope> {
-    return this.scope.resolveForUser(requireActor().organizationId, id);
+  async forUser(@Param('id', new ZodPipe(idSchema)) id: string): Promise<ResolvedScope> {
+    const { organizationId } = await this.access.context();
+    return this.scope.resolveForUser(organizationId, id);
   }
 }

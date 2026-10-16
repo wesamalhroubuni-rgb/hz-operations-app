@@ -5,13 +5,14 @@ import { healthResponseSchema } from '../health.js';
 import {
   createApiTransport,
   DEFAULT_API_TIMEOUT_MS,
-  DEV_USER_HEADER,
   healthEndpoints,
   type ApiClientOptions,
 } from './client.js';
 import { createApiClient } from './index.js';
 
 const BASE_URL = 'http://api.test';
+/** Any header an app adds through `getHeaders`. */
+const EXTRA_HEADER = 'x-example-header';
 const USER_ID = '0190f3a2-7c1e-7000-8000-000000000001';
 
 const thingSchema = z.object({ id: z.string(), count: z.number().int() });
@@ -491,15 +492,15 @@ describe('createApiTransport: URL and query string', () => {
 });
 
 describe('createApiTransport: headers and body', () => {
-  it('sends the headers from getHeaders, such as the dev user header', async () => {
+  it('sends the headers from getHeaders, such as a tracing header', async () => {
     const fetchStub = fetchReturning({ id: 'a', count: 2 });
     const transport = transportWith(fetchStub, {
-      getHeaders: () => ({ [DEV_USER_HEADER]: USER_ID }),
+      getHeaders: () => ({ [EXTRA_HEADER]: USER_ID }),
     });
     await transport.request({ path: '/things', schema: thingSchema });
     expect(callOf(fetchStub).headers).toEqual({
       Accept: 'application/json',
-      'x-dev-user-id': USER_ID,
+      'x-example-header': USER_ID,
     });
   });
 
@@ -512,10 +513,10 @@ describe('createApiTransport: headers and body', () => {
     expect(callOf(fetchStub).headers.Authorization).toBe('Bearer example-token');
   });
 
-  it('asks for the headers again on every request, so a changed user is picked up', async () => {
+  it('asks for the headers again on every request, so a changed value is picked up', async () => {
     const fetchStub = fetchReturning({ id: 'a', count: 2 });
     let current = 'user-1';
-    const getHeaders = vi.fn(() => ({ [DEV_USER_HEADER]: current }));
+    const getHeaders = vi.fn(() => ({ [EXTRA_HEADER]: current }));
     const transport = transportWith(fetchStub, { getHeaders });
 
     await transport.request({ path: '/things', schema: thingSchema });
@@ -523,8 +524,8 @@ describe('createApiTransport: headers and body', () => {
     await transport.request({ path: '/things', schema: thingSchema });
 
     expect(getHeaders).toHaveBeenCalledTimes(2);
-    expect(callOf(fetchStub, 0).headers[DEV_USER_HEADER]).toBe('user-1');
-    expect(callOf(fetchStub, 1).headers[DEV_USER_HEADER]).toBe('user-2');
+    expect(callOf(fetchStub, 0).headers[EXTRA_HEADER]).toBe('user-1');
+    expect(callOf(fetchStub, 1).headers[EXTRA_HEADER]).toBe('user-2');
   });
 
   it('sends a JSON body with Content-Type application/json', async () => {
@@ -583,7 +584,7 @@ describe('createApiClient', () => {
     const client = createApiClient({
       baseUrl: BASE_URL,
       fetch: fetchStub,
-      getHeaders: () => ({ [DEV_USER_HEADER]: USER_ID }),
+      getHeaders: () => ({ [EXTRA_HEADER]: USER_ID }),
     });
 
     const result = await client.workLogs.list({
@@ -600,7 +601,7 @@ describe('createApiClient', () => {
       `http://api.test/work-logs?siteId=${USER_ID}&status=submitted` +
         '&occurredFrom=2026-10-01T00%3A00%3A00Z&sort=occurredAt%3Adesc',
     );
-    expect(headers[DEV_USER_HEADER]).toBe(USER_ID);
+    expect(headers[EXTRA_HEADER]).toBe(USER_ID);
   });
 
   it('exposes one endpoint group per resource', () => {
@@ -608,6 +609,7 @@ describe('createApiClient', () => {
     expect(Object.keys(client).sort()).toEqual([
       'attachments',
       'auditEvents',
+      'auth',
       'health',
       'logTypes',
       'memberships',

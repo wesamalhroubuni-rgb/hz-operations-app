@@ -60,10 +60,18 @@ async function main(): Promise<void> {
         .map(([name, count]) => `${count} ${name}`)
         .join(', '),
     );
-    console.log('\nUsers (send an id in the x-dev-user-id header to act as that user):');
+    console.log('\nUsers (sign in with any of the identifiers shown):');
     for (const user of result.users) {
-      console.log(`  ${user.id}  ${user.name.padEnd(14)}  ${user.roles}`);
+      console.log(`  ${user.name.padEnd(14)}  ${user.roles}\n      ${user.identifiers}`);
     }
+    // Never print a password: only say where they are defined.
+    console.log(
+      result.passwordsSet
+        ? '\nDevelopment passwords: one per role, in DEV_PASSWORDS in ' +
+            'src/operations/seed/demo-seed.ts (not printed).'
+        : '\nNo passwords were set (production): issue activation codes with ' +
+            'POST /users/:id/activation-code.',
+    );
   } finally {
     await app.close();
   }

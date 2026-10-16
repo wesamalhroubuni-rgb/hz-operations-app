@@ -9,12 +9,14 @@ import {
   type ListAuditEventsQuery,
   type Paginated,
 } from '@ops/shared';
+import { Policy } from '../authz/policy.decorator';
 import { ApiDocs, ZodPipe } from '../http';
 import { AuditQueryService } from './audit-query.service';
 
 /** Read-only by design: audit events are written only through `AuditService.record`. */
 @ApiTags('audit-events')
 @Controller('audit-events')
+@Policy('audit.read')
 export class AuditEventsController {
   constructor(private readonly audit: AuditQueryService) {}
 

@@ -1,21 +1,26 @@
 import { randomUUID } from 'node:crypto';
 import type { INestApplicationContext } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   createLogTypeSchema,
   createMembershipSchema,
   createTaskSchema,
+  createUserSchema,
   createWorkLogSchema,
+  DEFAULT_WORK_LOG_EDIT_WINDOW_HOURS,
   type CreateLogTypeInput,
   type Role,
   type TaskPriority,
   type TaskStatus,
   type WorkLogStatus,
 } from '@ops/shared';
+import { RequestContext } from '../../platform/request-context/request-context';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AccessService } from '../access';
 import { ChangeRecorder } from '../common/change-recorder';
 import { LogTypesService } from '../log-types/log-types.service';
 import { MembershipsService } from '../memberships/memberships.service';
-import { toOrganization } from '../organization/organization.service';
+import { toOrganizationFull } from '../organization/organization.service';
 import { SitesService } from '../sites/sites.service';
 import { TasksService } from '../tasks/tasks.service';
 import { TeamsService } from '../teams/teams.service';
@@ -28,7 +33,7 @@ import { WorkLogsService } from '../work-logs/work-logs.service';
  * created through the domain services, so validation runs and audit and outbox rows are written
  * by the real code path (attributed to the system, because there is no request).
  *
- * All names are invented and all emails use example.com.
+ * All names are invented, all emails use example.com and the phone numbers are made up.
  */
 
 export const DEMO_ORGANIZATION = { name: 'HZ Demo', slug: 'hz-demo' } as const;
@@ -81,60 +86,94 @@ interface DemoMembership {
   teams?: TeamKey[];
 }
 
-const USERS: Record<UserKey, { name: string; email: string; memberships: DemoMembership[] }> = {
+interface DemoUser {
+  name: string;
+  /** Login identifiers: everyone has a username, most an email, two only a phone number. */
+  username: string;
+  email?: string;
+  phone?: string;
+  memberships: DemoMembership[];
+}
+
+const USERS: Record<UserKey, DemoUser> = {
   admin: {
     name: 'Aylin Demir',
+    username: 'aylin',
     email: 'aylin.demir@example.com',
     memberships: [{ role: 'admin', orgWide: true }],
   },
   manager: {
     name: 'Murat Kaya',
+    username: 'murat',
     email: 'murat.kaya@example.com',
     memberships: [{ role: 'manager', orgWide: true }],
   },
   // Supervisor scoped to one site.
   depotSupervisor: {
     name: 'Selin Aydin',
+    username: 'selin',
     email: 'selin.aydin@example.com',
     memberships: [{ role: 'supervisor', sites: ['depot'] }],
   },
   // Supervisor scoped to a site AND a team (a union).
   harbourSupervisor: {
     name: 'Emre Sahin',
+    username: 'emre',
     email: 'emre.sahin@example.com',
     memberships: [{ role: 'supervisor', sites: ['harbour'], teams: ['logistics'] }],
   },
   // Worker in two teams.
   deniz: {
     name: 'Deniz Yilmaz',
+    username: 'deniz',
     email: 'deniz.yilmaz@example.com',
     memberships: [{ role: 'worker', teams: ['electrical', 'maintenance'] }],
   },
   can: {
     name: 'Can Ozturk',
+    username: 'can.o',
     email: 'can.ozturk@example.com',
     memberships: [{ role: 'worker', sites: ['depot'], teams: ['electrical'] }],
   },
   zeynep: {
     name: 'Zeynep Arslan',
+    username: 'zeynep',
     email: 'zeynep.arslan@example.com',
     memberships: [{ role: 'worker', sites: ['depot'], teams: ['maintenance'] }],
   },
   burak: {
     name: 'Burak Celik',
-    email: 'burak.celik@example.com',
+    username: 'burak',
+    // Field worker without email: signs in with the phone number or the username.
+    phone: '+90 532 555 0104',
     memberships: [{ role: 'worker', sites: ['harbour'], teams: ['logistics'] }],
   },
   elif: {
     name: 'Elif Dogan',
+    username: 'elif',
     email: 'elif.dogan@example.com',
     memberships: [{ role: 'worker', teams: ['logistics'] }],
   },
   kerem: {
     name: 'Kerem Polat',
-    email: 'kerem.polat@example.com',
+    username: 'kerem',
+    // Field worker without email: signs in with the phone number or the username.
+    phone: '+90 532 555 0110',
     memberships: [{ role: 'worker', sites: ['harbour'], teams: ['maintenance'] }],
   },
+};
+
+/**
+ * DEVELOPMENT PASSWORDS of the demo users, one per role: every user signs in with the password
+ * of their highest role. They exist only here: the seed never prints them and never logs them,
+ * and in production it sets no password at all. They satisfy the password policy (length, not
+ * well known, no part of anyone's name or identifiers).
+ */
+export const DEV_PASSWORDS: Readonly<Record<Role, string>> = {
+  admin: 'Harbour-Lantern-Admin-41',
+  manager: 'Copper-Ledger-Manager-27',
+  supervisor: 'Granite-Shift-Lead-58',
+  worker: 'Orange-Helmet-Crew-63',
 };
 
 /** Between them the three log types use every custom field type. */
@@ -214,7 +253,8 @@ const TASKS: DemoTask[] = [
   {
     title: 'Replace lighting in bay 3',
     description: 'Swap the old fittings for LED panels.',
-    createdBy: 'depotSupervisor',
+    // A manager's task: Deniz works in no site, so he is not one of the depot supervisor's people.
+    createdBy: 'manager',
     status: 'done',
     priority: 'normal',
     site: 'depot',
@@ -227,8 +267,8 @@ const TASKS: DemoTask[] = [
     createdBy: 'depotSupervisor',
     status: 'in_progress',
     priority: 'high',
+    // A site supervisor places tasks at their site; the Maintenance team is outside their scope.
     site: 'depot',
-    team: 'maintenance',
     assignees: ['zeynep'],
     dueInDays: 2,
   },
@@ -249,7 +289,6 @@ const TASKS: DemoTask[] = [
     status: 'blocked',
     priority: 'urgent',
     site: 'harbour',
-    team: 'maintenance',
     assignees: ['kerem'],
     dueInDays: 1,
   },
@@ -573,7 +612,8 @@ const WORK_LOGS: DemoWorkLog[] = [
 export interface SeededUser {
   id: string;
   name: string;
-  email: string;
+  /** The identifiers the user signs in with (email, username, phone), for the seed's output. */
+  identifiers: string;
   roles: string;
 }
 
@@ -583,6 +623,8 @@ export interface DemoSeedResult {
   organizationId: string;
   users: SeededUser[];
   counts: Record<string, number>;
+  /** False in production, where users get activation codes instead of passwords. */
+  passwordsSet: boolean;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -603,13 +645,45 @@ function describeMembership(membership: DemoMembership): string {
   return `${membership.role} (${scope.join(' + ') || 'no scope'})`;
 }
 
+/** The highest role of a demo user: it picks their development password. */
+function highestRole(user: DemoUser): Role {
+  const ranked: Role[] = ['admin', 'manager', 'supervisor', 'worker'];
+  return (
+    ranked.find((role) => user.memberships.some((membership) => membership.role === role)) ??
+    'worker'
+  );
+}
+
+/**
+ * Runs `work` as a signed-in user, outside HTTP: the services then apply exactly the rules a
+ * request by that user would meet, and audit rows name that user.
+ */
+function asUser<Result>(
+  organizationId: string,
+  userId: string,
+  work: () => Promise<Result>,
+): Promise<Result> {
+  return RequestContext.run(
+    { correlationId: `seed-${randomUUID()}`, actor: { userId, organizationId } },
+    work,
+  );
+}
+
 /**
  * Creates the demo organization and its data. Idempotent: when an organization with the demo
  * slug exists, nothing is written.
+ *
+ * The structure (sites, teams, users, memberships, log types) is created with the system
+ * access context, because nobody can sign in yet. Tasks and work logs are then created AS the
+ * demo users (their creator, author and reviewer), so they pass the same access rules as a
+ * request would. In development every user gets the password of their highest role from
+ * `DEV_PASSWORDS`; in production no password is set and users get activation codes instead.
  */
 export async function seedDemo(app: INestApplicationContext): Promise<DemoSeedResult> {
   const prisma = app.get(PrismaService);
   const changes = app.get(ChangeRecorder);
+  const access = app.get(AccessService);
+  const config = app.get(ConfigService);
   const sitesService = app.get(SitesService);
   const teamsService = app.get(TeamsService);
   const usersService = app.get(UsersService);
@@ -618,18 +692,34 @@ export async function seedDemo(app: INestApplicationContext): Promise<DemoSeedRe
   const tasksService = app.get(TasksService);
   const workLogsService = app.get(WorkLogsService);
 
+  const nodeEnv: unknown = config.get('NODE_ENV');
+  const setPasswords = nodeEnv === 'development' || nodeEnv === 'test';
+
   const existing = await prisma.organization.findUnique({
     where: { slug: DEMO_ORGANIZATION.slug },
   });
   if (existing) {
-    return { seeded: false, organizationId: existing.id, users: [], counts: {} };
+    return {
+      seeded: false,
+      organizationId: existing.id,
+      users: [],
+      counts: {},
+      passwordsSet: false,
+    };
   }
 
   // No endpoint creates organizations, so this one row is written directly (still audited).
   const organizationId = await prisma.$transaction(async (tx) => {
-    const organization = toOrganization(
+    const organization = toOrganizationFull(
       await tx.organization.create({
-        data: { ...DEMO_ORGANIZATION, settings: { timeZone: 'Europe/Istanbul', locale: 'en' } },
+        data: {
+          ...DEMO_ORGANIZATION,
+          settings: {
+            timeZone: 'Europe/Istanbul',
+            locale: 'en',
+            workLogEditWindowHours: DEFAULT_WORK_LOG_EDIT_WINDOW_HOURS,
+          },
+        },
       }),
     );
     await changes.record(tx, {
@@ -643,114 +733,135 @@ export async function seedDemo(app: INestApplicationContext): Promise<DemoSeedRe
   });
 
   const siteIds = {} as Record<SiteKey, string>;
-  for (const key of Object.keys(SITES) as SiteKey[]) {
-    const { lat, lng, ...site } = SITES[key];
-    siteIds[key] = (
-      await sitesService.create(organizationId, { ...site, latitude: lat, longitude: lng })
-    ).id;
-  }
-
   const teamIds = {} as Record<TeamKey, string>;
-  for (const key of Object.keys(TEAMS) as TeamKey[]) {
-    teamIds[key] = (await teamsService.create(organizationId, TEAMS[key])).id;
-  }
-
   const userIds = {} as Record<UserKey, string>;
+  const logTypeIds = {} as Record<LogTypeKey, string>;
   const users: SeededUser[] = [];
   let membershipCount = 0;
-  for (const key of Object.keys(USERS) as UserKey[]) {
-    const demo = USERS[key];
-    const user = await usersService.create(organizationId, {
-      email: demo.email,
-      displayName: demo.name,
-    });
-    userIds[key] = user.id;
-    for (const membership of demo.memberships) {
-      await membershipsService.create(
-        organizationId,
-        createMembershipSchema.parse({
-          userId: user.id,
-          role: membership.role,
-          orgWide: membership.orgWide ?? false,
-          siteIds: (membership.sites ?? []).map((site) => siteIds[site]),
-          teamIds: (membership.teams ?? []).map((team) => teamIds[team]),
-        }),
-      );
-      membershipCount += 1;
-    }
-    users.push({
-      id: user.id,
-      name: demo.name,
-      email: demo.email,
-      roles: demo.memberships.map(describeMembership).join('; '),
-    });
-  }
 
-  const logTypeIds = {} as Record<LogTypeKey, string>;
-  for (const key of Object.keys(LOG_TYPES) as LogTypeKey[]) {
-    logTypeIds[key] = (
-      await logTypesService.create(organizationId, createLogTypeSchema.parse(LOG_TYPES[key]))
-    ).id;
-  }
+  await access.runAsSystem(organizationId, async () => {
+    for (const key of Object.keys(SITES) as SiteKey[]) {
+      const { lat, lng, ...site } = SITES[key];
+      siteIds[key] = (await sitesService.create({ ...site, latitude: lat, longitude: lng })).id;
+    }
+
+    for (const key of Object.keys(TEAMS) as TeamKey[]) {
+      teamIds[key] = (await teamsService.create(TEAMS[key])).id;
+    }
+
+    for (const key of Object.keys(USERS) as UserKey[]) {
+      const demo = USERS[key];
+      const input = createUserSchema.parse({
+        displayName: demo.name,
+        username: demo.username,
+        email: demo.email,
+        phone: demo.phone,
+      });
+      const user = setPasswords
+        ? await usersService.createWithPassword(input, DEV_PASSWORDS[highestRole(demo)])
+        : await usersService.create(input);
+      userIds[key] = user.id;
+      for (const membership of demo.memberships) {
+        await membershipsService.create(
+          createMembershipSchema.parse({
+            userId: user.id,
+            role: membership.role,
+            orgWide: membership.orgWide ?? false,
+            siteIds: (membership.sites ?? []).map((site) => siteIds[site]),
+            teamIds: (membership.teams ?? []).map((team) => teamIds[team]),
+          }),
+        );
+        membershipCount += 1;
+      }
+      users.push({
+        id: user.id,
+        name: demo.name,
+        identifiers: [user.email, user.username, user.phone]
+          .filter((value): value is string => value !== null)
+          .join(', '),
+        roles: demo.memberships.map(describeMembership).join('; '),
+      });
+    }
+
+    for (const key of Object.keys(LOG_TYPES) as LogTypeKey[]) {
+      logTypeIds[key] = (
+        await logTypesService.create(createLogTypeSchema.parse(LOG_TYPES[key]))
+      ).id;
+    }
+  });
 
   const now = new Date();
   const taskIds: string[] = [];
   for (const demo of TASKS) {
-    const task = await tasksService.create(
-      organizationId,
-      userIds[demo.createdBy],
-      createTaskSchema.parse({
-        title: demo.title,
-        description: demo.description,
-        priority: demo.priority,
-        siteId: demo.site ? siteIds[demo.site] : undefined,
-        teamId: demo.team ? teamIds[demo.team] : undefined,
-        assigneeIds: demo.assignees.map((assignee) => userIds[assignee]),
-        dueAt:
-          demo.dueInDays === undefined
-            ? undefined
-            : new Date(now.getTime() + demo.dueInDays * DAY_MS).toISOString(),
-      }),
+    const task = await asUser(organizationId, userIds[demo.createdBy], () =>
+      tasksService.create(
+        createTaskSchema.parse({
+          title: demo.title,
+          description: demo.description,
+          priority: demo.priority,
+          siteId: demo.site ? siteIds[demo.site] : undefined,
+          teamId: demo.team ? teamIds[demo.team] : undefined,
+          assigneeIds: demo.assignees.map((assignee) => userIds[assignee]),
+          dueAt:
+            demo.dueInDays === undefined
+              ? undefined
+              : new Date(now.getTime() + demo.dueInDays * DAY_MS).toISOString(),
+        }),
+      ),
     );
     taskIds.push(task.id);
   }
 
   for (const demo of WORK_LOGS) {
     const site = demo.site ? SITES[demo.site] : undefined;
-    const { workLog } = await workLogsService.create(
-      organizationId,
-      userIds[demo.author],
-      createWorkLogSchema.parse({
-        clientId: randomUUID(),
-        occurredAt: pastMoment(now, demo.daysAgo, demo.hour).toISOString(),
-        taskId: demo.task === undefined ? undefined : taskIds[demo.task],
-        siteId: demo.site ? siteIds[demo.site] : undefined,
-        teamId: demo.team ? teamIds[demo.team] : undefined,
-        logTypeId: demo.logType ? logTypeIds[demo.logType] : undefined,
-        customFields: demo.customFields ?? {},
-        text: demo.text,
-        location:
-          demo.gps && site
-            ? {
-                latitude: site.lat + (demo.hour - 12) * 0.0001,
-                longitude: site.lng + demo.daysAgo * 0.0001,
-                accuracy: 5 + demo.hour,
-              }
-            : undefined,
-        status: demo.status === 'draft' ? 'draft' : 'submitted',
-      }),
+    const occurredAt = pastMoment(now, demo.daysAgo, demo.hour);
+    const { workLog } = await asUser(organizationId, userIds[demo.author], () =>
+      workLogsService.create(
+        createWorkLogSchema.parse({
+          clientId: randomUUID(),
+          occurredAt: occurredAt.toISOString(),
+          taskId: demo.task === undefined ? undefined : taskIds[demo.task],
+          siteId: demo.site ? siteIds[demo.site] : undefined,
+          teamId: demo.team ? teamIds[demo.team] : undefined,
+          logTypeId: demo.logType ? logTypeIds[demo.logType] : undefined,
+          customFields: demo.customFields ?? {},
+          text: demo.text,
+          location:
+            demo.gps && site
+              ? {
+                  latitude: site.lat + (demo.hour - 12) * 0.0001,
+                  longitude: site.lng + demo.daysAgo * 0.0001,
+                  accuracy: 5 + demo.hour,
+                }
+              : undefined,
+          status: demo.status === 'draft' ? 'draft' : 'submitted',
+        }),
+      ),
     );
+    // SEED ONLY: a log is stored when it is written, so the demo logs get the `createdAt` they
+    // would have had (ten minutes after the work). That puts the older ones outside the edit
+    // window, and keeps today's inside it, so both cases can be tried. No service does this.
+    await prisma.workLog.update({
+      where: { id: workLog.id },
+      data: { createdAt: new Date(occurredAt.getTime() + 10 * 60_000) },
+    });
     if (demo.status === 'approved' || demo.status === 'rejected') {
-      await workLogsService.changeStatus(organizationId, workLog.id, demo.status);
+      // Reviewed by the manager: a reviewer who can see every log and wrote none of them.
+      const status = demo.status;
+      await asUser(organizationId, userIds.manager, () =>
+        workLogsService.changeStatus(workLog.id, status),
+      );
     }
   }
 
-  // Tasks reach their status last, through the same path a user takes, so the outbox holds
-  // `task.status_changed` events after the work logs that led to them.
+  // Tasks reach their status last, set by their creator through the same path a user takes, so
+  // the outbox holds `task.status_changed` events after the work logs that led to them.
   for (const [index, demo] of TASKS.entries()) {
     const taskId = taskIds[index];
     if (taskId && demo.status !== 'todo') {
-      await tasksService.changeStatus(organizationId, taskId, demo.status);
+      await asUser(organizationId, userIds[demo.createdBy], () =>
+        tasksService.changeStatus(taskId, demo.status),
+      );
     }
   }
 
@@ -758,6 +869,7 @@ export async function seedDemo(app: INestApplicationContext): Promise<DemoSeedRe
     seeded: true,
     organizationId,
     users,
+    passwordsSet: setPasswords,
     counts: {
       sites: Object.keys(SITES).length,
       teams: Object.keys(TEAMS).length,

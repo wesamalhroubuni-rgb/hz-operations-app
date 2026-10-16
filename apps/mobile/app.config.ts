@@ -54,6 +54,10 @@ const config: ExpoConfig = {
     ],
     ['expo-status-bar', { style: 'light' }],
     'expo-system-ui',
+    // Session tokens are kept in SecureStore. The plugin keeps them out of Android's automatic
+    // backup (a restored copy could not be decrypted anyway); Face ID is not used, so its
+    // permission text is not added. Takes effect in development and release builds, not Expo Go.
+    ['expo-secure-store', { faceIDPermission: false, configureAndroidBackup: true }],
   ],
 };
 

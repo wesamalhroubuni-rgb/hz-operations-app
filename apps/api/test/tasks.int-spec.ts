@@ -1,6 +1,7 @@
 import { taskListSchema, taskSchema } from '@ops/shared';
 import {
   at,
+  createMembership,
   createSite,
   createTask,
   createTeam,
@@ -90,6 +91,7 @@ describe('tasks', () => {
 
     it('records the acting user as the creator', async () => {
       const someone = await createUser(ctx.prisma, orgId());
+      await createMembership(ctx.prisma, orgId(), someone.id, 'manager', { orgWide: true });
       const response = await ctx.as(someone.id).post('/tasks', { title: 'Mine' });
       expect(response.status).toBe(201);
       expect(response.body.createdById).toBe(someone.id);

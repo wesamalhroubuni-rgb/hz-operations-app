@@ -74,6 +74,7 @@ function selfOnly(userId: string, overrides: Partial<ResolvedScope> = {}): Resol
     siteIds: [],
     teamIds: [],
     userIds: [userId],
+    colleagueIds: [userId],
     memberOf: { orgWide: false, siteIds: [], teamIds: [] },
     ...overrides,
   };
@@ -169,6 +170,8 @@ describe('resolveScope', () => {
         selfOnly('worker', {
           roles: ['worker'],
           memberOf: { orgWide: false, siteIds: [], teamIds: ['plumbing'] },
+          // Team mates are colleagues (seen by name), not people whose records they see.
+          colleagueIds: ['floater', 'plumber', 'worker'],
         }),
       );
       expect(scope.userIds).not.toContain('plumber');
@@ -361,44 +364,44 @@ describe('resolveScope', () => {
         siteIds: ['north', 'north-yard', 'south'],
         teamIds: ['electrical', 'electrical-night', 'plumbing'],
         userIds: 'all',
+        colleagueIds: ['root'],
         memberOf: { orgWide: false, siteIds: [], teamIds: [] },
       });
     });
 
+    // The API refuses to store a scoped manager or admin membership; a row written before that
+    // rule is still read as organization-wide.
     it.each<Role>(['manager', 'admin'])(
-      'limits a %s who is scoped to a site to that site',
+      'reads a %s membership scoped to a site as organization-wide',
       (role) => {
         const scope = resolve('scoped', [
           membership('scoped', role, { siteIds: ['south'] }),
           ...colleagues,
         ]);
         expect(scope.roles).toEqual([role]);
-        expect(scope.orgWide).toBe(false);
-        expect(scope.siteIds).toEqual(['south']);
-        expect(scope.teamIds).toEqual([]);
-        expect(scope.userIds).toEqual(['at-south', 'scoped']);
-        expect(scope.userIds).not.toContain('at-north');
+        expect(scope.orgWide).toBe(true);
+        expect(scope.siteIds).toEqual(['north', 'north-yard', 'south']);
+        expect(scope.userIds).toBe('all');
       },
     );
-
-    it('limits an admin scoped to a team to that team and its sub-teams', () => {
-      const scope = resolve('scoped', [
-        membership('scoped', 'admin', { teamIds: ['electrical'] }),
-        ...colleagues,
-      ]);
-      expect(scope.orgWide).toBe(false);
-      expect(scope.teamIds).toEqual(['electrical', 'electrical-night']);
-      expect(scope.siteIds).toEqual([]);
-      expect(scope.userIds).toEqual(['electrician', 'night-electrician', 'scoped']);
-    });
 
     it.each<Role>(['manager', 'admin'])(
-      'gives a %s with neither orgWide nor any scope only themselves',
+      'reads a %s membership with neither orgWide nor any scope as organization-wide',
       (role) => {
         const scope = resolve('bare', [membership('bare', role), ...colleagues]);
-        expect(scope).toEqual(selfOnly('bare', { roles: [role] }));
+        expect(scope.orgWide).toBe(true);
+        expect(scope.userIds).toBe('all');
       },
     );
+
+    it('does not list a manager or admin among the people a site supervisor oversees', () => {
+      const scope = resolve('sup', [
+        membership('sup', 'supervisor', { siteIds: ['south'] }),
+        membership('legacy-manager', 'manager', { siteIds: ['south'] }),
+        membership('legacy-admin', 'admin', { siteIds: ['south'] }),
+      ]);
+      expect(scope.userIds).toEqual(['sup']);
+    });
 
     it('ignores the sites and teams of an organization-wide membership: everything is visible', () => {
       const scope = resolve('boss', [
@@ -441,6 +444,7 @@ describe('resolveScope', () => {
         // ...and the worker membership gives none: team A is not visible, nor are its members.
         teamIds: [],
         userIds: ['at-south', 'mixed'],
+        colleagueIds: ['electrician', 'floater', 'mixed', 'night-electrician'],
         memberOf: { orgWide: false, siteIds: [], teamIds: ['electrical', 'electrical-night'] },
       });
     });
@@ -448,10 +452,10 @@ describe('resolveScope', () => {
     it('unions the scopes of two oversight memberships with different roles', () => {
       const scope = resolve('mixed', [
         membership('mixed', 'supervisor', { teamIds: ['plumbing'] }),
-        membership('mixed', 'manager', { siteIds: ['north-yard'] }),
+        membership('mixed', 'supervisor', { siteIds: ['north-yard'] }),
         ...colleagues,
       ]);
-      expect(scope.roles).toEqual(['supervisor', 'manager']);
+      expect(scope.roles).toEqual(['supervisor']);
       expect(scope.siteIds).toEqual(['north-yard']);
       expect(scope.teamIds).toEqual(['plumbing']);
       // `at-north` is a worker at the parent site, so they work at north-yard too.
@@ -534,7 +538,7 @@ describe('resolveScope', () => {
     it('does not repeat a node reached through two scopes', () => {
       const scope = resolveDeep('sup', [
         membership('sup', 'supervisor', { siteIds: ['city', 'depot'] }),
-        membership('sup', 'manager', { siteIds: ['bay'] }),
+        membership('sup', 'supervisor', { siteIds: ['bay'] }),
       ]);
       expect(scope.siteIds).toEqual(['bay', 'city', 'depot']);
     });
@@ -621,10 +625,10 @@ describe('resolveScope', () => {
       const scope = resolveDeep('sup', [
         membership('sup', 'supervisor', { siteIds: ['city'] }),
         membership('city-supervisor', 'supervisor', { siteIds: ['city'] }),
-        membership('bay-manager', 'manager', { siteIds: ['bay'] }),
-        membership('region-admin', 'admin', { siteIds: ['region'] }),
+        membership('bay-supervisor', 'supervisor', { siteIds: ['bay'] }),
+        membership('region-supervisor', 'supervisor', { siteIds: ['region'] }),
       ]);
-      expect(scope.userIds).toEqual(['bay-manager', 'city-supervisor', 'sup']);
+      expect(scope.userIds).toEqual(['bay-supervisor', 'city-supervisor', 'sup']);
     });
 
     it('shows somebody who is a worker at an ancestor and also holds an oversight role there', () => {
@@ -698,17 +702,10 @@ describe('resolveScope', () => {
         membership('sup', 'supervisor', { siteIds: ['south'] }),
         membership('south-worker', 'worker', { siteIds: ['south'] }),
         membership('south-supervisor', 'supervisor', { siteIds: ['south'] }),
-        membership('south-manager', 'manager', { siteIds: ['south', 'north'] }),
-        membership('south-admin', 'admin', { siteIds: ['south'] }),
+        membership('south-manager', 'manager', { orgWide: true }),
         membership('north-supervisor', 'supervisor', { siteIds: ['north'] }),
       ]);
-      expect(scope.userIds).toEqual([
-        'south-admin',
-        'south-manager',
-        'south-supervisor',
-        'south-worker',
-        'sup',
-      ]);
+      expect(scope.userIds).toEqual(['south-supervisor', 'south-worker', 'sup']);
       expect(scope.userIds).not.toContain('north-supervisor');
     });
 
@@ -726,9 +723,9 @@ describe('resolveScope', () => {
     it('lists an organization-wide member who is also scoped to the visible site', () => {
       const scope = resolve('sup', [
         membership('sup', 'supervisor', { siteIds: ['north'] }),
-        membership('boss', 'manager', { orgWide: true, siteIds: ['north-yard'] }),
+        membership('wide', 'supervisor', { orgWide: true, siteIds: ['north-yard'] }),
       ]);
-      expect(scope.userIds).toEqual(['boss', 'sup']);
+      expect(scope.userIds).toEqual(['sup', 'wide']);
     });
 
     it('is the word all, not a list, when the view is organization-wide', () => {
@@ -743,6 +740,58 @@ describe('resolveScope', () => {
         membership('busy', 'supervisor', { teamIds: ['plumbing'] }),
       ]);
       expect(scope.userIds).toEqual(['busy', 'sup']);
+    });
+  });
+
+  describe('colleagues', () => {
+    it('lists the workers and supervisors of the places where the user works, and no manager', () => {
+      const scope = resolveDeep('me', [
+        membership('me', 'worker', { siteIds: ['depot'] }),
+        membership('bay-worker', 'worker', { siteIds: ['bay'] }),
+        membership('region-worker', 'worker', { siteIds: ['region'] }),
+        membership('harbour-worker', 'worker', { siteIds: ['harbour'] }),
+        membership('region-supervisor', 'supervisor', { siteIds: ['region'] }),
+        membership('island-supervisor', 'supervisor', { siteIds: ['island'] }),
+        membership('wide-supervisor', 'supervisor', { orgWide: true }),
+        membership('boss', 'manager', { orgWide: true }),
+      ]);
+      expect(scope.colleagueIds).toEqual([
+        'bay-worker',
+        'me',
+        'region-supervisor',
+        'region-worker',
+        'wide-supervisor',
+      ]);
+      expect(scope.userIds).toEqual(['me']);
+    });
+
+    it('gives a supervisor without a worker membership only themselves as colleague', () => {
+      const scope = resolve('sup', [
+        membership('sup', 'supervisor', { siteIds: ['south'] }),
+        ...colleagues,
+      ]);
+      expect(scope.colleagueIds).toEqual(['sup']);
+    });
+
+    it('makes an organization-wide worker a colleague of everyone placed somewhere', () => {
+      const scope = resolve('floater', colleagues);
+      expect(scope.colleagueIds).toEqual([
+        'at-north',
+        'at-south',
+        'at-yard',
+        'electrician',
+        'floater',
+        'night-electrician',
+        'plumber',
+      ]);
+    });
+
+    it('ignores archived memberships', () => {
+      const scope = resolve('me', [
+        membership('me', 'worker', { siteIds: ['south'] }),
+        membership('gone', 'worker', { siteIds: ['south'], archived: true }),
+      ]);
+      expect(scope.colleagueIds).toEqual(['me']);
     });
   });
 

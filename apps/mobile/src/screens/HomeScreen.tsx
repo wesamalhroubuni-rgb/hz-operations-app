@@ -1,78 +1,70 @@
-import { colors, fontSizes, fontWeights, radii, spacing } from '@ops/shared';
-import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  AUTH_TEXT,
+  colors,
+  fontSizes,
+  fontWeights,
+  radii,
+  roleLabel,
+  spacing,
+  type AuthUser,
+} from '@ops/shared';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { CHECK_AGAIN_LABEL, describeHealth, type StatusTone } from '@ops/shared';
+import { ApiStatusCard } from '../components/ApiStatusCard';
+import { BrandHeader } from '../components/BrandHeader';
+import { Button } from '../components/Button';
+import { Message } from '../components/Message';
 import { brand } from '../config/brand';
-import { env, MISSING_API_URL_MESSAGE } from '../config/env';
-import { useApiHealth } from '../hooks/useApiHealth';
+import { useSignOut } from '../hooks/useSignOut';
 
-const TONE_COLORS: Record<StatusTone, string> = {
-  pending: colors.info,
-  good: colors.success,
-  warning: colors.warning,
-  bad: colors.danger,
-};
-
-export function HomeScreen() {
-  const { state, check } = useApiHealth();
-  const view = describeHealth(state, MISSING_API_URL_MESSAGE);
-  const toneColor = TONE_COLORS[view.tone];
-  // A manual check is pointless without a URL or while the first answer is still on its way.
-  const cannotCheck = state === null || state.result === null;
+/**
+ * The placeholder home screen of a signed-in user: who they are, whether the API answers, and
+ * the two ways out. Work logging comes in Phase 4.
+ */
+export function HomeScreen({ user }: Readonly<{ user: AuthUser }>) {
+  const { busy, failure, run } = useSignOut();
 
   return (
     <SafeAreaView style={styles.screen}>
-      <View style={styles.content}>
-        <View style={styles.header}>
-          <Image
-            source={brand.logo.source}
-            style={styles.logo}
-            accessible
-            accessibilityRole="image"
-            accessibilityLabel={brand.logo.accessibilityLabel}
-          />
-          <Text style={styles.title} accessibilityRole="header">
-            {brand.name}
-          </Text>
-          <Text style={styles.label}>{brand.appLabel}</Text>
-          <View style={styles.rule} />
-        </View>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <BrandHeader />
 
         <View style={styles.card}>
-          <Text style={styles.cardHeading}>API status</Text>
-          <View accessible accessibilityLiveRegion="polite" style={styles.status}>
-            <View style={styles.statusRow}>
-              {view.busy ? (
-                <ActivityIndicator color={toneColor} size="small" />
-              ) : (
-                <View style={[styles.dot, { backgroundColor: toneColor }]} />
-              )}
-              <Text style={styles.statusTitle}>{view.title}</Text>
+          <Text style={styles.cardHeading}>{AUTH_TEXT.signedInAs}</Text>
+          <View accessible style={styles.identity}>
+            <Text style={styles.name}>{user.displayName}</Text>
+            <View style={styles.roleRow}>
+              <Text style={styles.badge}>{roleLabel(user.role)}</Text>
+              <Text style={styles.organization}>{user.organizationName}</Text>
             </View>
-            <Text style={styles.detail}>{view.detail}</Text>
           </View>
-          {env.apiUrl ? <Text style={styles.url}>{`${env.apiUrl}/health`}</Text> : null}
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: cannotCheck }}
-            disabled={cannotCheck}
-            onPress={check}
-            style={({ pressed }) => [
-              styles.button,
-              pressed && styles.buttonPressed,
-              cannotCheck && styles.buttonDisabled,
-            ]}
-          >
-            <Text style={[styles.buttonText, cannotCheck && styles.buttonTextDisabled]}>
-              {CHECK_AGAIN_LABEL}
-            </Text>
-          </Pressable>
+          {failure !== null ? <Message tone="error" text={failure} /> : null}
+
+          <Button
+            label={busy === 'device' ? AUTH_TEXT.signingOut : AUTH_TEXT.signOut}
+            onPress={() => void run('device')}
+            disabled={busy !== null}
+            busy={busy === 'device'}
+          />
+          <Button
+            variant="secondary"
+            label={busy === 'everywhere' ? AUTH_TEXT.signingOut : AUTH_TEXT.signOutEverywhere}
+            onPress={() => void run('everywhere')}
+            disabled={busy !== null}
+            busy={busy === 'everywhere'}
+            accessibilityHint={AUTH_TEXT.signOutEverywhereHint}
+          />
+          <Text style={styles.hint}>
+            {`${AUTH_TEXT.signOutEverywhere}: ${AUTH_TEXT.signOutEverywhereHint}`}
+          </Text>
         </View>
-      </View>
 
-      <Text style={styles.poweredBy}>{brand.poweredBy}</Text>
+        <ApiStatusCard />
+
+        <Text style={styles.poweredBy}>{brand.poweredBy}</Text>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -81,42 +73,13 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
-    paddingHorizontal: spacing.xl,
   },
   content: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: 'center',
-    gap: spacing.xxl,
-  },
-  header: {
-    alignItems: 'center',
-  },
-  logo: {
-    width: 160,
-    height: 160,
-  },
-  title: {
-    marginTop: spacing.sm,
-    fontSize: fontSizes.xxl,
-    fontWeight: fontWeights.bold,
-    letterSpacing: 1,
-    color: colors.primary,
-  },
-  label: {
-    marginTop: spacing.xs,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semibold,
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-    color: colors.textSecondary,
-  },
-  // The one use of the brand red: a short decorative rule, never text.
-  rule: {
-    marginTop: spacing.lg,
-    width: 48,
-    height: 3,
-    borderRadius: radii.pill,
-    backgroundColor: colors.accent,
+    gap: spacing.xl,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xl,
   },
   card: {
     backgroundColor: colors.surface,
@@ -133,63 +96,42 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     color: colors.textMuted,
   },
-  status: {
-    gap: spacing.xs,
+  identity: {
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
   },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    minHeight: 24,
-  },
-  dot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  statusTitle: {
-    flexShrink: 1,
-    fontSize: fontSizes.lg,
+  name: {
+    fontSize: fontSizes.xl,
     fontWeight: fontWeights.semibold,
     color: colors.textPrimary,
   },
-  detail: {
+  roleRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  badge: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs / 2,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: radii.pill,
     fontSize: fontSizes.sm,
-    lineHeight: 20,
+    fontWeight: fontWeights.semibold,
+    color: colors.primary,
+    overflow: 'hidden',
+  },
+  organization: {
+    flexShrink: 1,
+    fontSize: fontSizes.md,
     color: colors.textSecondary,
   },
-  url: {
+  hint: {
     fontSize: fontSizes.xs,
     color: colors.textMuted,
   },
-  button: {
-    marginTop: spacing.sm,
-    minHeight: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.primary,
-    borderRadius: radii.md,
-    backgroundColor: colors.primary,
-  },
-  buttonPressed: {
-    borderColor: colors.primaryHover,
-    backgroundColor: colors.primaryHover,
-  },
-  buttonDisabled: {
-    borderColor: colors.borderStrong,
-    backgroundColor: 'transparent',
-  },
-  buttonText: {
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semibold,
-    color: colors.onPrimary,
-  },
-  buttonTextDisabled: {
-    color: colors.textMuted,
-  },
   poweredBy: {
-    paddingVertical: spacing.lg,
     fontSize: fontSizes.xs,
     textAlign: 'center',
     color: colors.textMuted,

@@ -28,10 +28,21 @@ import {
   type Task,
   type UpdateTask,
 } from '@ops/shared';
-import { ApiDocs, requireActor, ZodPipe } from '../../platform/http';
+import { Policy } from '../../platform/authz';
+import { ApiDocs, ZodPipe } from '../../platform/http';
 import { TasksService } from './tasks.service';
 
-const CHANGE_ERRORS = [HttpStatus.NOT_FOUND, HttpStatus.CONFLICT, HttpStatus.UNPROCESSABLE_ENTITY];
+const CHANGE_ERRORS = [
+  HttpStatus.FORBIDDEN,
+  HttpStatus.NOT_FOUND,
+  HttpStatus.CONFLICT,
+  HttpStatus.UNPROCESSABLE_ENTITY,
+];
+
+const MANAGE =
+  'Supervisors manage the tasks placed in their scope (a site or a team of theirs) and assign ' +
+  'their own people; managers and admins manage every task. A task the caller cannot see ' +
+  'answers 404; one they can see but not manage answers 403.';
 
 @ApiTags('tasks')
 @Controller('tasks')
@@ -39,34 +50,50 @@ export class TasksController {
   constructor(private readonly tasks: TasksService) {}
 
   @Get()
-  @ApiDocs({ summary: 'List tasks', query: listTasksQuerySchema, response: taskListSchema })
+  @Policy('task.read')
+  @ApiDocs({
+    summary: 'List the tasks the caller may see',
+    description:
+      'A worker sees the tasks assigned to them; a supervisor also those of their scope and ' +
+      'their people; a manager or admin every task.',
+    query: listTasksQuerySchema,
+    response: taskListSchema,
+    errors: [HttpStatus.FORBIDDEN],
+  })
   list(@Query(new ZodPipe(listTasksQuerySchema)) query: ListTasksQuery): Promise<Paginated<Task>> {
-    return this.tasks.list(requireActor().organizationId, query);
+    return this.tasks.list(query);
   }
 
   @Get(':id')
-  @ApiDocs({ summary: 'Get a task', response: taskSchema, errors: [HttpStatus.NOT_FOUND] })
+  @Policy('task.read')
+  @ApiDocs({
+    summary: 'Get a task',
+    response: taskSchema,
+    errors: [HttpStatus.FORBIDDEN, HttpStatus.NOT_FOUND],
+  })
   get(@Param('id', new ZodPipe(idSchema)) id: string): Promise<Task> {
-    return this.tasks.get(requireActor().organizationId, id);
+    return this.tasks.get(id);
   }
 
   @Post()
+  @Policy('task.manage')
   @ApiDocs({
     summary: 'Create a task',
-    description: 'The acting user becomes the creator.',
+    description: `The signed-in user becomes the creator. ${MANAGE}`,
     body: createTaskSchema,
     response: taskSchema,
     status: HttpStatus.CREATED,
-    errors: [HttpStatus.UNPROCESSABLE_ENTITY],
+    errors: [HttpStatus.FORBIDDEN, HttpStatus.UNPROCESSABLE_ENTITY],
   })
   create(@Body(new ZodPipe(createTaskSchema)) body: CreateTask): Promise<Task> {
-    const actor = requireActor();
-    return this.tasks.create(actor.organizationId, actor.userId, body);
+    return this.tasks.create(body);
   }
 
   @Patch(':id')
+  @Policy('task.manage')
   @ApiDocs({
     summary: 'Update a task',
+    description: MANAGE,
     body: updateTaskSchema,
     response: taskSchema,
     errors: CHANGE_ERRORS,
@@ -75,13 +102,17 @@ export class TasksController {
     @Param('id', new ZodPipe(idSchema)) id: string,
     @Body(new ZodPipe(updateTaskSchema)) body: UpdateTask,
   ): Promise<Task> {
-    return this.tasks.update(requireActor().organizationId, id, body);
+    return this.tasks.update(id, body);
   }
 
   @Patch(':id/status')
+  @Policy('task.change_status')
   @ApiDocs({
     summary: "Change a task's status",
-    description: 'Sets `completedAt` when the task becomes done and clears it when it leaves done.',
+    description:
+      'Whoever manages the task sets any status. An assignee moves their task between `todo`, ' +
+      '`in_progress`, `blocked` and `done`. Sets `completedAt` when the task becomes done and ' +
+      'clears it when it leaves done.',
     body: changeTaskStatusSchema,
     response: taskSchema,
     errors: CHANGE_ERRORS,
@@ -90,12 +121,14 @@ export class TasksController {
     @Param('id', new ZodPipe(idSchema)) id: string,
     @Body(new ZodPipe(changeTaskStatusSchema)) body: ChangeTaskStatus,
   ): Promise<Task> {
-    return this.tasks.changeStatus(requireActor().organizationId, id, body.status);
+    return this.tasks.changeStatus(id, body.status);
   }
 
   @Put(':id/assignees')
+  @Policy('task.manage')
   @ApiDocs({
     summary: "Replace a task's assignees",
+    description: MANAGE,
     body: setTaskAssigneesSchema,
     response: taskSchema,
     errors: CHANGE_ERRORS,
@@ -104,13 +137,19 @@ export class TasksController {
     @Param('id', new ZodPipe(idSchema)) id: string,
     @Body(new ZodPipe(setTaskAssigneesSchema)) body: SetTaskAssignees,
   ): Promise<Task> {
-    return this.tasks.setAssignees(requireActor().organizationId, id, body.assigneeIds);
+    return this.tasks.setAssignees(id, body.assigneeIds);
   }
 
   @Post(':id/archive')
+  @Policy('task.manage')
   @HttpCode(HttpStatus.OK)
-  @ApiDocs({ summary: 'Archive a task', response: taskSchema, errors: [HttpStatus.NOT_FOUND] })
+  @ApiDocs({
+    summary: 'Archive a task',
+    description: MANAGE,
+    response: taskSchema,
+    errors: [HttpStatus.FORBIDDEN, HttpStatus.NOT_FOUND],
+  })
   archive(@Param('id', new ZodPipe(idSchema)) id: string): Promise<Task> {
-    return this.tasks.archive(requireActor().organizationId, id);
+    return this.tasks.archive(id);
   }
 }

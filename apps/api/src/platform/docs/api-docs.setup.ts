@@ -8,8 +8,9 @@
 import type { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, type OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
 
-/** Name of the OpenAPI security scheme for the development-only acting-user header. */
-export const DEV_USER_SECURITY_SCHEME = 'dev-user';
+/** Names of the OpenAPI security schemes. */
+export const BEARER_SECURITY_SCHEME = 'bearer';
+export const COOKIE_SECURITY_SCHEME = 'cookie';
 
 export interface ApiDocsSetupOptions {
   title: string;
@@ -18,10 +19,15 @@ export interface ApiDocsSetupOptions {
   /** Path of the Swagger UI, without a leading slash. Defaults to `docs`. */
   path?: string;
   /**
-   * TEMPORARY (until real sign-in): name of the header that carries the acting user. When set,
-   * it is documented as an apiKey scheme, so the "Authorize" button of the UI can send it.
+   * Documents `Authorization: Bearer <access token>` as a security scheme, so the "Authorize"
+   * button of the UI accepts an access token. On by default.
    */
-  devUserHeader?: string;
+  bearerAuth?: boolean;
+  /**
+   * Name of the cookie that carries the access token of browser sessions. When set, cookie
+   * authentication is documented next to the bearer scheme.
+   */
+  accessCookieName?: string;
 }
 
 export interface ApiDocsLocation {
@@ -42,20 +48,39 @@ export function buildApiDocument(
     .setDescription(options.description ?? '')
     .setVersion(options.version ?? '0.1.0');
 
-  if (options.devUserHeader) {
+  if (options.bearerAuth !== false) {
     builder
-      .addApiKey(
+      .addBearerAuth(
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          description:
+            'The access token of a session started with `client: "mobile"` (POST /auth/login, ' +
+            'then `tokens.accessToken`). It is valid for minutes; renew it with POST ' +
+            '/auth/refresh.',
+        },
+        BEARER_SECURITY_SCHEME,
+      )
+      .addSecurityRequirements(BEARER_SECURITY_SCHEME);
+  }
+
+  if (options.accessCookieName) {
+    builder
+      .addCookieAuth(
+        options.accessCookieName,
         {
           type: 'apiKey',
-          in: 'header',
-          name: options.devUserHeader,
+          in: 'cookie',
+          name: options.accessCookieName,
           description:
-            'TEMPORARY, development only: the id (UUID) of the user to act as. ' +
-            'Replaced by real sign-in.',
+            'Browser sessions (`client: "web"`): the access token travels in an httpOnly ' +
+            'cookie set by POST /auth/login. Requests that change state must also send the ' +
+            '`x-csrf-token` header and come from an allowed origin.',
         },
-        DEV_USER_SECURITY_SCHEME,
+        COOKIE_SECURITY_SCHEME,
       )
-      .addSecurityRequirements(DEV_USER_SECURITY_SCHEME);
+      .addSecurityRequirements(COOKIE_SECURITY_SCHEME);
   }
 
   return SwaggerModule.createDocument(app, builder.build());

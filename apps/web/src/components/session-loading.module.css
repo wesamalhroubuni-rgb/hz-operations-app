@@ -1,0 +1,35 @@
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: var(--space-xl);
+  color: var(--color-text-secondary);
+}
+
+.dot {
+  flex: none;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--color-info);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.text {
+  margin: 0;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot {
+    animation: none;
+  }
+}

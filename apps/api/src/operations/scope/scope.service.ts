@@ -6,11 +6,12 @@ import { resolveScope } from './resolve-scope';
 
 /**
  * Loads what {@link resolveScope} needs and runs it. This is the single answer to "what may
- * this user see"; Phase 3 turns the result into query filters on every route. Nothing enforces
- * it yet.
+ * this user see"; the access layer (`../access`) turns the result into the query filters and
+ * rules of every route.
  *
  * It reads every membership, site and team of the organization on each call, which is fine at
- * the size of one company; cache per request (or per user) when Phase 3 calls it on every route.
+ * the size of one company. `AccessService` calls it once per request and caches the result for
+ * that request.
  */
 @Injectable()
 export class ScopeService {

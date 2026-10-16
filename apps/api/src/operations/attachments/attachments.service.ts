@@ -1,11 +1,25 @@
 import { Injectable } from '@nestjs/common';
 import type { Attachment, CreateAttachment, ListAttachmentsQuery, Paginated } from '@ops/shared';
-import type { Attachment as AttachmentRow, Prisma } from '../../generated/prisma/client';
+import type {
+  Attachment as AttachmentRow,
+  Prisma,
+  WorkLog as WorkLogRow,
+} from '../../generated/prisma/client';
 import { ApiException, orderByArgs, pageArgs, paginated } from '../../platform/http';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  AccessClock,
+  AccessService,
+  attachmentVisibilityWhere,
+  authorOf,
+  canChangeAttachments,
+  enforce,
+  workLogVisibilityWhere,
+  type AccessContext,
+} from '../access';
 import { ChangeRecorder } from '../common/change-recorder';
 import { activeUnless, iso, isoOrNull, isUniqueViolation, type Db } from '../common/db';
-import { assertActiveReferences, ref } from '../common/references';
+import { loadWorkLogEditWindowHours, workLogFactsOf } from '../work-logs/work-logs.service';
 
 export function toAttachment(row: AttachmentRow): Attachment {
   return {
@@ -25,24 +39,31 @@ export function toAttachment(row: AttachmentRow): Attachment {
 /**
  * Attachment metadata only. The bytes are uploaded and served through the `FileStorage`
  * interface (see ../storage), which has no provider until Phase 4; nothing here calls it yet.
+ *
+ * Attachments follow their work log: whoever can see the log reads them; adding and archiving
+ * one follows `canChangeAttachments` (the log's author while they may still change the log, or
+ * a reviewer who can see it).
  */
 @Injectable()
 export class AttachmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly changes: ChangeRecorder,
+    private readonly access: AccessService,
+    private readonly clock: AccessClock,
   ) {}
 
   async listForWorkLog(
-    organizationId: string,
     workLogId: string,
     query: ListAttachmentsQuery,
   ): Promise<Paginated<Attachment>> {
-    await this.findWorkLog(this.prisma, organizationId, workLogId);
+    const context = await this.access.context();
+    await this.findWorkLog(this.prisma, context, workLogId);
     const where: Prisma.AttachmentWhereInput = {
-      organizationId,
+      organizationId: context.organizationId,
       workLogId,
       ...activeUnless(query.includeArchived),
+      AND: [attachmentVisibilityWhere(context) as Prisma.AttachmentWhereInput],
     };
     const [rows, total] = await Promise.all([
       this.prisma.attachment.findMany({
@@ -55,24 +76,23 @@ export class AttachmentsService {
     return paginated(rows.map(toAttachment), total, query);
   }
 
-  async get(organizationId: string, id: string): Promise<Attachment> {
-    return toAttachment(await this.find(this.prisma, organizationId, id));
+  async get(id: string): Promise<Attachment> {
+    const context = await this.access.context();
+    return toAttachment((await this.find(this.prisma, context, id)).attachment);
   }
 
-  /** @param uploadedById the acting user, recorded as the uploader */
-  async create(
-    organizationId: string,
-    uploadedById: string,
-    workLogId: string,
-    input: CreateAttachment,
-  ): Promise<Attachment> {
+  /** Records a file on a work log. The uploader is the signed-in user. */
+  async create(workLogId: string, input: CreateAttachment): Promise<Attachment> {
+    const context = await this.access.context();
+    const { organizationId } = context;
+    const uploadedById = authorOf(context);
     try {
       return await this.prisma.$transaction(async (tx) => {
-        const workLog = await this.findWorkLog(tx, organizationId, workLogId);
+        const workLog = await this.findWorkLog(tx, context, workLogId);
+        await this.assertMayChange(tx, context, workLog);
         if (workLog.archivedAt) {
           throw ApiException.conflict(`Work log ${workLogId} is archived and cannot be changed`);
         }
-        await assertActiveReferences(tx, organizationId, ref('user', 'uploadedById', uploadedById));
         const attachment = toAttachment(
           await tx.attachment.create({
             data: { ...input, organizationId, workLogId, uploadedById },
@@ -98,17 +118,20 @@ export class AttachmentsService {
   }
 
   /** Archiving an archived attachment changes and records nothing. The stored file is kept. */
-  async archive(organizationId: string, id: string): Promise<Attachment> {
+  async archive(id: string): Promise<Attachment> {
+    const context = await this.access.context();
     return this.prisma.$transaction(async (tx) => {
-      const before = toAttachment(await this.find(tx, organizationId, id));
+      const found = await this.find(tx, context, id);
+      const before = toAttachment(found.attachment);
       if (before.archivedAt !== null) {
         return before;
       }
+      await this.assertMayChange(tx, context, found.workLog);
       const attachment = toAttachment(
-        await tx.attachment.update({ where: { id }, data: { archivedAt: new Date() } }),
+        await tx.attachment.update({ where: { id }, data: { archivedAt: this.clock.now() } }),
       );
       await this.changes.record(tx, {
-        organizationId,
+        organizationId: context.organizationId,
         entityType: 'attachment',
         verb: 'archived',
         entityId: id,
@@ -119,22 +142,53 @@ export class AttachmentsService {
     });
   }
 
-  private async find(db: Db, organizationId: string, id: string): Promise<AttachmentRow> {
-    const row = await db.attachment.findFirst({ where: { id, organizationId } });
+  /** 403 unless the caller may add or archive attachments on this (visible) work log. */
+  private async assertMayChange(
+    db: Db,
+    context: AccessContext,
+    workLog: WorkLogRow,
+  ): Promise<void> {
+    const editWindowHours = await loadWorkLogEditWindowHours(db, context.organizationId);
+    enforce(
+      canChangeAttachments(context, workLogFactsOf(workLog), this.clock.now(), editWindowHours),
+      'Work log',
+      workLog.id,
+    );
+  }
+
+  /** The attachment and its work log, if the caller may see that log; 404 otherwise. */
+  private async find(
+    db: Db,
+    context: AccessContext,
+    id: string,
+  ): Promise<{ attachment: AttachmentRow; workLog: WorkLogRow }> {
+    const row = await db.attachment.findFirst({
+      where: {
+        id,
+        organizationId: context.organizationId,
+        AND: [attachmentVisibilityWhere(context) as Prisma.AttachmentWhereInput],
+      },
+      include: { workLog: true },
+    });
     if (!row) {
       throw ApiException.notFound('Attachment', id);
     }
-    return row;
+    const { workLog, ...attachment } = row;
+    return { attachment, workLog };
   }
 
+  /** The work log, if the caller may see it; 404 otherwise (also for another organization). */
   private async findWorkLog(
     db: Db,
-    organizationId: string,
+    context: AccessContext,
     workLogId: string,
-  ): Promise<{ archivedAt: Date | null }> {
+  ): Promise<WorkLogRow> {
     const workLog = await db.workLog.findFirst({
-      where: { id: workLogId, organizationId },
-      select: { archivedAt: true },
+      where: {
+        id: workLogId,
+        organizationId: context.organizationId,
+        AND: [workLogVisibilityWhere(context) as Prisma.WorkLogWhereInput],
+      },
     });
     if (!workLog) {
       throw ApiException.notFound('Work log', workLogId);

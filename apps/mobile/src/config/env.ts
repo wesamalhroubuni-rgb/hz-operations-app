@@ -34,6 +34,11 @@ export const env = {
   apiUrl: readUrl(process.env.EXPO_PUBLIC_API_URL),
   /** Name of the client's product this build is branded as. */
   brandName: readText(process.env.EXPO_PUBLIC_BRAND_NAME, DEFAULT_BRAND_NAME),
+  /**
+   * Slug of the organization this build serves, sent with every sign-in. Required by the API as
+   * soon as more than one organization exists; null when not configured.
+   */
+  organizationSlug: process.env.EXPO_PUBLIC_ORGANIZATION_SLUG?.trim() || null,
 } as const;
 
 export const MISSING_API_URL_MESSAGE =

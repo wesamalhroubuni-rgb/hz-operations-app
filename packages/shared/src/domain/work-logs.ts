@@ -68,15 +68,18 @@ export const workLogSchema = z.object({
 });
 export type WorkLog = z.infer<typeof workLogSchema>;
 
+/** The statuses a log may be created with. `approved` and `rejected` are set by a reviewer. */
+export const WORK_LOG_CREATE_STATUSES = ['draft', 'submitted'] as const;
+
 /**
  * `clientId` is a UUID generated on the device: sending the same one again returns the log that
- * already exists (HTTP 200 instead of 201) and changes nothing. `authorId` defaults to the
- * acting user. `customFields` is validated against the log type; without a log type it must be
+ * already exists (HTTP 200 instead of 201) and changes nothing; the same `clientId` sent by
+ * another user is a conflict (409). The author is always the signed-in user: `authorId` is not
+ * accepted. `customFields` is validated against the log type; without a log type it must be
  * empty.
  */
 export const createWorkLogSchema = z.strictObject({
   clientId: idSchema,
-  authorId: idSchema.optional(),
   occurredAt: isoDateTimeSchema,
   taskId: idSchema.nullable().optional(),
   siteId: idSchema.nullable().optional(),
@@ -85,7 +88,7 @@ export const createWorkLogSchema = z.strictObject({
   text: longTextSchema.nullable().optional(),
   customFields: customFieldValuesInputSchema.default({}),
   location: workLogLocationSchema.nullable().optional(),
-  status: workLogStatusSchema.default('submitted'),
+  status: z.enum(WORK_LOG_CREATE_STATUSES).default('submitted'),
   source: workLogSourceSchema.default('manual'),
   /** Reserved for the AI phases; only null is accepted today. */
   aiMetadata: z.null().optional(),
@@ -111,6 +114,10 @@ export const updateWorkLogSchema = z
   .refine(atLeastOneField, AT_LEAST_ONE_FIELD);
 export type UpdateWorkLog = z.infer<typeof updateWorkLogSchema>;
 
+/**
+ * Who may make which move is decided by the API: the author moves a log between `draft` and
+ * `submitted` and resubmits a rejected one; a reviewer approves, rejects and reopens.
+ */
 export const changeWorkLogStatusSchema = z.strictObject({ status: workLogStatusSchema });
 export type ChangeWorkLogStatus = z.infer<typeof changeWorkLogStatusSchema>;
 

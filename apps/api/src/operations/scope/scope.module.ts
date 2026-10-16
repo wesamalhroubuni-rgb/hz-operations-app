@@ -1,10 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ScopeController } from './scope.controller';
-import { ScopeService } from './scope.service';
 
+/** The scope inspection endpoints. The scope service is provided by the global AccessModule. */
 @Module({
   controllers: [ScopeController],
-  providers: [ScopeService],
-  exports: [ScopeService],
 })
 export class ScopeModule {}

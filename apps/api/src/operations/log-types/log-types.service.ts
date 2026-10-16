@@ -11,6 +11,7 @@ import {
 import type { LogType as LogTypeRow, Prisma } from '../../generated/prisma/client';
 import { ApiException, orderByArgs, pageArgs, paginated } from '../../platform/http';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AccessService } from '../access';
 import { ChangeRecorder } from '../common/change-recorder';
 import { activeUnless, contains, iso, isoOrNull, isUniqueViolation, type Db } from '../common/db';
 
@@ -38,14 +39,20 @@ export function toLogType(row: LogTypeRow): LogType {
   };
 }
 
+/**
+ * Every signed-in user of the organization reads log types (they are needed to write a log).
+ * Managing them is for managers and admins (route policy `log_type.manage`).
+ */
 @Injectable()
 export class LogTypesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly changes: ChangeRecorder,
+    private readonly access: AccessService,
   ) {}
 
-  async list(organizationId: string, query: ListLogTypesQuery): Promise<Paginated<LogType>> {
+  async list(query: ListLogTypesQuery): Promise<Paginated<LogType>> {
+    const { organizationId } = await this.access.context();
     const where: Prisma.LogTypeWhereInput = {
       organizationId,
       ...activeUnless(query.includeArchived),
@@ -60,11 +67,13 @@ export class LogTypesService {
     return paginated(rows.map(toLogType), total, query);
   }
 
-  async get(organizationId: string, id: string): Promise<LogType> {
+  async get(id: string): Promise<LogType> {
+    const { organizationId } = await this.access.context();
     return toLogType(await this.find(this.prisma, organizationId, id));
   }
 
-  async create(organizationId: string, input: CreateLogType): Promise<LogType> {
+  async create(input: CreateLogType): Promise<LogType> {
+    const { organizationId } = await this.access.context();
     try {
       return await this.prisma.$transaction(async (tx) => {
         const logType = toLogType(await tx.logType.create({ data: { ...input, organizationId } }));
@@ -91,7 +100,8 @@ export class LogTypesService {
    * Updates the log type. When `fields` is sent and differs from the stored definition, the
    * version goes up by one; work logs written earlier keep the version they were checked against.
    */
-  async update(organizationId: string, id: string, input: UpdateLogType): Promise<LogType> {
+  async update(id: string, input: UpdateLogType): Promise<LogType> {
+    const { organizationId } = await this.access.context();
     return this.prisma.$transaction(async (tx) => {
       const row = await this.find(tx, organizationId, id);
       if (row.archivedAt) {
@@ -124,7 +134,8 @@ export class LogTypesService {
   }
 
   /** Archiving an archived log type changes and records nothing. Existing logs keep their type. */
-  async archive(organizationId: string, id: string): Promise<LogType> {
+  async archive(id: string): Promise<LogType> {
+    const { organizationId } = await this.access.context();
     return this.prisma.$transaction(async (tx) => {
       const before = toLogType(await this.find(tx, organizationId, id));
       if (before.archivedAt !== null) {

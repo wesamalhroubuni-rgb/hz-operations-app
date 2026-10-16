@@ -13,6 +13,7 @@ import { ApiException } from './api-exception';
 interface ResponseLike {
   status(code: number): { json(body: unknown): void };
   getHeader?(name: string): unknown;
+  setHeader?(name: string, value: string): unknown;
 }
 
 const STATUS_CODES: Record<number, ApiErrorCode> = {
@@ -22,6 +23,7 @@ const STATUS_CODES: Record<number, ApiErrorCode> = {
   [HttpStatus.NOT_FOUND]: 'not_found',
   [HttpStatus.CONFLICT]: 'conflict',
   [HttpStatus.UNPROCESSABLE_ENTITY]: 'unprocessable',
+  [HttpStatus.TOO_MANY_REQUESTS]: 'rate_limited',
   [HttpStatus.SERVICE_UNAVAILABLE]: 'service_unavailable',
 };
 
@@ -52,6 +54,9 @@ export class ApiExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<ResponseLike>();
     const body = this.toBody(exception, correlationIdOf(response));
+    if (exception instanceof ApiException && exception.retryAfterSeconds !== undefined) {
+      response.setHeader?.('Retry-After', String(exception.retryAfterSeconds));
+    }
     response.status(body.statusCode).json(body);
   }
 

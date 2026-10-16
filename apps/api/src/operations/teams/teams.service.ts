@@ -3,6 +3,7 @@ import type { CreateTeam, ListTeamsQuery, Paginated, Team, UpdateTeam } from '@o
 import type { Prisma, Team as TeamRow } from '../../generated/prisma/client';
 import { ApiException, orderByArgs, pageArgs, paginated } from '../../platform/http';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AccessService, teamVisibilityWhere, type AccessContext } from '../access';
 import { ChangeRecorder } from '../common/change-recorder';
 import { activeUnless, contains, iso, isoOrNull, type Db } from '../common/db';
 import { assertValidParent } from '../common/references';
@@ -20,17 +21,24 @@ export function toTeam(row: TeamRow): Team {
   };
 }
 
+/**
+ * Reading follows `teamVisibility`. Managing is for managers and admins (route policy
+ * `team.manage`), who see every team, so the writes need no further object-level rule.
+ */
 @Injectable()
 export class TeamsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly changes: ChangeRecorder,
+    private readonly access: AccessService,
   ) {}
 
-  async list(organizationId: string, query: ListTeamsQuery): Promise<Paginated<Team>> {
+  async list(query: ListTeamsQuery): Promise<Paginated<Team>> {
+    const context = await this.access.context();
     const where: Prisma.TeamWhereInput = {
-      organizationId,
+      organizationId: context.organizationId,
       ...activeUnless(query.includeArchived),
+      AND: [teamVisibilityWhere(context) as Prisma.TeamWhereInput],
       ...(query.parentId ? { parentId: query.parentId } : {}),
       ...(query.search ? { name: contains(query.search) } : {}),
     };
@@ -41,11 +49,12 @@ export class TeamsService {
     return paginated(rows.map(toTeam), total, query);
   }
 
-  async get(organizationId: string, id: string): Promise<Team> {
-    return toTeam(await this.find(this.prisma, organizationId, id));
+  async get(id: string): Promise<Team> {
+    return toTeam(await this.find(this.prisma, await this.access.context(), id));
   }
 
-  async create(organizationId: string, input: CreateTeam): Promise<Team> {
+  async create(input: CreateTeam): Promise<Team> {
+    const { organizationId } = await this.access.context();
     return this.prisma.$transaction(async (tx) => {
       await assertValidParent(tx, 'team', organizationId, null, input.parentId);
       const team = toTeam(await tx.team.create({ data: { ...input, organizationId } }));
@@ -60,9 +69,11 @@ export class TeamsService {
     });
   }
 
-  async update(organizationId: string, id: string, input: UpdateTeam): Promise<Team> {
+  async update(id: string, input: UpdateTeam): Promise<Team> {
+    const context = await this.access.context();
+    const { organizationId } = context;
     return this.prisma.$transaction(async (tx) => {
-      const before = toTeam(await this.findActive(tx, organizationId, id));
+      const before = toTeam(await this.findActive(tx, context, id));
       await assertValidParent(tx, 'team', organizationId, id, input.parentId);
       const team = toTeam(await tx.team.update({ where: { id }, data: input }));
       await this.changes.record(tx, {
@@ -78,18 +89,19 @@ export class TeamsService {
   }
 
   /** Archives the team. Its children, memberships and history are left as they are. */
-  async archive(organizationId: string, id: string): Promise<Team> {
-    return this.setArchived(organizationId, id, true);
+  async archive(id: string): Promise<Team> {
+    return this.setArchived(id, true);
   }
 
-  async restore(organizationId: string, id: string): Promise<Team> {
-    return this.setArchived(organizationId, id, false);
+  async restore(id: string): Promise<Team> {
+    return this.setArchived(id, false);
   }
 
   /** Archiving an archived team (or restoring an active one) changes and records nothing. */
-  private async setArchived(organizationId: string, id: string, archived: boolean): Promise<Team> {
+  private async setArchived(id: string, archived: boolean): Promise<Team> {
+    const context = await this.access.context();
     return this.prisma.$transaction(async (tx) => {
-      const before = toTeam(await this.find(tx, organizationId, id));
+      const before = toTeam(await this.find(tx, context, id));
       if ((before.archivedAt !== null) === archived) {
         return before;
       }
@@ -97,7 +109,7 @@ export class TeamsService {
         await tx.team.update({ where: { id }, data: { archivedAt: archived ? new Date() : null } }),
       );
       await this.changes.record(tx, {
-        organizationId,
+        organizationId: context.organizationId,
         entityType: 'team',
         verb: archived ? 'archived' : 'restored',
         entityId: id,
@@ -108,16 +120,23 @@ export class TeamsService {
     });
   }
 
-  private async find(db: Db, organizationId: string, id: string): Promise<TeamRow> {
-    const row = await db.team.findFirst({ where: { id, organizationId } });
+  /** The team, if the caller may see it; 404 otherwise (also for another organization). */
+  private async find(db: Db, context: AccessContext, id: string): Promise<TeamRow> {
+    const row = await db.team.findFirst({
+      where: {
+        id,
+        organizationId: context.organizationId,
+        AND: [teamVisibilityWhere(context) as Prisma.TeamWhereInput],
+      },
+    });
     if (!row) {
       throw ApiException.notFound('Team', id);
     }
     return row;
   }
 
-  private async findActive(db: Db, organizationId: string, id: string): Promise<TeamRow> {
-    const row = await this.find(db, organizationId, id);
+  private async findActive(db: Db, context: AccessContext, id: string): Promise<TeamRow> {
+    const row = await this.find(db, context, id);
     if (row.archivedAt) {
       throw ApiException.conflict(`Team ${id} is archived; restore it before changing it`);
     }

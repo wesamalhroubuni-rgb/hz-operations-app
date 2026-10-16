@@ -472,13 +472,12 @@ describe('tenant isolation', () => {
           {
             clientId: randomUUID(),
             occurredAt: at().toISOString(),
-            authorId: b.user.id,
             siteId: b.site.id,
             teamId: b.team.id,
             taskId: b.task.id,
             logTypeId: b.logType.id,
           },
-          ['authorId', 'logTypeId', 'siteId', 'taskId', 'teamId'],
+          ['logTypeId', 'siteId', 'taskId', 'teamId'],
         ],
       ];
       for (const [path, body, paths] of cases) {

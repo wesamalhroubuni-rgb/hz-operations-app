@@ -1,109 +1,111 @@
 # packages/shared memory
 
-Package `@ops/shared`. Last updated: 2026-10-13.
+Package `@ops/shared`. Last updated: 2026-10-16.
 
 ## Purpose
 
 Everything the API, the web app, and the mobile app must agree on, defined once: the Zod schemas
-of every request and response, the typed API client, the validation that must behave the same on
-the server and in a form, and the design tokens.
+of every request and response, the typed API client and the sign-in session manager, the validation
+and wording that must behave the same on the server and in both apps, and the design tokens.
 
 ## Current state
 
 Five areas plus the health schema, all re-exported from `src/index.ts`.
 
-| Area              | Contents                                                                                                                                                                                                                    |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/health.ts`   | `healthResponseSchema` / `HealthResponse`.                                                                                                                                                                                  |
-| `src/common/`     | `apiErrorSchema` and `API_ERROR_CODES`; `paginationQuerySchema`, `sortQuerySchema`, `paginatedSchema`, `Paginated`, `DEFAULT_PAGE_SIZE` (25), `MAX_PAGE_SIZE` (100); `idSchema`, `isoDateTimeSchema`, `queryBooleanSchema`. |
-| `src/domain/`     | One file per resource (`organization`, `users`, `memberships`, `sites`, `teams`, `log-types`, `tasks`, `work-logs`, `attachments`, `scope`), plus `enums.ts`, `custom-fields.ts`, and `shared.ts` (small building blocks).  |
-| `src/platform/`   | `audit.ts` and `outbox.ts`: schemas, list queries, and endpoint functions for the two platform read APIs. `AUDIT_REDACTED` (`"[redacted]"`).                                                                                |
-| `src/theme/`      | `tokens.ts` (colours, spacing, radii, font sizes and weights, `CONTRAST_REQUIREMENTS`), `contrast.ts` (WCAG maths), `css.ts` (`themeCssVariables`, `themeCss`).                                                             |
-| `src/api-client/` | `client.ts` (transport, `ApiResult`, `DEV_USER_HEADER`, `REQUEST_ID_HEADER`, `healthEndpoints`), `health-monitor.ts`, `health-status.ts`, `index.ts` (`createApiClient`).                                                   |
+| Area              | Contents                                                                                                                                                                                                                                                                                     |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/health.ts`   | `healthResponseSchema` / `HealthResponse`.                                                                                                                                                                                                                                                   |
+| `src/common/`     | `apiErrorSchema` and `API_ERROR_CODES` (now including `rate_limited`); pagination, sort, id, date, and query-boolean schemas.                                                                                                                                                                |
+| `src/domain/`     | One file per resource (`organization`, `users`, `memberships`, `sites`, `teams`, `log-types`, `tasks`, `work-logs`, `attachments`, `scope`), plus `enums.ts` (with `roleRank`, `rolesHighestFirst`), `custom-fields.ts`, and `shared.ts`.                                                    |
+| `src/platform/`   | `auth.ts` (the sign-in wire contract), `audit.ts`, `outbox.ts`. `AUDIT_REDACTED`.                                                                                                                                                                                                            |
+| `src/theme/`      | `tokens.ts`, `contrast.ts`, `css.ts`.                                                                                                                                                                                                                                                        |
+| `src/api-client/` | `client.ts` (transport with auth hooks and refresh-once, `ApiResult`, `CSRF_HEADER`, `REQUEST_ID_HEADER`), `create-api-client.ts` (`createApiClient`), `auth-session.ts` (`createAuthSessionManager`), `auth-text.ts`, `auth-forms.ts`, `health-monitor.ts`, `health-status.ts`, `index.ts`. |
 
-432 unit tests in 9 files. Build, lint, typecheck, and test verified on 2026-10-13.
+546 unit tests in 11 files, confirmed on 2026-10-16. `DEV_USER_HEADER` was removed in Phase 3.
 
-## What each resource file contains
+## Phase 3 contract changes
 
-Taking `work-logs.ts` as the model:
-
-- `workLogSchema` / `WorkLog`: the wire shape of the record.
-- `createWorkLogSchema`, `updateWorkLogSchema`, `changeWorkLogStatusSchema`: request bodies, all
-  `z.strictObject`. Update schemas are partial and refuse an empty body.
-- `listWorkLogsQuerySchema`: pagination, `sort` restricted to `WORK_LOG_SORT_FIELDS`, and the
-  filters.
-- `workLogListSchema`: the paginated envelope.
-- `workLogsEndpoints(transport)`: the typed client functions for the resource.
+- **Users** (`domain/users.ts`): `email` is optional and `username` new; a user needs at least one
+  of email, phone, username (`hasLoginIdentifier`). Responses are a discriminated union on
+  `profile`: `userBasicSchema` (id, displayName, roles), `userContactSchema` (adds email, phone),
+  `userFullSchema` (adds organization, username, memberships, `activated`, timestamps).
+  `createdUserSchema` is the full user plus `activation` (an `IssuedCode`). `normalizePhone` must
+  match the API's (`apps/api/src/platform/auth/identifiers.ts`).
+- **Organization** (`domain/organization.ts`): discriminated on `view`: `summary` (id, name, slug,
+  `workLogEditWindowHours`) or `full` (adds settings, timestamps). Settings validate
+  `workLogEditWindowHours` (positive, at most one year; default 24 via `workLogEditWindowHoursOf`)
+  and keep other keys.
+- **Memberships**: `ORG_WIDE_ROLES` and `membershipScopeIssues`: a manager or admin membership must
+  be `orgWide: true` with no sites or teams (the create schema refuses it).
+- **Work logs**: `createWorkLogSchema` has no `authorId` and allows `status` `draft` or `submitted`
+  only (`WORK_LOG_CREATE_STATUSES`).
+- **Scope**: `resolvedScopeSchema` gained `colleagueIds`.
+- **Auth** (`platform/auth.ts`): `loginRequestSchema` (`identifier`, `password`, `client: 'web' |
+'mobile'`, optional `organizationSlug`, `deviceName`), `loginResponseSchema`,
+  `refreshRequestSchema`, `refreshResponseSchema`, `meResponseSchema`, `authUserSchema`,
+  `authTokensSchema`, `setPasswordRequestSchema`, `changePasswordRequestSchema`,
+  `authSessionSchema`, `issuedCodeSchema`, `newPasswordSchema` (10 to 128 characters), the cookie
+  names `AUTH_ACCESS_COOKIE` / `AUTH_REFRESH_COOKIE`, and `authEndpoints(transport)`.
 
 ## Key files
 
-| File                               | What it does                                                                                                                         |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/index.ts`                     | The public entry point. Re-exports every area.                                                                                       |
-| `src/common/errors.ts`             | The error body of every non-2xx API response (except `/health`).                                                                     |
-| `src/common/pagination.ts`         | `page` / `pageSize`, `sort=field:asc\|desc`, the `{ items, page, pageSize, total }` envelope.                                        |
-| `src/domain/enums.ts`              | `ROLES`, `TASK_STATUSES`, `TASK_PRIORITIES`, `WORK_LOG_STATUSES`, `WORK_LOG_SOURCES`. Must match the Prisma enums exactly, in order. |
-| `src/domain/custom-fields.ts`      | Custom field definitions and `validateCustomFieldValues`, the single implementation of the rules (ADR-0003).                         |
-| `src/domain/scope.ts`              | `resolvedScopeSchema`: the shape the API's scope resolution produces. The rules themselves live in the API.                          |
-| `src/api-client/client.ts`         | `createApiTransport`: the one place that performs HTTP. Validates every body and never throws.                                       |
-| `src/api-client/index.ts`          | `createApiClient(options)`: the transport plus every resource's endpoint functions.                                                  |
-| `src/api-client/health-monitor.ts` | `createHealthMonitor`: framework-free check with retries after 2, 4, 8, 16 seconds (`HEALTH_RETRY_DELAYS_MS`).                       |
-| `src/api-client/health-status.ts`  | `describeHealth` and `CHECK_AGAIN_LABEL`: the wording of the status card in both apps.                                               |
-| `src/theme/tokens.ts`              | `darkTheme` (the only theme), `colors`, `spacing`, `radii`, `fontSizes`, `fontWeights`, `CONTRAST_REQUIREMENTS`.                     |
-| `tsconfig.json`                    | Extends `@ops/config/tsconfig/library.json`. Adds the `DOM` lib, only for the types of `fetch`, `AbortController`, and timers.       |
-| `tsconfig.build.json`              | Same, excluding `*.test.ts`. Used by `build` and `dev`.                                                                              |
-| `eslint.config.mjs`                | The shared base config, unchanged.                                                                                                   |
+| File                                  | What it does                                                                                                                                                        |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/index.ts`                        | The public entry point. Re-exports every area.                                                                                                                      |
+| `src/common/errors.ts`                | The error body of every non-2xx API response (except `/health`).                                                                                                    |
+| `src/domain/enums.ts`                 | `ROLES` (with `roleRank`, `rolesHighestFirst`), `TASK_STATUSES`, `TASK_PRIORITIES`, `WORK_LOG_STATUSES`, `WORK_LOG_SOURCES`. Must match the Prisma enums, in order. |
+| `src/domain/custom-fields.ts`         | Custom field definitions and `validateCustomFieldValues` (ADR-0003).                                                                                                |
+| `src/platform/auth.ts`                | The sign-in wire contract (above).                                                                                                                                  |
+| `src/api-client/client.ts`            | `createApiTransport`: the one place that performs HTTP. Bearer token, CSRF header on non-GET, `credentials`, refresh once on a 401.                                 |
+| `src/api-client/create-api-client.ts` | `createApiClient(options)`: the transport plus every resource's endpoint functions, including `auth`.                                                               |
+| `src/api-client/auth-session.ts`      | `createAuthSessionManager` (web and mobile modes), `TokenStorage`, `AuthState`, `signInFailureReason`, `setPasswordFailure`.                                        |
+| `src/api-client/auth-text.ts`         | Every sign-in, activation, and sign-out sentence (`AUTH_TEXT`, `AUTH_FAILURE_MESSAGES`, `AUTH_NOTICE_MESSAGES`) and `roleLabel`.                                    |
+| `src/api-client/auth-forms.ts`        | `validateSignInForm`, `validateSetPasswordForm`, `newPasswordProblem`, `isFormValid`.                                                                               |
+| `src/api-client/health-monitor.ts`    | `createHealthMonitor` with retries after 2, 4, 8, 16 seconds.                                                                                                       |
+| `src/theme/tokens.ts`                 | `darkTheme`, `colors`, `spacing`, `radii`, `fontSizes`, `fontWeights`, `CONTRAST_REQUIREMENTS`.                                                                     |
+| `tsconfig.json`                       | Extends `@ops/config/tsconfig/library.json`. Adds the `DOM` lib, only for `fetch`, `AbortController`, and timers.                                                   |
 
-## The API client
+## The API client and the session manager
 
 ```ts
-const client = createApiClient({ baseUrl, getHeaders: () => ({ 'x-dev-user-id': userId }) });
-const result = await client.workLogs.list({ siteId, sort: 'occurredAt:desc' });
-if (result.ok) {
-  result.data.items;
-} else {
-  result.failure.kind; // 'network' | 'timeout' | 'invalid-response' | 'http'
-}
+const session = createAuthSessionManager({ baseUrl, mode: 'web', organizationSlug });
+await session.start(); // GET /auth/me (web) or load tokens from storage first (mobile)
+const result = await session.signIn(identifier, password); // { ok } or { ok: false, failure }
+const logs = await session.client.workLogs.list({ sort: 'occurredAt:desc' });
 ```
 
-- A call resolves to `ApiResult<Data>`; it never throws.
-- `failure.kind === 'http'` carries the API's standard error body in `failure.error`; branch on
-  `failure.error.code`.
-- The default timeout is 10 seconds (`DEFAULT_API_TIMEOUT_MS`).
-- `GET /health` answers 503 with a normal body when the database is down, so `health.get()`
-  treats 503 as success (`alsoAccept`).
-- `getHeaders` is where the dev header goes today and a token will go in Phase 3. Neither app
-  passes it yet.
+- A call resolves to `ApiResult<Data>`; it never throws. Branch on `failure.error.code` for HTTP
+  errors.
+- **Transport**: on a 401 it calls `auth.refresh()` once (concurrent 401s share it) and repeats the
+  request once; a second 401 or a failed refresh calls `auth.onAuthLost()`. No loops.
+  `skipAuthRefresh` on a request opts out (the auth endpoints use it where needed).
+- **`mode: 'web'`**: `credentials: 'include'`; the cookies are the session; the CSRF token from
+  login, refresh, or `/auth/me` is kept in memory and sent as `x-csrf-token`.
+- **`mode: 'mobile'`**: `credentials: 'omit'`; tokens in memory and in the given `TokenStorage`;
+  the rotated pair is saved before it is used; logout names the session by refresh token.
+- State: `loading`, `signedOut` (notice `session_expired`, `unreachable`, or
+  `sign_out_unconfirmed`), `signedIn` (with `AuthUser`). `signOut()` always ends signed out;
+  `signOutEverywhere()` stays signed in when the server could not confirm. A failed refresh that
+  is not a 400 or 401 keeps the session.
+- The manager never logs and never puts a password, code, or token in a message.
 - To add a resource: write its schemas and `xxxEndpoints(transport)` in `src/domain/` (or
-  `src/platform/` for a reusable one), export it from that folder's `index.ts`, and add it to
-  `createApiClient`.
+  `src/platform/`), export it, and add it to `createApiClient` in `create-api-client.ts`.
 
 ## Design tokens
 
-- The palette was sampled from the client's logo (`docs/brand/`): `background` `#000000`,
-  `primary` / `brandGold` `#D4A454`, `brandRed` / `accent` `#D80611`, `accentText` / `danger`
-  `#FF6B6E`, `textPrimary` `#F5F1E8`.
-- `brandRed` fails WCAG AA as normal text on black. Use it only for decoration; use `accentText`
-  for red text.
-- `CONTRAST_REQUIREMENTS` lists the allowed foreground and background pairings and the ratio each
-  must reach. `theme.test.ts` checks every one, so a colour change that breaks AA fails the tests.
-  Combine colours only as listed there.
-- The web app turns the tokens into CSS variables with `themeCssVariables`; the mobile app imports
-  the constants.
-- A light theme would be a second `Theme` object next to `darkTheme`. None exists.
+- Palette from the client's logo: `background` `#000000`, `primary` / `brandGold` `#D4A454`,
+  `brandRed` / `accent` `#D80611`, `accentText` / `danger` `#FF6B6E`, `textPrimary` `#F5F1E8`.
+- `brandRed` fails WCAG AA as normal text on black; use it only for decoration.
+- `CONTRAST_REQUIREMENTS` lists the allowed pairings; `theme.test.ts` checks every one.
 
 ## How it is built and consumed
 
-- `build` runs `tsc -p tsconfig.build.json` and emits **CommonJS** JavaScript, declarations, and
-  source maps into `dist/`. The package has no `"type": "module"`, so NodeNext compiles to CommonJS.
-- `package.json` points `main`, `types`, and `exports` at `dist/`. Consumers import the compiled
-  output, not the source.
+- `build` runs `tsc -p tsconfig.build.json` and emits **CommonJS**, declarations, and source maps
+  into `dist/`. `main`, `types`, and `exports` point at `dist/`.
 - **It must be built before any dependant can typecheck, lint, test, or build**, and before any
-  Expo command (`apps/mobile/app.config.ts` imports the tokens). Turbo does this through the
-  `^build` dependency on every task; the root `db:seed`, `db:reset`, and `test:integration`
-  scripts build it explicitly. If an app reports that `@ops/shared` cannot be found, run
-  `pnpm --filter @ops/shared build`.
-- `dev` runs the same compile in watch mode, so `pnpm dev` at the root keeps `dist/` current.
+  Expo command. Turbo does this through `^build`; the root `db:seed`, `db:reset`, and
+  `test:integration` scripts build it explicitly.
+- `dev` runs the same compile in watch mode.
 
 ## Scripts
 
@@ -117,38 +119,36 @@ if (result.ok) {
 
 ## Conventions
 
-- Relative imports inside this package **must end in `.js`** (`./health.js`), as NodeNext requires.
-- Export the Zod schema and the type inferred from it together. Name them `xxxSchema` and `Xxx`.
-- **Request bodies are `z.strictObject`.** An unknown key must be an error, not silently dropped.
-  `strict-bodies.test.ts` checks this for every body schema; add new ones to it.
-- Response schemas are plain `z.object`, so an older client tolerates a new field.
-- Date ranges are inclusive at the lower bound and exclusive at the upper bound. Name the pair
-  `xxxFrom` / `xxxTo` (or `from` / `to`).
-- Query booleans use `queryBooleanSchema`, never `z.coerce.boolean()` (which reads `"false"` as
-  true).
-- 64-bit integers travel as decimal strings (`outboxSequenceSchema`).
-- Logic belongs here only when the API and a client must behave identically (validation, status
-  wording) or when both clients need it (the API client, the health monitor). Business rules that
-  only the server applies stay in the API.
-- Keep the package free of runtime dependencies other than Zod. It runs in Node, browsers, and
-  React Native: use only `fetch`, `AbortController`, and timers. No other DOM API, no Node API, no
-  React.
-- `src/common/`, `src/platform/`, `src/theme/`, and the transport are product-neutral.
-  `src/domain/` and the resource list in `createApiClient` are the Operations domain. Keep that
-  split so the neutral parts can move to a shared Kaneri package.
+- Relative imports inside this package **must end in `.js`**.
+- Export the Zod schema and the type inferred from it together (`xxxSchema`, `Xxx`).
+- **Request bodies are `z.strictObject`.** `strict-bodies.test.ts` checks every body schema; add
+  new ones to it. Server-set fields (`authorId`, `createdById`, `uploadedById`) are never in a
+  request schema.
+- Response schemas are plain `z.object` (or discriminated unions of them), so an older client
+  tolerates a new field.
+- Date ranges are inclusive at the lower bound and exclusive at the upper bound.
+- Query booleans use `queryBooleanSchema`, never `z.coerce.boolean()`.
+- 64-bit integers travel as decimal strings.
+- Logic belongs here only when the API and a client must behave identically (validation,
+  identifier normalisation, wording) or when both clients need it (the API client, the session
+  manager, the health monitor). Authorization rules stay in the API.
+- No runtime dependency other than Zod. Only `fetch`, `AbortController`, and timers; no other DOM
+  API, no Node API, no React, no React Native.
+- `src/common/`, `src/platform/`, `src/theme/`, the transport, and the session manager are
+  product-neutral; `src/domain/` and the resource list in `createApiClient` are the Operations
+  domain.
 - Tests are `*.test.ts` next to the code, run with Vitest.
 - Changing a schema changes the contract for the API and both clients at once. Run the root
   `pnpm typecheck`, `pnpm test`, and `pnpm test:integration` after any change.
 
 ## Known issues
 
-- Consumers see changes only after a rebuild. Outside `pnpm dev`, rebuild by hand or through a root
-  script.
-- The package is CommonJS only. An ESM-only consumer would need a dual build.
+- Consumers see changes only after a rebuild.
+- CommonJS only; an ESM-only consumer would need a dual build.
 - The `DOM` lib is enabled for the whole package, so TypeScript will not stop someone from using
-  `document` or `window`. Only review prevents it.
-- `src/domain/shared.ts` imports a type from `src/api-client/client.ts`, and the resource files
-  import the transport types, so `domain/` and `api-client/` depend on each other.
-- The custom-field key rules and the audit redaction rule (in the API) are independent: nothing
-  here warns that a field key such as `token_no` will be redacted in audit and outbox events.
-- Old log type definitions have no schema or endpoint; only the current `fields` is exposed.
+  `document` or `window`.
+- `src/domain/` and `src/api-client/` import each other's types.
+- The comment on `listUsersQuerySchema` says a search matches the username for contact-visible
+  users; the API matches the username for admins only.
+- The custom-field key rules and the audit redaction rule (in the API) are independent.
+- Old log type definitions have no schema or endpoint.

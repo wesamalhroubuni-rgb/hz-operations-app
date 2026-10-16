@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AccessModule } from './access/access.module';
 import { AttachmentsModule } from './attachments/attachments.module';
 import { OperationsCommonModule } from './common/operations-common.module';
 import { LogTypesModule } from './log-types/log-types.module';
@@ -15,6 +16,7 @@ import { WorkLogsModule } from './work-logs/work-logs.module';
 @Module({
   imports: [
     OperationsCommonModule,
+    AccessModule,
     OrganizationModule,
     UsersModule,
     MembershipsModule,

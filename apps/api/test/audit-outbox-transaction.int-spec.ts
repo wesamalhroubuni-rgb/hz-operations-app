@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AUDIT_REDACTED, REQUEST_ID_HEADER } from '@ops/shared';
+import { AccessService } from '../src/operations/access';
 import { ChangeRecorder } from '../src/operations/common/change-recorder';
 import { SitesService } from '../src/operations/sites/sites.service';
 import { AuditService } from '../src/platform/audit/audit.service';
@@ -191,8 +192,9 @@ describe('audit and outbox in the transaction of the change', () => {
 
     it('records the acting user of each request, not the first one seen', async () => {
       const second = await createUser(ctx.prisma, orgId());
-      await api.post('/sites', { name: 'A' });
-      await ctx.as(second.id).post('/sites', { name: 'B' });
+      await createMembership(ctx.prisma, orgId(), second.id, 'manager', { orgWide: true });
+      expect((await api.post('/sites', { name: 'A' })).status).toBe(201);
+      expect((await ctx.as(second.id).post('/sites', { name: 'B' })).status).toBe(201);
 
       const audits = await ctx.prisma.auditEvent.findMany({ orderBy: { occurredAt: 'asc' } });
       const outbox = await ctx.prisma.outboxEvent.findMany({ orderBy: { sequence: 'asc' } });
@@ -224,7 +226,10 @@ describe('audit and outbox in the transaction of the change', () => {
     });
 
     it('attributes a write made outside a request to the system', async () => {
-      const site = await ctx.app.get(SitesService).create(orgId(), { name: 'Seeded site' });
+      // Services take the caller from AccessService; outside a request that is the system context.
+      const site = await ctx.app
+        .get(AccessService)
+        .runAsSystem(orgId(), () => ctx.app.get(SitesService).create({ name: 'Seeded site' }));
 
       expect(await onlyAudit()).toMatchObject({
         actorType: 'system',
@@ -244,14 +249,41 @@ describe('audit and outbox in the transaction of the change', () => {
     ])('names the %s create event and nests the record', async (entity, path, body, key) => {
       const response = await api.post(path, body);
       expect(response.status).toBe(201);
-      expect(await onlyAudit()).toMatchObject({
+      const audits = await ctx.prisma.auditEvent.findMany({ orderBy: { occurredAt: 'asc' } });
+      expect(audits[0]).toMatchObject({
         action: `${entity}.created`,
         entityType: entity,
         entityId: response.body.id,
       });
+      // Creating a user also issues the activation code: a security event, audit only.
+      expect(audits.slice(1).map((row) => row.action)).toEqual(
+        entity === 'user' ? ['auth.code_issued'] : [],
+      );
       const outbox = await onlyOutbox();
       expect(outbox.eventType).toBe(`${entity}.created`);
-      expect(outbox.payload).toEqual({ [key]: response.body });
+      if (entity !== 'user') {
+        expect(outbox.payload).toEqual({ [key]: response.body });
+        return;
+      }
+      // A user is recorded as the stored row: no response-shape fields (profile, roles,
+      // activated) and never the activation code of the answer.
+      const { id, organizationId, email, phone, username, displayName } = response.body;
+      const { memberships, createdAt, updatedAt, archivedAt } = response.body;
+      expect(outbox.payload).toEqual({
+        user: {
+          id,
+          organizationId,
+          email,
+          phone,
+          username,
+          displayName,
+          memberships,
+          createdAt,
+          updatedAt,
+          archivedAt,
+        },
+      });
+      expect(JSON.stringify(outbox.payload)).not.toContain('activation');
     });
   });
 
@@ -556,7 +588,18 @@ describe('audit and outbox in the transaction of the change', () => {
       const second = await api.post(`/${path}/${record.id}/archive`);
       expect([first.status, second.status]).toEqual([200, 200]);
       expect(second.body.archivedAt).toBe(first.body.archivedAt);
-      expect(await eventCounts(ctx.prisma)).toEqual({ audit: 1, outbox: 1 });
+      // Archiving a membership also ends the holder's sessions (here: the admin's own, opened
+      // by the harness), which is one more audit event and no outbox event.
+      const actions = (
+        await ctx.prisma.auditEvent.findMany({ orderBy: { occurredAt: 'asc' } })
+      ).map((row) => row.action);
+      const singular = path.replace(/-/g, '_').slice(0, -1);
+      expect(actions).toEqual(
+        path === 'memberships'
+          ? ['membership.archived', 'auth.session_revoked']
+          : [`${singular}.archived`],
+      );
+      expect((await eventCounts(ctx.prisma)).outbox).toBe(1);
     });
   });
 

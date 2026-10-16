@@ -8,6 +8,7 @@ import {
 import {
   at,
   createLogType,
+  createMembership,
   createSite,
   createTask,
   createTeam,
@@ -149,12 +150,19 @@ describe('work logs', () => {
       });
     });
 
-    it('logs in the name of another active user of the organization when authorId is given', async () => {
+    it('refuses a body that names authorId (400): the author is always the signed-in user', async () => {
       const worker = await createUser(ctx.prisma, orgId());
       const response = await api.post('/work-logs', body({ authorId: worker.id }));
-      expect(response.status).toBe(201);
-      expect(response.body.authorId).toBe(worker.id);
-      // The audit trail still names who really made the request.
+      expect(response.status).toBe(400);
+      expect(response.body.code).toBe('validation_failed');
+      expect(detailPaths(response)).toEqual(['authorId']);
+      expect(await ctx.prisma.workLog.count()).toBe(0);
+      expect(await eventCounts(ctx.prisma)).toEqual({ audit: 0, outbox: 0 });
+
+      // Without it the author is the caller, and the audit trail names the same user.
+      const created = await api.post('/work-logs', body());
+      expect(created.status).toBe(201);
+      expect(created.body.authorId).toBe(tenant.admin.id);
       const audit = await ctx.prisma.auditEvent.findFirstOrThrow();
       expect(audit.actorId).toBe(tenant.admin.id);
     });
@@ -387,18 +395,16 @@ describe('work logs', () => {
     describe('references', () => {
       it('rejects references to another organization (422), naming each field', async () => {
         const o = other.organization.id;
-        const [site, team, logType, user] = await Promise.all([
+        const [site, team, logType] = await Promise.all([
           createSite(ctx.prisma, o),
           createTeam(ctx.prisma, o),
           createLogType(ctx.prisma, o),
-          createUser(ctx.prisma, o),
         ]);
         const task = await createTask(ctx.prisma, o, other.admin.id);
 
         const response = await api.post(
           '/work-logs',
           body({
-            authorId: user.id,
             taskId: task.id,
             siteId: site.id,
             teamId: team.id,
@@ -409,13 +415,7 @@ describe('work logs', () => {
 
         expect(response.status).toBe(422);
         expect(response.body.code).toBe('unprocessable');
-        expect(detailPaths(response)).toEqual([
-          'authorId',
-          'logTypeId',
-          'siteId',
-          'taskId',
-          'teamId',
-        ]);
+        expect(detailPaths(response)).toEqual(['logTypeId', 'siteId', 'taskId', 'teamId']);
         expect(await ctx.prisma.workLog.count()).toBe(0);
       });
 
@@ -428,9 +428,9 @@ describe('work logs', () => {
           () => createTask(ctx.prisma, orgId(), tenant.admin.id, { archivedAt: at() }),
         ],
         [
-          'an archived author',
-          'authorId',
-          () => createUser(ctx.prisma, orgId(), { archivedAt: at() }),
+          'an archived log type',
+          'logTypeId',
+          () => createLogType(ctx.prisma, orgId(), { archivedAt: at() }),
         ],
       ])('rejects %s (422)', async (_name, field, create) => {
         const record = await create();
@@ -485,14 +485,22 @@ describe('work logs', () => {
       expect(await eventCounts(ctx.prisma)).toEqual({ audit: 1, outbox: 1 });
     });
 
-    it('returns the same log when another user of the organization retries the clientId', async () => {
+    it('answers 409 when another user of the organization reuses the clientId, and leaks nothing', async () => {
       const second = await createUser(ctx.prisma, orgId());
-      const request = body();
+      await createMembership(ctx.prisma, orgId(), second.id, 'worker');
+      const request = body({ text: 'Private text of the first author' });
       const first = await api.post('/work-logs', request);
+      expect(first.status).toBe(201);
+
       const retry = await ctx.as(second.id).post('/work-logs', request);
-      expect(retry.status).toBe(200);
-      expect(retry.body.id).toBe(first.body.id);
-      expect(retry.body.authorId).toBe(tenant.admin.id);
+      expect(retry.status).toBe(409);
+      expect(retry.body.code).toBe('conflict');
+      expect(retry.body.details).toEqual([{ path: 'clientId', message: 'is already in use' }]);
+      expect(retry.text).not.toContain(first.body.id);
+      expect(retry.text).not.toContain('Private text');
+      expect(retry.text).not.toContain(tenant.admin.id);
+      expect(await ctx.prisma.workLog.count()).toBe(1);
+      expect(await eventCounts(ctx.prisma)).toEqual({ audit: 1, outbox: 1 });
     });
 
     it('creates one row for concurrent identical requests', async () => {
@@ -868,7 +876,10 @@ describe('work logs', () => {
     });
 
     it('changes the status and emits work_log.status_changed with from and to', async () => {
-      const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
+      // A reviewer approves somebody else's log (nobody approves their own).
+      const author = await createUser(ctx.prisma, orgId());
+      await createMembership(ctx.prisma, orgId(), author.id, 'worker');
+      const workLog = await createWorkLog(ctx.prisma, orgId(), author.id);
 
       const response = await api.patch(`/work-logs/${workLog.id}/status`, { status: 'approved' });
 
@@ -895,8 +906,9 @@ describe('work logs', () => {
       expect((await api.get('/work-logs')).body.total).toBe(0);
       expect((await api.get(`/work-logs/${workLog.id}`)).status).toBe(200);
 
+      // The author may make both changes, so the archived state is what refuses them.
       const update = await api.patch(`/work-logs/${workLog.id}`, { text: 'x' });
-      const status = await api.patch(`/work-logs/${workLog.id}/status`, { status: 'approved' });
+      const status = await api.patch(`/work-logs/${workLog.id}/status`, { status: 'draft' });
       expect([update.status, status.status]).toEqual([409, 409]);
       expect(update.body.message).toBe(`Work log ${workLog.id} is archived and cannot be changed`);
     });
@@ -921,7 +933,9 @@ describe('work logs', () => {
 
     it('records the metadata of a file on a work log (201); the uploader is the acting user', async () => {
       const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
+      // A manager reviews the admin's log, so they may attach a file to it.
       const uploader = await createUser(ctx.prisma, orgId());
+      await createMembership(ctx.prisma, orgId(), uploader.id, 'manager', { orgWide: true });
       const metadata = file({ fileName: '  roof.jpg ' });
 
       const response = await ctx

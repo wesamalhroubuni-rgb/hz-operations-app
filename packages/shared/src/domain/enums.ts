@@ -7,6 +7,20 @@ export const ROLES = ['worker', 'supervisor', 'manager', 'admin'] as const;
 export const roleSchema = z.enum(ROLES);
 export type Role = z.infer<typeof roleSchema>;
 
+/**
+ * Rank of a role: `worker` 0 < `supervisor` 1 < `manager` 2 < `admin` 3. Anything that is not a
+ * known role ranks -1, below every role, so a comparison with an unknown value never grants.
+ */
+export function roleRank(role: string | null | undefined): number {
+  return ROLES.indexOf(role as Role);
+}
+
+/** The distinct known roles of a list, highest first. */
+export function rolesHighestFirst(roles: Iterable<string>): Role[] {
+  const held = new Set(roles);
+  return ROLES.filter((role) => held.has(role)).reverse();
+}
+
 export const TASK_STATUSES = ['todo', 'in_progress', 'blocked', 'done', 'cancelled'] as const;
 export const taskStatusSchema = z.enum(TASK_STATUSES);
 export type TaskStatus = z.infer<typeof taskStatusSchema>;

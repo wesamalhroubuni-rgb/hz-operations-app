@@ -1,6 +1,8 @@
 # ADR-0002: Flexible organization and scope model
 
-- **Status**: Accepted
+- **Status**: Accepted; amended in part by [ADR-0005](0005-authorization-model.md) (2026-10-14:
+  manager and admin memberships are always organization-wide, `colleagueIds`, and the
+  record-visibility rule left open below)
 - **Date**: 2026-10-13
 - **Phase**: 2 (Backend core)
 

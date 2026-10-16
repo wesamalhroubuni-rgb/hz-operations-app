@@ -10,6 +10,20 @@ import type {
 import type { Prisma } from '../../generated/prisma/client';
 import { ApiException, orderByArgs, pageArgs, paginated } from '../../platform/http';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  AccessService,
+  assignableUserWhere,
+  authorOf,
+  canChangeTaskStatus,
+  canManageTask,
+  canPlaceTask,
+  enforce,
+  siteVisibilityWhere,
+  taskVisibilityWhere,
+  teamVisibilityWhere,
+  type AccessContext,
+  type TaskFacts,
+} from '../access';
 import { ChangeRecorder } from '../common/change-recorder';
 import { activeUnless, contains, iso, isoOrNull, type Db } from '../common/db';
 import { assertActiveReferences, ref } from '../common/references';
@@ -21,6 +35,11 @@ const TASK_INCLUDE = {
 
 type TaskRow = Prisma.TaskGetPayload<{ include: typeof TASK_INCLUDE }>;
 
+/**
+ * The task as sent to everyone who may see it. People appear as ids only (`createdById`,
+ * `assigneeIds`); a client resolves them through `/users`, which answers with the shape the
+ * caller is entitled to, so a worker never receives a colleague's contact details through a task.
+ */
 export function toTask(row: TaskRow): Task {
   return {
     id: row.id,
@@ -41,17 +60,32 @@ export function toTask(row: TaskRow): Task {
   };
 }
 
+/** What the access rules read from a task. */
+function factsOf(task: Task): TaskFacts {
+  return {
+    siteId: task.siteId,
+    teamId: task.teamId,
+    createdById: task.createdById,
+    assigneeIds: task.assigneeIds,
+    status: task.status,
+  };
+}
+
 @Injectable()
 export class TasksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly changes: ChangeRecorder,
+    private readonly access: AccessService,
   ) {}
 
-  async list(organizationId: string, query: ListTasksQuery): Promise<Paginated<Task>> {
+  /** The tasks the caller may see. The filters asked for can only narrow that set. */
+  async list(query: ListTasksQuery): Promise<Paginated<Task>> {
+    const context = await this.access.context();
     const where: Prisma.TaskWhereInput = {
-      organizationId,
+      organizationId: context.organizationId,
       ...activeUnless(query.includeArchived),
+      AND: [taskVisibilityWhere(context) as Prisma.TaskWhereInput],
       ...(query.status ? { status: query.status } : {}),
       ...(query.priority ? { priority: query.priority } : {}),
       ...(query.siteId ? { siteId: query.siteId } : {}),
@@ -82,19 +116,29 @@ export class TasksService {
     return paginated(rows.map(toTask), total, query);
   }
 
-  async get(organizationId: string, id: string): Promise<Task> {
-    return toTask(await this.find(this.prisma, organizationId, id));
+  async get(id: string): Promise<Task> {
+    return toTask(await this.find(this.prisma, await this.access.context(), id));
   }
 
-  /** @param createdById the acting user, recorded as the task's creator */
-  async create(organizationId: string, createdById: string, input: CreateTask): Promise<Task> {
+  /**
+   * Creates a task. The creator is the signed-in user. The site, the team and the assignees
+   * must be ones the caller may see and assign (422, as for an id that does not exist), and the
+   * task must be placed within the caller's scope (403).
+   */
+  async create(input: CreateTask): Promise<Task> {
+    const context = await this.access.context();
+    const { organizationId } = context;
+    const createdById = authorOf(context);
     return this.prisma.$transaction(async (tx) => {
       await assertActiveReferences(tx, organizationId, [
-        ...ref('user', 'createdById', createdById),
-        ...ref('site', 'siteId', input.siteId),
-        ...ref('team', 'teamId', input.teamId),
-        ...ref('user', 'assigneeIds', input.assigneeIds),
+        ...ref('site', 'siteId', input.siteId, siteVisibilityWhere(context)),
+        ...ref('team', 'teamId', input.teamId, teamVisibilityWhere(context)),
+        ...ref('user', 'assigneeIds', input.assigneeIds, assignableUserWhere(context)),
       ]);
+      enforce(
+        canPlaceTask(context, { siteId: input.siteId ?? null, teamId: input.teamId ?? null }),
+        'Task',
+      );
       const task = toTask(
         await tx.task.create({
           data: {
@@ -126,13 +170,26 @@ export class TasksService {
     });
   }
 
-  async update(organizationId: string, id: string, input: UpdateTask): Promise<Task> {
+  /** Edits a task the caller manages. Moving it must leave it within the caller's scope. */
+  async update(id: string, input: UpdateTask): Promise<Task> {
+    const context = await this.access.context();
+    const { organizationId } = context;
     return this.prisma.$transaction(async (tx) => {
-      const before = toTask(await this.findActive(tx, organizationId, id));
+      const before = toTask(await this.find(tx, context, id));
+      enforce(canManageTask(context, factsOf(before)), 'Task', id);
+      assertNotArchived(before);
       await assertActiveReferences(tx, organizationId, [
-        ...ref('site', 'siteId', input.siteId),
-        ...ref('team', 'teamId', input.teamId),
+        ...ref('site', 'siteId', input.siteId, siteVisibilityWhere(context)),
+        ...ref('team', 'teamId', input.teamId, teamVisibilityWhere(context)),
       ]);
+      enforce(
+        canPlaceTask(context, {
+          siteId: input.siteId === undefined ? before.siteId : input.siteId,
+          teamId: input.teamId === undefined ? before.teamId : input.teamId,
+        }),
+        'Task',
+        id,
+      );
       const task = toTask(
         await tx.task.update({
           where: { id },
@@ -163,12 +220,17 @@ export class TasksService {
   }
 
   /**
-   * Moves the task to another status. `completedAt` is set when the task becomes `done` and
-   * cleared when it leaves `done`. Setting the status it already has changes and records nothing.
+   * Moves the task to another status (`canChangeTaskStatus`: whoever manages it to any status,
+   * an assignee to todo, in_progress, blocked or done). `completedAt` is set when the task
+   * becomes `done` and cleared when it leaves `done`. Setting the status it already has changes
+   * and records nothing.
    */
-  async changeStatus(organizationId: string, id: string, status: TaskStatus): Promise<Task> {
+  async changeStatus(id: string, status: TaskStatus): Promise<Task> {
+    const context = await this.access.context();
     return this.prisma.$transaction(async (tx) => {
-      const before = toTask(await this.findActive(tx, organizationId, id));
+      const before = toTask(await this.find(tx, context, id));
+      enforce(canChangeTaskStatus(context, factsOf(before), status), 'Task', id);
+      assertNotArchived(before);
       if (before.status === status) {
         return before;
       }
@@ -180,7 +242,7 @@ export class TasksService {
         }),
       );
       await this.changes.record(tx, {
-        organizationId,
+        organizationId: context.organizationId,
         entityType: 'task',
         verb: 'status_changed',
         entityId: id,
@@ -192,21 +254,30 @@ export class TasksService {
     });
   }
 
-  /** Replaces the assignee list. Sending the list the task already has records nothing. */
-  async setAssignees(organizationId: string, id: string, assigneeIds: string[]): Promise<Task> {
+  /**
+   * Replaces the assignee list of a task the caller manages. Sending the list the task already
+   * has records nothing.
+   */
+  async setAssignees(id: string, assigneeIds: string[]): Promise<Task> {
+    const context = await this.access.context();
+    const { organizationId } = context;
     return this.prisma.$transaction(async (tx) => {
-      const before = toTask(await this.findActive(tx, organizationId, id));
+      const before = toTask(await this.find(tx, context, id));
+      enforce(canManageTask(context, factsOf(before)), 'Task', id);
+      assertNotArchived(before);
       const added = assigneeIds.filter((userId) => !before.assigneeIds.includes(userId));
       const removed = before.assigneeIds.filter((userId) => !assigneeIds.includes(userId));
       if (added.length === 0 && removed.length === 0) {
         return before;
       }
-      // Only new assignees must be active: someone archived since may stay on the list.
+      // Only new assignees are checked: they must be active and be people the caller may
+      // assign. Someone already on the list (archived since, or assigned by a manager) may stay.
+      const assignable = assignableUserWhere(context);
       await assertActiveReferences(
         tx,
         organizationId,
         assigneeIds.flatMap((userId, index) =>
-          added.includes(userId) ? ref('user', `assigneeIds.${index}`, userId) : [],
+          added.includes(userId) ? ref('user', `assigneeIds.${index}`, userId, assignable) : [],
         ),
       );
       await tx.taskAssignee.deleteMany({ where: { taskId: id, userId: { in: removed } } });
@@ -233,10 +304,12 @@ export class TasksService {
     });
   }
 
-  /** Archiving an archived task changes and records nothing. */
-  async archive(organizationId: string, id: string): Promise<Task> {
+  /** Archives a task the caller manages. Archiving an archived task changes and records nothing. */
+  async archive(id: string): Promise<Task> {
+    const context = await this.access.context();
     return this.prisma.$transaction(async (tx) => {
-      const before = toTask(await this.find(tx, organizationId, id));
+      const before = toTask(await this.find(tx, context, id));
+      enforce(canManageTask(context, factsOf(before)), 'Task', id);
       if (before.archivedAt !== null) {
         return before;
       }
@@ -248,7 +321,7 @@ export class TasksService {
         }),
       );
       await this.changes.record(tx, {
-        organizationId,
+        organizationId: context.organizationId,
         entityType: 'task',
         verb: 'archived',
         entityId: id,
@@ -259,19 +332,26 @@ export class TasksService {
     });
   }
 
-  private async find(db: Db, organizationId: string, id: string): Promise<TaskRow> {
-    const row = await db.task.findFirst({ where: { id, organizationId }, include: TASK_INCLUDE });
+  /** The task, if the caller may see it; 404 otherwise (also for another organization). */
+  private async find(db: Db, context: AccessContext, id: string): Promise<TaskRow> {
+    const row = await db.task.findFirst({
+      where: {
+        id,
+        organizationId: context.organizationId,
+        AND: [taskVisibilityWhere(context) as Prisma.TaskWhereInput],
+      },
+      include: TASK_INCLUDE,
+    });
     if (!row) {
       throw ApiException.notFound('Task', id);
     }
     return row;
   }
+}
 
-  private async findActive(db: Db, organizationId: string, id: string): Promise<TaskRow> {
-    const row = await this.find(db, organizationId, id);
-    if (row.archivedAt) {
-      throw ApiException.conflict(`Task ${id} is archived and cannot be changed`);
-    }
-    return row;
+/** 409 for a write to an archived task. Checked after the permission, so a 403 comes first. */
+function assertNotArchived(task: Task): void {
+  if (task.archivedAt !== null) {
+    throw ApiException.conflict(`Task ${task.id} is archived and cannot be changed`);
   }
 }

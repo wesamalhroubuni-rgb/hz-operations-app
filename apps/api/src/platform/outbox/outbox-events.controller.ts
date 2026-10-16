@@ -9,12 +9,15 @@ import {
   type OutboxEvent,
   type Paginated,
 } from '@ops/shared';
+import { DevelopmentOnly, Policy } from '../authz/policy.decorator';
 import { ApiDocs, ZodPipe } from '../http';
 import { OutboxQueryService } from './outbox-query.service';
 
 /** Read-only view of the outbox, for internal and testing use. Events are written in services. */
 @ApiTags('outbox-events (internal)')
 @Controller('outbox-events')
+@Policy('outbox.read')
+@DevelopmentOnly()
 export class OutboxEventsController {
   constructor(private readonly outbox: OutboxQueryService) {}
 

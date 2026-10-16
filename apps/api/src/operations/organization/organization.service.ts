@@ -1,17 +1,35 @@
 import { Injectable } from '@nestjs/common';
-import type { Organization, UpdateOrganization } from '@ops/shared';
+import {
+  workLogEditWindowHoursOf,
+  type Organization,
+  type OrganizationFull,
+  type OrganizationSummary,
+  type UpdateOrganization,
+} from '@ops/shared';
 import type { Organization as OrganizationRow, Prisma } from '../../generated/prisma/client';
 import { ApiException } from '../../platform/http';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AccessService, organizationView } from '../access';
 import { ChangeRecorder } from '../common/change-recorder';
 import { iso, isoOrNull, type Db } from '../common/db';
 
-export function toOrganization(row: OrganizationRow): Organization {
+/** What every signed-in user of the organization may see. */
+export function toOrganizationSummary(row: OrganizationRow): OrganizationSummary {
   return {
+    view: 'summary',
     id: row.id,
     name: row.name,
     slug: row.slug,
-    settings: (row.settings ?? {}) as Organization['settings'],
+    workLogEditWindowHours: workLogEditWindowHoursOf(row.settings),
+  };
+}
+
+/** Everything, for admins; also the shape recorded in the audit log and the outbox. */
+export function toOrganizationFull(row: OrganizationRow): OrganizationFull {
+  return {
+    ...toOrganizationSummary(row),
+    view: 'full',
+    settings: (row.settings ?? {}) as OrganizationFull['settings'],
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
     archivedAt: isoOrNull(row.archivedAt),
@@ -23,16 +41,24 @@ export class OrganizationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly changes: ChangeRecorder,
+    private readonly access: AccessService,
   ) {}
 
-  async get(organizationId: string): Promise<Organization> {
-    return toOrganization(await this.find(this.prisma, organizationId));
+  /** The caller's organization, in the shape their role may see. */
+  async get(): Promise<Organization> {
+    const context = await this.access.context();
+    const row = await this.find(this.prisma, context.organizationId);
+    return organizationView(context) === 'full'
+      ? toOrganizationFull(row)
+      : toOrganizationSummary(row);
   }
 
-  async update(organizationId: string, input: UpdateOrganization): Promise<Organization> {
+  /** Admins only (route policy `organization.update`). */
+  async update(input: UpdateOrganization): Promise<OrganizationFull> {
+    const { organizationId } = await this.access.context();
     return this.prisma.$transaction(async (tx) => {
-      const before = toOrganization(await this.find(tx, organizationId));
-      const organization = toOrganization(
+      const before = toOrganizationFull(await this.find(tx, organizationId));
+      const organization = toOrganizationFull(
         await tx.organization.update({
           where: { id: organizationId },
           data: {

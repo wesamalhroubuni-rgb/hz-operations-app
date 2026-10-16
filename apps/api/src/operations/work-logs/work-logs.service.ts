@@ -3,6 +3,7 @@ import {
   customFieldValuesSchema,
   validateCustomFieldValues,
   WORK_LOG_MAX_FUTURE_MS,
+  workLogEditWindowHoursOf,
   type CreateWorkLog,
   type CustomFieldValues,
   type ListWorkLogsQuery,
@@ -15,9 +16,24 @@ import {
 import type { Prisma, WorkLog as WorkLogRow } from '../../generated/prisma/client';
 import { ApiException, orderByArgs, pageArgs, paginated } from '../../platform/http';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  AccessClock,
+  AccessService,
+  authorOf,
+  canArchiveWorkLog,
+  canChangeWorkLogStatus,
+  canEditWorkLog,
+  enforce,
+  siteVisibilityWhere,
+  taskVisibilityWhere,
+  teamVisibilityWhere,
+  workLogVisibilityWhere,
+  type AccessContext,
+  type WorkLogFacts,
+} from '../access';
 import { ChangeRecorder } from '../common/change-recorder';
 import { activeUnless, iso, isoOrNull, isUniqueViolation, type Db } from '../common/db';
-import { assertActiveReferences, ref } from '../common/references';
+import { assertActiveReferences, ref, type Reference } from '../common/references';
 import { fieldsOf } from '../log-types/log-types.service';
 
 export function toWorkLog(row: WorkLogRow): WorkLog {
@@ -48,6 +64,26 @@ export function toWorkLog(row: WorkLogRow): WorkLog {
   };
 }
 
+/** What the access rules read from a work log. */
+export function workLogFactsOf(row: WorkLogRow): WorkLogFacts {
+  return {
+    authorId: row.authorId,
+    siteId: row.siteId,
+    teamId: row.teamId,
+    status: row.status,
+    createdAt: row.createdAt,
+  };
+}
+
+/** The edit window of an organization, in hours (the default when it has not set one). */
+export async function loadWorkLogEditWindowHours(db: Db, organizationId: string): Promise<number> {
+  const organization = await db.organization.findUnique({
+    where: { id: organizationId },
+    select: { settings: true },
+  });
+  return workLogEditWindowHoursOf(organization?.settings);
+}
+
 /** The three location columns for a location value from a request (null clears them). */
 function locationColumns(location: WorkLogLocationInput | null) {
   return {
@@ -58,9 +94,16 @@ function locationColumns(location: WorkLogLocationInput | null) {
 }
 
 /** Work is logged after it happened; only a small margin for a fast phone clock is allowed. */
-function assertNotInFuture(occurredAt: string | undefined): void {
-  if (occurredAt && new Date(occurredAt).getTime() > Date.now() + WORK_LOG_MAX_FUTURE_MS) {
+function assertNotInFuture(occurredAt: string | undefined, now: Date): void {
+  if (occurredAt && new Date(occurredAt).getTime() > now.getTime() + WORK_LOG_MAX_FUTURE_MS) {
     throw ApiException.validation([{ path: 'occurredAt', message: 'must not be in the future' }]);
+  }
+}
+
+/** 409 for a write to an archived log. Checked after the permission, so a 403 comes first. */
+function assertNotArchived(row: WorkLogRow): void {
+  if (row.archivedAt) {
+    throw ApiException.conflict(`Work log ${row.id} is archived and cannot be changed`);
   }
 }
 
@@ -75,12 +118,17 @@ export class WorkLogsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly changes: ChangeRecorder,
+    private readonly access: AccessService,
+    private readonly clock: AccessClock,
   ) {}
 
-  async list(organizationId: string, query: ListWorkLogsQuery): Promise<Paginated<WorkLog>> {
+  /** The work logs the caller may see. The filters asked for can only narrow that set. */
+  async list(query: ListWorkLogsQuery): Promise<Paginated<WorkLog>> {
+    const context = await this.access.context();
     const where: Prisma.WorkLogWhereInput = {
-      organizationId,
+      organizationId: context.organizationId,
       ...activeUnless(query.includeArchived),
+      AND: [workLogVisibilityWhere(context) as Prisma.WorkLogWhereInput],
       ...(query.authorId ? { authorId: query.authorId } : {}),
       ...(query.siteId ? { siteId: query.siteId } : {}),
       ...(query.teamId ? { teamId: query.teamId } : {}),
@@ -104,38 +152,31 @@ export class WorkLogsService {
     return paginated(rows.map(toWorkLog), total, query);
   }
 
-  async get(organizationId: string, id: string): Promise<WorkLog> {
-    return toWorkLog(await this.find(this.prisma, organizationId, id));
+  async get(id: string): Promise<WorkLog> {
+    return toWorkLog(await this.find(this.prisma, await this.access.context(), id));
   }
 
   /**
-   * Creates a work log, idempotently on `clientId`: when the organization already has a log
-   * with that client id (a retried upload), that log is returned as it is, nothing is written
-   * and no audit or outbox event is recorded.
+   * Creates a work log of the signed-in user: the author is never taken from the request.
    *
-   * @param actorUserId the acting user; the author unless the body names another one
+   * Idempotent on `clientId`: when the caller already has a log with that client id (a retried
+   * upload), that log is returned as it is, nothing is written and no audit or outbox event is
+   * recorded. A `clientId` that belongs to somebody else's log is a 409, never their log.
    */
-  async create(
-    organizationId: string,
-    actorUserId: string,
-    input: CreateWorkLog,
-  ): Promise<CreateWorkLogResult> {
-    const existing = await this.findByClientId(organizationId, input.clientId);
+  async create(input: CreateWorkLog): Promise<CreateWorkLogResult> {
+    const context = await this.access.context();
+    const { organizationId } = context;
+    const authorId = authorOf(context);
+
+    const existing = await this.findOwnByClientId(organizationId, authorId, input.clientId);
     if (existing) {
       return { workLog: existing, created: false };
     }
-    assertNotInFuture(input.occurredAt);
-    const authorId = input.authorId ?? actorUserId;
+    assertNotInFuture(input.occurredAt, this.clock.now());
 
     try {
       const workLog = await this.prisma.$transaction(async (tx) => {
-        await assertActiveReferences(tx, organizationId, [
-          ...ref('user', 'authorId', authorId),
-          ...ref('task', 'taskId', input.taskId),
-          ...ref('site', 'siteId', input.siteId),
-          ...ref('team', 'teamId', input.teamId),
-          ...ref('log_type', 'logTypeId', input.logTypeId),
-        ]);
+        await assertActiveReferences(tx, organizationId, this.references(context, input));
         const custom = await this.resolveCustomFields(
           tx,
           organizationId,
@@ -173,9 +214,10 @@ export class WorkLogsService {
       return { workLog, created: true };
     } catch (error) {
       // Two identical requests arrived together: the other one won the unique index on
-      // (organizationId, clientId) and this transaction rolled back. Return the winner's log.
+      // (organizationId, clientId) and this transaction rolled back. Return the winner's log
+      // (or 409 when the winner is somebody else).
       if (isUniqueViolation(error)) {
-        const winner = await this.findByClientId(organizationId, input.clientId);
+        const winner = await this.findOwnByClientId(organizationId, authorId, input.clientId);
         if (winner) {
           return { workLog: winner, created: false };
         }
@@ -184,16 +226,21 @@ export class WorkLogsService {
     }
   }
 
-  async update(organizationId: string, id: string, input: UpdateWorkLog): Promise<WorkLog> {
-    assertNotInFuture(input.occurredAt);
+  /**
+   * Edits the content of a log: its author only, inside the organization's edit window and
+   * while the log is not approved (`canEditWorkLog`).
+   */
+  async update(id: string, input: UpdateWorkLog): Promise<WorkLog> {
+    const context = await this.access.context();
+    const { organizationId } = context;
+    const now = this.clock.now();
+    assertNotInFuture(input.occurredAt, now);
     return this.prisma.$transaction(async (tx) => {
-      const row = await this.findActive(tx, organizationId, id);
-      await assertActiveReferences(tx, organizationId, [
-        ...ref('task', 'taskId', input.taskId),
-        ...ref('site', 'siteId', input.siteId),
-        ...ref('team', 'teamId', input.teamId),
-        ...ref('log_type', 'logTypeId', input.logTypeId),
-      ]);
+      const row = await this.find(tx, context, id);
+      const editWindowHours = await loadWorkLogEditWindowHours(tx, organizationId);
+      enforce(canEditWorkLog(context, workLogFactsOf(row), now, editWindowHours), 'Work log', id);
+      assertNotArchived(row);
+      await assertActiveReferences(tx, organizationId, this.references(context, input));
       // Changing the log type or the values re-validates the result against the current
       // definition, which is also the version recorded on the log from then on.
       const custom =
@@ -232,13 +279,28 @@ export class WorkLogsService {
     });
   }
 
-  /** Setting the status the log already has changes and records nothing. */
-  async changeStatus(organizationId: string, id: string, status: WorkLogStatus): Promise<WorkLog> {
+  /**
+   * Moves a log to another status, per the transition table (`WORK_LOG_TRANSITIONS`): the
+   * author between draft and submitted, a reviewer to approved or rejected and back, never
+   * their own log. Setting the status the log already has changes and records nothing.
+   */
+  async changeStatus(id: string, status: WorkLogStatus): Promise<WorkLog> {
+    const context = await this.access.context();
+    const { organizationId } = context;
+    const now = this.clock.now();
     return this.prisma.$transaction(async (tx) => {
-      const before = toWorkLog(await this.findActive(tx, organizationId, id));
+      const row = await this.find(tx, context, id);
+      const before = toWorkLog(row);
       if (before.status === status) {
         return before;
       }
+      const editWindowHours = await loadWorkLogEditWindowHours(tx, organizationId);
+      enforce(
+        canChangeWorkLogStatus(context, workLogFactsOf(row), status, now, editWindowHours),
+        'Work log',
+        id,
+      );
+      assertNotArchived(row);
       const workLog = toWorkLog(await tx.workLog.update({ where: { id }, data: { status } }));
       await this.changes.record(tx, {
         organizationId,
@@ -253,15 +315,28 @@ export class WorkLogsService {
     });
   }
 
-  /** Archiving an archived work log changes and records nothing. */
-  async archive(organizationId: string, id: string): Promise<WorkLog> {
+  /**
+   * Archives a log: its author under the edit rule, or a reviewer who can see it and did not
+   * write it (`canArchiveWorkLog`). Archiving an archived log changes and records nothing.
+   */
+  async archive(id: string): Promise<WorkLog> {
+    const context = await this.access.context();
+    const { organizationId } = context;
+    const now = this.clock.now();
     return this.prisma.$transaction(async (tx) => {
-      const before = toWorkLog(await this.find(tx, organizationId, id));
+      const row = await this.find(tx, context, id);
+      const before = toWorkLog(row);
       if (before.archivedAt !== null) {
         return before;
       }
+      const editWindowHours = await loadWorkLogEditWindowHours(tx, organizationId);
+      enforce(
+        canArchiveWorkLog(context, workLogFactsOf(row), now, editWindowHours),
+        'Work log',
+        id,
+      );
       const workLog = toWorkLog(
-        await tx.workLog.update({ where: { id }, data: { archivedAt: new Date() } }),
+        await tx.workLog.update({ where: { id }, data: { archivedAt: now } }),
       );
       await this.changes.record(tx, {
         organizationId,
@@ -273,6 +348,24 @@ export class WorkLogsService {
       });
       return workLog;
     });
+  }
+
+  /**
+   * The references of a create or update body. The task, the site and the team must be ones
+   * the caller may see: a log cannot be attached to something outside the caller's scope, and
+   * an id outside it is reported exactly like one that does not exist. Log types are visible
+   * to everyone in the organization.
+   */
+  private references(
+    context: AccessContext,
+    input: Pick<UpdateWorkLog, 'taskId' | 'siteId' | 'teamId' | 'logTypeId'>,
+  ): Reference[] {
+    return [
+      ...ref('task', 'taskId', input.taskId, taskVisibilityWhere(context)),
+      ...ref('site', 'siteId', input.siteId, siteVisibilityWhere(context)),
+      ...ref('team', 'teamId', input.teamId, teamVisibilityWhere(context)),
+      ...ref('log_type', 'logTypeId', input.logTypeId),
+    ];
   }
 
   /**
@@ -304,25 +397,41 @@ export class WorkLogsService {
     return { customFields: result.values, logTypeVersion: logType?.version ?? null };
   }
 
-  private async findByClientId(organizationId: string, clientId: string): Promise<WorkLog | null> {
+  /**
+   * The caller's own log with this client id, or null when there is none. A log with this
+   * client id written by somebody else is a 409: the caller must not receive it, and cannot
+   * reuse the id.
+   */
+  private async findOwnByClientId(
+    organizationId: string,
+    authorId: string,
+    clientId: string,
+  ): Promise<WorkLog | null> {
     const row = await this.prisma.workLog.findUnique({
       where: { organizationId_clientId: { organizationId, clientId } },
     });
-    return row ? toWorkLog(row) : null;
+    if (!row) {
+      return null;
+    }
+    if (row.authorId !== authorId) {
+      throw ApiException.conflict('This clientId has already been used', [
+        { path: 'clientId', message: 'is already in use' },
+      ]);
+    }
+    return toWorkLog(row);
   }
 
-  private async find(db: Db, organizationId: string, id: string): Promise<WorkLogRow> {
-    const row = await db.workLog.findFirst({ where: { id, organizationId } });
+  /** The log, if the caller may see it; 404 otherwise (also for another organization). */
+  private async find(db: Db, context: AccessContext, id: string): Promise<WorkLogRow> {
+    const row = await db.workLog.findFirst({
+      where: {
+        id,
+        organizationId: context.organizationId,
+        AND: [workLogVisibilityWhere(context) as Prisma.WorkLogWhereInput],
+      },
+    });
     if (!row) {
       throw ApiException.notFound('Work log', id);
-    }
-    return row;
-  }
-
-  private async findActive(db: Db, organizationId: string, id: string): Promise<WorkLogRow> {
-    const row = await this.find(db, organizationId, id);
-    if (row.archivedAt) {
-      throw ApiException.conflict(`Work log ${id} is archived and cannot be changed`);
     }
     return row;
   }

@@ -1,48 +1,71 @@
 import type { ApiErrorDetail } from '@ops/shared';
 import { ApiException } from '../../platform/http';
+import type { Prisma } from '../../generated/prisma/client';
 import type { Db } from './db';
 import { createsCycle } from './hierarchy';
 
 /** The record kinds another record can point at. Names match the audit entity types. */
 export type ReferenceKind = 'user' | 'site' | 'team' | 'task' | 'log_type' | 'work_log';
 
+/** A Prisma `where` fragment of the referenced model, from the access rules. */
+type VisibleWhere = Record<string, unknown>;
+
 export interface Reference {
   kind: ReferenceKind;
   id: string;
   /** Where the id sits in the request body, for the error details (`siteId`, `teamIds.2`). */
   path: string;
+  /**
+   * The caller's visibility of that kind of record, when the reference must also be something
+   * the caller may see (or assign). A record outside it is reported exactly like one that does
+   * not exist.
+   */
+  visible?: VisibleWhere;
 }
 
-/** Builds the references of one body field; null and undefined mean "no reference". */
+/**
+ * Builds the references of one body field; null and undefined mean "no reference".
+ *
+ * @param visible `where` fragment the referenced records must also satisfy (the caller's
+ *   visibility of them, from `operations/access/rules`)
+ */
 export function ref(
   kind: ReferenceKind,
   path: string,
   value: string | readonly string[] | null | undefined,
+  visible?: VisibleWhere,
 ): Reference[] {
   if (value === null || value === undefined) {
     return [];
   }
   return typeof value === 'string'
-    ? [{ kind, id: value, path }]
-    : value.map((id, index) => ({ kind, id, path: `${path}.${index}` }));
+    ? [{ kind, id: value, path, visible }]
+    : value.map((id, index) => ({ kind, id, path: `${path}.${index}`, visible }));
 }
 
 interface ActiveWhere {
   organizationId: string;
   archivedAt: null;
   id: { in: string[] };
+  AND: VisibleWhere[];
 }
 
 const FIND_ACTIVE: Record<
   ReferenceKind,
   (db: Db, where: ActiveWhere) => Promise<{ id: string }[]>
 > = {
-  user: (db, where) => db.user.findMany({ where, select: { id: true } }),
-  site: (db, where) => db.site.findMany({ where, select: { id: true } }),
-  team: (db, where) => db.team.findMany({ where, select: { id: true } }),
-  task: (db, where) => db.task.findMany({ where, select: { id: true } }),
-  log_type: (db, where) => db.logType.findMany({ where, select: { id: true } }),
-  work_log: (db, where) => db.workLog.findMany({ where, select: { id: true } }),
+  user: (db, where) =>
+    db.user.findMany({ where: where as Prisma.UserWhereInput, select: { id: true } }),
+  site: (db, where) =>
+    db.site.findMany({ where: where as Prisma.SiteWhereInput, select: { id: true } }),
+  team: (db, where) =>
+    db.team.findMany({ where: where as Prisma.TeamWhereInput, select: { id: true } }),
+  task: (db, where) =>
+    db.task.findMany({ where: where as Prisma.TaskWhereInput, select: { id: true } }),
+  log_type: (db, where) =>
+    db.logType.findMany({ where: where as Prisma.LogTypeWhereInput, select: { id: true } }),
+  work_log: (db, where) =>
+    db.workLog.findMany({ where: where as Prisma.WorkLogWhereInput, select: { id: true } }),
 };
 
 const LABELS: Record<ReferenceKind, string> = {
@@ -55,9 +78,12 @@ const LABELS: Record<ReferenceKind, string> = {
 };
 
 /**
- * The one place that checks "these ids belong to this organization and are not archived".
- * Throws 422 `unprocessable` listing every reference that fails. A record of another
- * organization is reported exactly like one that does not exist, so nothing leaks.
+ * The one place that checks "these ids belong to this organization, are not archived and, when
+ * the reference says so, are visible to the caller". Throws 422 `unprocessable` listing every
+ * reference that fails. A record of another organization, and a record outside the caller's
+ * scope, are reported exactly like one that does not exist, so nothing leaks.
+ *
+ * The visibility is part of the query (`AND`), never a filter applied after loading.
  */
 export async function assertActiveReferences(
   db: Db,
@@ -65,23 +91,32 @@ export async function assertActiveReferences(
   references: Reference[],
 ): Promise<void> {
   const details: ApiErrorDetail[] = [];
-  const kinds = [...new Set(references.map((reference) => reference.kind))];
 
-  for (const kind of kinds) {
-    const ofKind = references.filter((reference) => reference.kind === kind);
-    const ids = [...new Set(ofKind.map((reference) => reference.id))];
-    const found = await FIND_ACTIVE[kind](db, {
-      organizationId,
-      archivedAt: null,
-      id: { in: ids },
-    });
-    const active = new Set(found.map((row) => row.id));
-    for (const reference of ofKind) {
-      if (!active.has(reference.id)) {
-        details.push({
-          path: reference.path,
-          message: `${LABELS[kind]} ${reference.id} does not exist in this organization or is archived`,
-        });
+  // One query per kind and visibility rule (a body rarely has more than one rule per kind).
+  const groups = new Map<ReferenceKind, Map<VisibleWhere | undefined, Reference[]>>();
+  for (const reference of references) {
+    const byRule = groups.get(reference.kind) ?? new Map<VisibleWhere | undefined, Reference[]>();
+    byRule.set(reference.visible, [...(byRule.get(reference.visible) ?? []), reference]);
+    groups.set(reference.kind, byRule);
+  }
+
+  for (const [kind, byRule] of groups) {
+    for (const [visible, ofRule] of byRule) {
+      const ids = [...new Set(ofRule.map((reference) => reference.id))];
+      const found = await FIND_ACTIVE[kind](db, {
+        organizationId,
+        archivedAt: null,
+        id: { in: ids },
+        AND: visible ? [visible] : [],
+      });
+      const active = new Set(found.map((row) => row.id));
+      for (const reference of ofRule) {
+        if (!active.has(reference.id)) {
+          details.push({
+            path: reference.path,
+            message: `${LABELS[kind]} ${reference.id} does not exist in this organization or is archived`,
+          });
+        }
       }
     }
   }

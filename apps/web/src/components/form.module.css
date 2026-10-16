@@ -1,0 +1,173 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  margin-top: var(--space-xl);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.input {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+.input:focus-visible {
+  border-color: var(--color-primary);
+  outline: 2px solid var(--color-primary-hover);
+  outline-offset: 2px;
+}
+
+.input[aria-invalid='true'] {
+  border-color: var(--color-danger);
+}
+
+.passwordRow {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.toggle {
+  flex: none;
+  min-width: 4rem;
+  min-height: 2.75rem;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.toggle:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary-hover);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.fieldError {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-danger);
+}
+
+/* Messages above the form. The left edge is decoration; the text colour carries AA contrast. */
+.alert,
+.notice,
+.success {
+  margin: var(--space-lg) 0 0;
+  padding: var(--space-md) var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  font-size: var(--font-size-sm);
+}
+
+.alert {
+  border-left-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.notice {
+  border-left-color: var(--color-warning);
+  color: var(--color-warning);
+}
+
+.success {
+  border-left-color: var(--color-success);
+  color: var(--color-success);
+}
+
+.alert p,
+.notice p,
+.success p {
+  margin: 0;
+}
+
+.details {
+  margin: var(--space-xs) 0 0;
+  padding-left: var(--space-xl);
+}
+
+.primary,
+.secondary,
+.inline {
+  min-height: 2.75rem;
+  padding: var(--space-sm) var(--space-lg);
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.primary {
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.primary:hover:not(:disabled) {
+  border-color: var(--color-primary-hover);
+  background: var(--color-primary-hover);
+}
+
+.secondary {
+  border: 1px solid var(--color-border-strong);
+  background: transparent;
+  color: var(--color-text-primary);
+}
+
+.secondary:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary-hover);
+}
+
+.inline {
+  min-height: 0;
+  margin-top: var(--space-sm);
+  padding: var(--space-xs) var(--space-md);
+  border: 1px solid var(--color-border-strong);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+}
+
+/* A disabled control is exempt from contrast rules; it keeps readable text all the same. */
+.primary:disabled,
+.secondary:disabled {
+  border-color: var(--color-border-strong);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.footerLink {
+  margin: var(--space-xl) 0 0;
+  font-size: var(--font-size-sm);
+  text-align: center;
+}

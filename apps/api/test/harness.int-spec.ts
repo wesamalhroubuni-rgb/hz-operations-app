@@ -1,4 +1,5 @@
 import { createOrganization, createTenant } from './support/factories';
+import { AuthAdminService } from '../src/platform/auth';
 import { startTestApp, type TestApp } from './support/test-app';
 import {
   ORIGINAL_DATABASE_URL_KEY,
@@ -187,5 +188,163 @@ describe('the running harness', () => {
     const response = await ctx.as().get('/health');
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ status: 'ok', database: 'up' });
+  });
+});
+
+// The helpers the other suites authenticate with. Example password only.
+describe('the authentication helpers of the harness', () => {
+  const PASSWORD = 'harness example passphrase';
+  let ctx: TestApp;
+
+  beforeAll(async () => {
+    ctx = await startTestApp();
+  });
+  beforeEach(() => ctx.reset());
+  afterAll(() => ctx.close());
+
+  it('as(userId) is really authenticated: a session exists, and no audit event is written', async () => {
+    const { admin } = await createTenant(ctx.prisma);
+    const me = await ctx.as(admin.id).get('/auth/me');
+    expect(me.status).toBe(200);
+    expect(me.body.user).toMatchObject({ id: admin.id, displayName: 'Admin' });
+    expect(me.body.csrfToken).toBeNull();
+    expect(await ctx.prisma.authSession.count({ where: { userId: admin.id } })).toBe(1);
+
+    // The same session is reused within a test.
+    await ctx.as(admin.id).get('/auth/me');
+    expect(await ctx.prisma.authSession.count({ where: { userId: admin.id } })).toBe(1);
+    expect(await ctx.prisma.auditEvent.count()).toBe(0);
+  });
+
+  it('as() answers 401 for nobody, an unknown user, an archived user, and the old dev header', async () => {
+    const { organization, admin } = await createTenant(ctx.prisma);
+    const archived = await ctx.prisma.user.create({
+      data: { organizationId: organization.id, displayName: 'Gone', archivedAt: new Date() },
+    });
+    for (const caller of [
+      ctx.as(),
+      ctx.as('0190f3a2-7c1e-7000-8000-0000000000ff'),
+      ctx.as(archived.id),
+    ]) {
+      expect((await caller.get('/auth/me')).status).toBe(401);
+    }
+    const header = await ctx
+      .as()
+      .request('GET', '/auth/me', { headers: { 'x-dev-user-id': admin.id } });
+    expect(header.status).toBe(401);
+  });
+
+  it('as() keeps acting as the user after their sessions ended and after the token expired', async () => {
+    const { admin } = await createTenant(ctx.prisma);
+    expect((await ctx.as(admin.id).post('/auth/logout-all')).status).toBe(204);
+    expect((await ctx.as(admin.id).get('/auth/me')).status).toBe(200);
+
+    ctx.clock.advanceMinutes(16);
+    expect((await ctx.as(admin.id).get('/auth/me')).status).toBe(200);
+  });
+
+  it('loginAs signs in as a mobile client: tokens in the body, no cookies', async () => {
+    const { admin } = await createTenant(ctx.prisma);
+    const email = admin.email ?? '';
+    expect((await ctx.loginAs(email, PASSWORD)).status).toBe(401);
+
+    await ctx.setPassword(admin.id, PASSWORD);
+    const login = await ctx.loginAs(email.toUpperCase(), PASSWORD);
+    expect(login.status).toBe(200);
+    expect(login.setCookies).toEqual([]);
+    expect(login.headers.get('cache-control')).toBe('no-store');
+    expect(login.body.csrfToken).toBeNull();
+    expect(login.body.tokens.refreshToken).toEqual(expect.any(String));
+
+    const bearer = ctx.bearer(login.body.tokens.accessToken);
+    expect((await bearer.get('/auth/me')).body.session.id).toBe(login.body.session.id);
+
+    // The clock is the auth module's: past the token lifetime the bearer token is refused,
+    // and the refresh token still renews the session.
+    ctx.clock.advanceSeconds(ctx.authSettings.accessTokenTtlSeconds + 1);
+    expect((await bearer.get('/auth/me')).status).toBe(401);
+    const refreshed = await ctx
+      .as()
+      .post('/auth/refresh', { refreshToken: login.body.tokens.refreshToken });
+    expect(refreshed.status).toBe(200);
+    expect((await ctx.bearer(refreshed.body.tokens.accessToken).get('/auth/me')).status).toBe(200);
+  });
+
+  it('browser() keeps httpOnly cookies, and sends Origin and the CSRF token', async () => {
+    const { admin } = await createTenant(ctx.prisma);
+    await ctx.setPassword(admin.id, PASSWORD);
+
+    const browser = ctx.browser();
+    const login = await browser.login(admin.email ?? '', PASSWORD);
+    expect(login.status).toBe(200);
+    expect(login.body.tokens).toBeNull();
+    expect(login.setCookies).toHaveLength(2);
+    for (const cookie of login.setCookies) {
+      expect(cookie).toContain('HttpOnly');
+      expect(cookie).toContain('SameSite=Lax');
+    }
+    expect([...browser.cookies.keys()].sort()).toEqual(['access_token', 'refresh_token']);
+    expect(browser.csrfToken).toBe(login.body.csrfToken);
+    expect(JSON.stringify(login.body)).not.toContain(browser.cookies.get('access_token'));
+
+    expect((await browser.get('/auth/me')).body.csrfToken).toBe(browser.csrfToken);
+
+    // A write without the token, or from another origin, is refused; the session is untouched.
+    expect((await browser.with({ csrf: false }).post('/auth/logout-all')).status).toBe(403);
+    expect((await browser.with({ csrf: 'wrong' }).post('/auth/logout-all')).status).toBe(403);
+    expect(
+      (await browser.with({ origin: 'https://evil.example' }).post('/auth/logout-all')).status,
+    ).toBe(403);
+    expect((await browser.with({ origin: null }).post('/auth/logout-all')).status).toBe(403);
+    expect((await browser.get('/auth/me')).status).toBe(200);
+
+    const refreshed = await browser.refresh();
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.body.tokens).toBeNull();
+
+    expect((await browser.post('/auth/logout')).status).toBe(204);
+    expect(browser.cookies.size).toBe(0);
+  });
+
+  it('notifications gives the one-time code that would have been sent', async () => {
+    const { organization, admin } = await createTenant(ctx.prisma);
+    const issued = await ctx.app.get(AuthAdminService).issueOneTimeCode(ctx.prisma, {
+      userId: admin.id,
+      organizationId: organization.id,
+      purpose: 'activation',
+    });
+    const code = ctx.notifications.lastCode(admin.id);
+    // The harness answers NODE_ENV=development, the one environment that shows the code.
+    expect(issued.code).toBe(code);
+
+    const set = await ctx
+      .as()
+      .post('/auth/set-password', { code: code.toLowerCase(), password: PASSWORD });
+    expect(set.status).toBe(204);
+    expect((await ctx.loginAs(admin.email ?? '', PASSWORD)).status).toBe(200);
+    const again = await ctx.as().post('/auth/set-password', { code, password: PASSWORD });
+    expect(again.status).toBe(422);
+
+    const stored = JSON.stringify(await ctx.prisma.auditEvent.findMany());
+    expect(stored).not.toContain(code);
+    expect(stored).not.toContain(code.replaceAll('-', ''));
+    expect(stored).not.toContain(PASSWORD);
+  });
+
+  it('reset() empties the rate limiter, the clock and the notifications', async () => {
+    const limit = ctx.authSettings.rateLimits.loginPerIdentifier.limit;
+    for (let attempt = 0; attempt < limit; attempt += 1) {
+      expect((await ctx.loginAs('nobody@example.test', PASSWORD)).status).toBe(401);
+    }
+    const limited = await ctx.loginAs('nobody@example.test', PASSWORD);
+    expect(limited.status).toBe(429);
+    expect(limited.body.code).toBe('rate_limited');
+    expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
+
+    ctx.clock.advanceDays(3);
+    await ctx.reset();
+    expect(Math.abs(ctx.clock.now().getTime() - Date.now())).toBeLessThan(5000);
+    expect(ctx.notifications.sent).toHaveLength(0);
+    expect((await ctx.loginAs('nobody@example.test', PASSWORD)).status).toBe(401);
   });
 });

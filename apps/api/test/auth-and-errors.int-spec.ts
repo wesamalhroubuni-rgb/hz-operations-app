@@ -1,10 +1,21 @@
-import { apiErrorSchema, DEV_USER_HEADER, REQUEST_ID_HEADER } from '@ops/shared';
+import { apiErrorSchema, REQUEST_ID_HEADER } from '@ops/shared';
 import { SitesService } from '../src/operations/sites/sites.service';
-import { createSite, createTenant, createUser, unknownId, type Tenant } from './support/factories';
+import { AccessTokenService, GENERIC_UNAUTHENTICATED } from '../src/platform/auth';
+import {
+  createMembership,
+  createSite,
+  createTenant,
+  createUser,
+  unknownId,
+  type Tenant,
+} from './support/factories';
 import { startTestApp, type ApiCaller, type ApiResponse, type TestApp } from './support/test-app';
 
-// Who may call the API in Phase 2 (the development-only acting-user header) and what every
-// failure looks like on the wire.
+// Who may call the API (a real session since Phase 3; the Phase 2 development header is gone)
+// and what every failure looks like on the wire.
+
+/** The removed Phase 2 header. It must have no effect at all. */
+const OLD_DEV_USER_HEADER = 'x-dev-user-id';
 
 describe('authentication and the error format', () => {
   let ctx: TestApp;
@@ -41,11 +52,11 @@ describe('authentication and the error format', () => {
   }
 
   describe('the acting user', () => {
-    it('answers 401 in the standard body, with a correlation id, when there is no header', async () => {
+    it('answers 401 in the standard body, with a correlation id, when there is no session', async () => {
       const response = await ctx.as().get('/sites');
       const error = expectApiError(response, 401, 'unauthenticated');
       expect(error.correlationId).toMatch(/^[0-9a-f-]{36}$/);
-      expect(error.message).toContain(DEV_USER_HEADER);
+      expect(error.message).toBe(GENERIC_UNAUTHENTICATED);
     });
 
     it('echoes the correlation id of the caller in the 401', async () => {
@@ -68,6 +79,7 @@ describe('authentication and the error format', () => {
 
     it('answers 401 from the moment a user is archived, and 200 again once restored', async () => {
       const user = await createUser(ctx.prisma, tenant.organization.id);
+      await createMembership(ctx.prisma, tenant.organization.id, user.id, 'worker');
       expect((await ctx.as(user.id).get('/sites')).status).toBe(200);
 
       expect((await api.post(`/users/${user.id}/archive`)).status).toBe(200);
@@ -82,11 +94,43 @@ describe('authentication and the error format', () => {
       ['an email address', 'someone@example.test'],
       ['two ids in one header', `${unknownId()}, ${unknownId()}`],
       ['SQL in the header', "' OR 1=1 --"],
-    ])('answers 401 for %s', async (_name, value) => {
+      ['the id of a real admin', 'ADMIN'],
+    ])('ignores the removed dev header: 401 for %s', async (_name, value) => {
+      const header = value === 'ADMIN' ? tenant.admin.id : value;
       const response = await ctx
         .as()
-        .request('GET', '/sites', { headers: { [DEV_USER_HEADER]: value } });
+        .request('GET', '/sites', { headers: { [OLD_DEV_USER_HEADER]: header } });
       expectApiError(response, 401, 'unauthenticated');
+    });
+
+    it.each([
+      ['a bearer token that is not a JWT', 'Bearer not-a-token'],
+      ['a bearer token signed with another key', 'Bearer FORGED'],
+      ['a Basic header', 'Basic YWRtaW46YWRtaW4='],
+      ['an empty Bearer', 'Bearer '],
+    ])('answers 401 for %s', async (_name, value) => {
+      let authorization = value;
+      if (value === 'Bearer FORGED') {
+        // A well-formed token with the claims of a real user, signed with a wrong key.
+        const forger = new AccessTokenService('x'.repeat(48), 900, ctx.clock);
+        const session = await ctx.prisma.authSession.create({
+          data: {
+            userId: tenant.admin.id,
+            organizationId: tenant.organization.id,
+            client: 'mobile',
+            expiresAt: new Date(Date.now() + 86_400_000),
+          },
+        });
+        authorization = `Bearer ${
+          forger.sign({ sub: tenant.admin.id, org: tenant.organization.id, sid: session.id }).token
+        }`;
+      }
+      const response = await ctx
+        .as()
+        .request('GET', '/sites', { headers: { Authorization: authorization } });
+      expect(expectApiError(response, 401, 'unauthenticated').message).toBe(
+        GENERIC_UNAUTHENTICATED,
+      );
     });
 
     it('rejects every kind of route without a user: reads, writes and platform reads', async () => {

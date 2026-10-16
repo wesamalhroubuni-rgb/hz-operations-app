@@ -89,9 +89,13 @@ model Organization {
 model User {
   id             String    @id @default(uuid(7)) @db.Uuid
   organizationId String    @db.Uuid
-  email          String
-  displayName    String
+  /// Login identifiers. A user has at least one of email, phone, username (enforced by the API);
+  /// each is unique within the organization. Stored normalized: email and username lower-case,
+  /// phone as digits with an optional leading +.
+  email          String?
   phone          String?
+  username       String?
+  displayName    String
   createdAt      DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
   archivedAt     DateTime? @db.Timestamptz(3)
@@ -104,6 +108,8 @@ model User {
   attachments     Attachment[]
 
   @@unique([organizationId, email])
+  @@unique([organizationId, phone])
+  @@unique([organizationId, username])
   @@index([organizationId, archivedAt])
 }
 
@@ -392,4 +398,95 @@ model OutboxEvent {
   @@index([organizationId, eventType, sequence])
   @@index([aggregateType, aggregateId])
   @@index([processedAt, sequence])
+}
+
+// ---------------------------------------------------------------------------
+// Authentication (platform tables; no foreign keys to business tables)
+// Nothing here stores a password, a code or a token in clear: only hashes.
+// ---------------------------------------------------------------------------
+
+enum AuthCodePurpose {
+  activation
+  password_reset
+}
+
+enum AuthClient {
+  web
+  mobile
+}
+
+/// The password of a user, and the state of the lockout after repeated failures.
+/// A user without a row has not been activated yet and cannot sign in.
+model AuthCredential {
+  userId            String    @id @db.Uuid
+  organizationId    String    @db.Uuid
+  /// argon2id, in the PHC string format (parameters and salt included).
+  passwordHash      String
+  passwordChangedAt DateTime  @default(now()) @db.Timestamptz(3)
+  failedAttempts    Int       @default(0)
+  lockedUntil       DateTime? @db.Timestamptz(3)
+  lastLoginAt       DateTime? @db.Timestamptz(3)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@index([organizationId])
+}
+
+/// A one-time, expiring code that lets a user set a password (activation or reset).
+model AuthOneTimeCode {
+  id             String          @id @default(uuid(7)) @db.Uuid
+  userId         String          @db.Uuid
+  organizationId String          @db.Uuid
+  purpose        AuthCodePurpose
+  /// SHA-256 of the code. The code itself is shown once and never stored.
+  codeHash       String          @unique
+  expiresAt      DateTime        @db.Timestamptz(3)
+  consumedAt     DateTime?       @db.Timestamptz(3)
+  /// The admin who issued it, or null for the system (seed).
+  issuedById     String?         @db.Uuid
+  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, purpose, consumedAt])
+  @@index([expiresAt])
+}
+
+/// One sign-in on one device: the "family" of refresh tokens that replace each other.
+/// Revoking the session invalidates every token of the family at once.
+model AuthSession {
+  id             String     @id @default(uuid(7)) @db.Uuid
+  userId         String     @db.Uuid
+  organizationId String     @db.Uuid
+  client         AuthClient
+  deviceName     String?
+  userAgent      String?
+  ipAddress      String?
+  createdAt      DateTime   @default(now()) @db.Timestamptz(3)
+  lastUsedAt     DateTime   @default(now()) @db.Timestamptz(3)
+  expiresAt      DateTime   @db.Timestamptz(3)
+  revokedAt      DateTime?  @db.Timestamptz(3)
+  /// Why it ended: logout, logout_all, refresh_reuse, user_archived, membership_removed,
+  /// password_changed, admin_revoked, expired.
+  revokedReason  String?
+
+  refreshTokens AuthRefreshToken[]
+
+  @@index([userId, revokedAt])
+  @@index([organizationId, userId])
+  @@index([expiresAt])
+}
+
+/// A refresh token of a session. Each one is used once and replaced (rotation). Presenting a
+/// token whose `usedAt` is set means it was stolen or replayed: the whole session is revoked.
+model AuthRefreshToken {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  sessionId String    @db.Uuid
+  /// SHA-256 of the token.
+  tokenHash String    @unique
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  expiresAt DateTime  @db.Timestamptz(3)
+  usedAt    DateTime? @db.Timestamptz(3)
+
+  session AuthSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
 }

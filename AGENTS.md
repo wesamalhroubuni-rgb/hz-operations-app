@@ -32,9 +32,11 @@ Naming: never hard-code a client name. The name shown in the apps comes from
 `NEXT_PUBLIC_BRAND_NAME` / `EXPO_PUBLIC_BRAND_NAME` through each app's brand module. "Operations"
 stays as the technical name (folder, `@ops/*`, `src/operations`, database `operations_app`).
 
-State on 2026-10-13: the backend core exists (data model, 38 API paths, audit log, outbox, scope
-resolution). **There is no sign-in and no permission enforcement** (Phase 3). The acting user comes
-from a TEMPORARY development header; see Gotchas.
+State on 2026-10-16: Phase 3 is code complete and uncommitted. The API (49 paths) has in-house
+sign-in (email, phone, or username), sessions, and a policy plus object-level rules on every route;
+web and mobile have login, activation, and a placeholder home. The development database has not
+been re-seeded for Phase 3 yet (the owner runs `pnpm db:reset`). Phase 4 is next. See
+[MEMORY.md](MEMORY.md).
 
 ## Engineering principles
 
@@ -107,8 +109,10 @@ All from the repo root. Package names: `@ops/api`, `@ops/web`, `@ops/mobile`, `@
 Ports: API 3001 on `127.0.0.1` (`/health`; in development also `/docs`, `/docs-json`,
 `/docs-yaml`), web 3000, Metro 8081, PostgreSQL 5432.
 
-Calling the API in development: send `x-dev-user-id: <user id>`. `pnpm db:seed` prints the ids
-when it seeds; they change on every reset. PowerShell examples are in [README.md](README.md).
+Calling the API in development: `POST /auth/login` with `"client": "mobile"` and send
+`Authorization: Bearer <tokens.accessToken>`. Identifiers per seeded role and PowerShell examples
+are in [README.md](README.md) section 4. The seed's development passwords are in `DEV_PASSWORDS` in
+`apps/api/src/operations/seed/demo-seed.ts`; never print or copy them.
 
 If `node`, `pnpm`, or `git` are not found in an agent shell, prefix the command with:
 
@@ -130,23 +134,47 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   `docker-compose.yml`; only the API (3001) and Metro (8081) need to be reachable from a phone.
 - The API validates its environment with Zod at boot and exits with one line per bad variable.
   Required: `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_MS`, `API_HOST`, `API_PORT`, `CORS_ORIGINS`,
-  `LOG_LEVEL`. Optional: `DEV_AUTH_ENABLED` (default `false`) and `NODE_ENV` (default
-  `production`).
+  `LOG_LEVEL`, `AUTH_ACCESS_TOKEN_SECRET` (at least 32 characters), `WEB_APP_URL`. Optional with
+  defaults: `NODE_ENV` (`production`), `TRUST_PROXY_HOPS` (0), and the `AUTH_*` durations and
+  limits. **Production refuses** a placeholder-looking or repetitive secret and a non-https
+  `WEB_APP_URL`, so `pnpm --filter @ops/api start` fails with the `.env.example` values.
 - `NODE_ENV` is not in `.env`. The API package scripts set it with `dotenv -v`: `dev` and
   `db:seed` use `development`, `start` uses `production`. Unset means production.
 - A running process keeps the environment it started with. After changing `.env`, restart
   `pnpm dev`; `NEXT_PUBLIC_*` and `EXPO_PUBLIC_*` values are also inlined at bundle time
   (`expo export` needs `--clear`).
 
-**Dev header (TEMPORARY, removed in Phase 3)**
+**Auth and permissions** (ADR-0004, ADR-0005, matrix in ARCHITECTURE.md)
 
-- The acting user comes from `x-dev-user-id`, honoured only when `NODE_ENV=development` AND
-  `DEV_AUTH_ENABLED=true`. The API refuses to boot with the flag in any other `NODE_ENV`, so
-  `pnpm --filter @ops/api start` fails while `.env` has it set. With dev auth off, every route
-  except `/health` answers 401. Swagger is served in development only.
-- Keep `API_HOST=127.0.0.1` while the flag is on. `0.0.0.0` is for a phone test on a trusted
-  network only.
-- No route enforces role or scope yet. Do not describe any endpoint as protected.
+- `AuthGuard` (`src/platform/auth/`) is the one global guard and the only way to get an acting
+  user. Every route must declare `@Public()`, `@Authenticated()`, or `@Policy('<resource>.<action>')`;
+  `src/route-policies.spec.ts` fails otherwise, and the guard refuses the route at runtime. A new
+  policy name goes into `apps/api/src/operations/access/policies.ts`, the matrix in
+  ARCHITECTURE.md, and the matrix suite.
+- Services get the caller through `AccessService.context()` and apply the rule functions in
+  `operations/access/rules/` and the `xxxVisibilityWhere` filters. Never write ad-hoc role checks,
+  never take `organizationId` as an argument from a controller, and never use `requireActor()` in
+  a domain service.
+- 404 for a record outside the caller's visibility (same as missing), 403 for a visible record the
+  caller may not change or a route the role may not use, 409 for a state conflict, 422 for a bad or
+  invisible reference in a body.
+- Author fields (`authorId`, `createdById`, `uploadedById`) come from the context, never from a
+  body. Business modules touch credentials, codes, and sessions only through `AuthAdminService`,
+  inside their own transaction.
+- **Never print, log, or write into a document a password, one-time code, or token**, including
+  the seed's `DEV_PASSWORDS` and codes from the development log.
+- Login without `organizationSlug` works only while exactly one active organization exists. The
+  clients send `NEXT_PUBLIC_ORGANIZATION_SLUG` / `EXPO_PUBLIC_ORGANIZATION_SLUG` (`hz-demo`).
+- Cookie-authenticated writes need an allowed `Origin` and `x-csrf-token`; scripts should sign in
+  as `mobile` and use the bearer token. A 403 on web sign-in usually means the page's origin is
+  not in `CORS_ORIGINS`.
+- Rate limits are in memory per process: restarting the API clears them. Five failed sign-ins lock
+  an account for 15 minutes; an admin password reset lifts it.
+- Tests: `ctx.as(userId)` opens a real `mobile` session; `loginAs`, `bearer`, and `browser()` test
+  the sign-in paths. Factories write rows directly with Prisma. Code without a request (the seed)
+  runs under `AccessService.runAsSystem(organizationId, ...)`, which throws inside a request.
+- Keep `API_HOST=127.0.0.1`; `0.0.0.0` is for a phone test on a trusted network only (the demo
+  passwords are well known). Swagger is served in development only.
 
 **API rules**
 
@@ -155,8 +183,8 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   write a business row outside that pattern, and never call `AuditService` or `OutboxService`
   from a domain service directly.
 - `src/platform/**` must not import `src/operations/**` (ESLint error).
-- The organization always comes from the acting user (`requireActor()`), never from the URL or
-  body. Check ids in a body with `assertActiveReferences`.
+- The organization always comes from the caller (`AccessService.context()`), never from the URL
+  or body. Check ids in a body with `assertActiveReferences`, passing the caller's visibility.
 - Request and response schemas live in `@ops/shared`. Request bodies are `z.strictObject`: an
   unknown key is a 400. Validate with `ZodPipe`; document with `ApiDocs`.
 - Status conventions: 404 for a missing or other-organization record, 409 for changing an archived
@@ -169,8 +197,8 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
 **Database safety**
 
 - **Never run `pnpm db:reset` (or `prisma migrate reset`) as an agent.** It wipes whatever
-  `DATABASE_URL` points at and has no guard. Prisma also refuses it in an agent environment. Ask
-  the owner.
+  `DATABASE_URL` points at and has no guard. Prisma refuses it in an agent environment and the
+  agent permission system blocks it. Ask the owner.
 - Integration tests use `DATABASE_URL_TEST` only and truncate every table. Their guard refuses a
   database whose name does not end in `_test` or equals the one in `DATABASE_URL`. Do not weaken
   it.
@@ -207,15 +235,15 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
 
 **Version pins (do not bump casually; see [ADR-0001](docs/decisions/0001-tech-stack.md))**
 
-| Pin                                              | Why                                                                                               |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| TypeScript `~6.0.3` everywhere                   | npm `latest` is 7.0; typescript-eslint 8 supports `<6.1`; Nest CLI and Expo templates are on 6.0. |
-| Prisma exactly `7.10.0` (three packages)         | The npm `latest` tag points to an 8.0 release candidate.                                          |
-| React exactly `19.2.3` in web and mobile         | The version Expo SDK 57 pins. One React version across the repo.                                  |
-| Expo SDK 57 / React Native `0.86.3`              | Must match each other and Expo Go. Upgrade them together.                                         |
-| NestJS 12 with a CommonJS API                    | Nest 12 packages are ESM-only; Node 24 loads them via `require`. Do not add `"type": "module"`.   |
-| Jest 30 (api), Jest 29 + jest-expo (mobile)      | The API test script needs `node --experimental-vm-modules`. jest-expo 57 is built for Jest 29.    |
-| `expo-splash-screen`, `expo-system-ui` `~57.0.x` | Expo SDK 57 packages, like `expo-status-bar`. They move with the SDK, not on their own.           |
+| Pin                                                                   | Why                                                                                               |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| TypeScript `~6.0.3` everywhere                                        | npm `latest` is 7.0; typescript-eslint 8 supports `<6.1`; Nest CLI and Expo templates are on 6.0. |
+| Prisma exactly `7.10.0` (three packages)                              | The npm `latest` tag points to an 8.0 release candidate.                                          |
+| React exactly `19.2.3` in web and mobile                              | The version Expo SDK 57 pins. One React version across the repo.                                  |
+| Expo SDK 57 / React Native `0.86.3`                                   | Must match each other and Expo Go. Upgrade them together.                                         |
+| NestJS 12 with a CommonJS API                                         | Nest 12 packages are ESM-only; Node 24 loads them via `require`. Do not add `"type": "module"`.   |
+| Jest 30 (api), Jest 29 + jest-expo (mobile)                           | The API test script needs `node --experimental-vm-modules`. jest-expo 57 is built for Jest 29.    |
+| `expo-splash-screen`, `expo-system-ui`, `expo-secure-store` `~57.0.x` | Expo SDK 57 packages, like `expo-status-bar`. They move with the SDK, not on their own.           |
 
 **Per app**
 
@@ -227,13 +255,17 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
 - Web: `scripts/next.mjs` maps `WEB_PORT` to `PORT`. `agentRules: false` in `next.config.ts` stops
   Next.js generating its own `AGENTS.md` in `apps/web`. `typecheck` runs `next typegen` first.
   Stylesheets use only the CSS variables generated from the tokens in `@ops/shared`. The favicon
-  is `src/app/icon.png` (picked up by file name).
+  is `src/app/icon.png` (picked up by file name). The session lives in httpOnly cookies the page
+  cannot read; only the CSRF token is kept, in memory. The route guard in `auth-provider.tsx` is
+  UX only. Security headers are in `next.config.ts` (no `script-src` CSP yet: needs nonces).
 - Mobile: no `metro.config.js` or `babel.config.js` (Expo defaults handle the pnpm layout). ESLint
   sets `settings.react.version` to `'19.2'` by hand; bump it when React changes. No `build` script
   by design. Expo config is `app.config.ts` (there is no `app.json`); it repeats the brand-name
   fallback from `src/config/env.ts` because it cannot import it. Expo Go shows its own icon and
   splash. A phone cannot reach `localhost`: a phone test needs `EXPO_PUBLIC_API_URL` set to the
   PC's LAN address and `API_HOST=0.0.0.0`. No phone test has been done (planned for Phase 4).
+  Tokens live in `expo-secure-store` (`src/auth/token-storage.ts`); screens are chosen by sign-in
+  state in `App.tsx` (no navigation library yet).
 
 **This file**
 

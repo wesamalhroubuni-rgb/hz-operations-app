@@ -1,10 +1,11 @@
 # ARCHITECTURE.md
 
 How the system is structured, and how it is intended to grow. Every section says whether it
-describes something that **exists today** or something that is **planned**. As of 2026-10-13 the
-Phase 2 backend core exists: data model, REST API, audit log, event outbox, scope resolution, a
-typed API client, and client branding. There is no sign-in, no permission enforcement, no feature
-screens, no offline storage, and no AI layer.
+describes something that **exists today** or something that is **planned**. As of 2026-10-16 the
+Phase 3 code exists: the Phase 2 backend core (data model, REST API, audit log, event outbox, scope
+resolution, typed API client, client branding) plus sign-in, sessions, and permission enforcement
+on every route, with minimal login screens in both clients. There are no feature screens, no file
+storage, no offline storage, and no AI layer.
 
 ## Naming
 
@@ -20,36 +21,39 @@ screens, no offline storage, and no AI layer.
 ## System overview
 
 Workers record their work from a phone app. Supervisors and managers monitor that work on a web
-dashboard. Both clients talk to one REST API, which owns the data in PostgreSQL. Every change is
-written together with an audit event and a domain event. A later AI layer will read those events
-and produce summaries, anomaly flags, and proposed actions that a human must approve.
+dashboard. Both clients talk to one REST API, which owns the data in PostgreSQL, authenticates
+every request, and decides what each user may see and do. Every change is written together with
+an audit event and a domain event. A later AI layer will read those events and produce summaries,
+anomaly flags, and proposed actions that a human must approve.
 
 ```mermaid
 flowchart TB
   subgraph clients [Clients]
-    mobile["apps/mobile<br/>Worker app (Expo / React Native)<br/>branded placeholder screen"]
-    web["apps/web<br/>Manager dashboard (Next.js)<br/>branded placeholder page"]
+    mobile["apps/mobile<br/>Worker app (Expo / React Native)<br/>login, activation, placeholder home"]
+    web["apps/web<br/>Manager dashboard (Next.js)<br/>login, activation, placeholder home"]
   end
 
-  shared["packages/shared<br/>Zod schemas, typed API client,<br/>custom-field validation, design tokens"]
+  shared["packages/shared<br/>Zod schemas, typed API client,<br/>auth session manager, design tokens"]
 
   subgraph api [apps/api - NestJS REST API]
     host["Host: config, Prisma, health"]
     subgraph platform [src/platform - reusable]
-      reqctx["Request context<br/>correlation id, request log"]
+      reqctx["Request context<br/>correlation id, actor, request log"]
       http["HTTP conventions<br/>errors, ZodPipe, pagination, docs"]
-      devauth["Dev actor guard<br/>TEMPORARY"]
+      auth["Auth<br/>AuthGuard (the one global guard),<br/>sessions, tokens, CSRF, rate limits"]
+      authz["Authz seam<br/>@Policy, RequestAuthorizer"]
+      notify["Notification sender<br/>(logging implementation)"]
       audit["Audit log"]
       outbox["Event outbox"]
     end
     subgraph operations [src/operations - Operations domain]
+      access["Access layer<br/>policy registry, AccessService,<br/>rules, visibility"]
+      scope["Scope resolution"]
       org["Organization, users, memberships,<br/>sites, teams"]
       work["Log types, tasks, work logs,<br/>attachment metadata"]
-      scope["Scope resolution<br/>(not enforced yet)"]
       recorder["ChangeRecorder"]
       storage["FileStorage interface<br/>(no provider)"]
     end
-    auth["Auth and permissions<br/>(planned, Phase 3)"]
   end
 
   db[("PostgreSQL 17<br/>Docker Compose")]
@@ -57,38 +61,43 @@ flowchart TB
   ai["AI layer<br/>summaries, anomalies, proposed actions<br/>(planned, Phase 7)"]
   human["Human approval<br/>(planned)"]
 
-  mobile -->|"HTTP + JSON"| api
-  web -->|"HTTP + JSON"| api
+  mobile -->|"HTTPS + JSON, Bearer token"| api
+  web -->|"HTTPS + JSON, httpOnly cookies + CSRF header"| api
   mobile -.->|imports| shared
   web -.->|imports| shared
   api -.->|imports| shared
   operations -->|"imports, never the reverse"| platform
+  auth -->|"REQUEST_AUTHORIZER, AUTH_PROFILE_PROVIDER"| access
+  access --> scope
+  auth --> audit
+  auth --> notify
   recorder --> audit
   recorder --> outbox
   api --> db
 
   outbox -.->|"events (planned consumer)"| ai
-  ai -.->|"reads through the same permission checks"| auth
-  auth -.->|"will use"| scope
+  ai -.->|"reads through the same access rules"| access
   ai -.->|proposes| human
   human -.->|"approved actions, audited"| operations
 ```
 
-Solid arrows exist today. Dotted arrows to and from the AI layer, human approval, and auth are
-planned. Today the clients call only `GET /health`; the rest of the API is exercised by the tests,
+Solid arrows exist today. Dotted arrows to and from the AI layer and human approval are planned.
+The arrow from auth to the access layer is an injected interface: the platform defines the token,
+the Operations domain provides the implementation, so the import still points one way. Today the
+clients call `/health` and the `/auth/*` routes; the rest of the API is exercised by the tests,
 Swagger, and manual requests.
 
 ## What exists today
 
 ### Apps and packages
 
-| Path              | Package       | Responsibility                                                                                    | Today                                                                                                     |
-| ----------------- | ------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `apps/api`        | `@ops/api`    | REST API. Owns the database, business rules, permissions, and the audit trail.                    | 38 paths over 13 resources, audit log, outbox, scope resolution, Swagger. No sign-in, no enforcement.     |
-| `apps/web`        | `@ops/web`    | Manager dashboard for supervisors, managers, and admins.                                          | One branded placeholder page with an API status card.                                                     |
-| `apps/mobile`     | `@ops/mobile` | Worker app for iOS and Android from one codebase.                                                 | One branded placeholder screen with an API status card.                                                   |
-| `packages/shared` | `@ops/shared` | The wire contract, defined once: schemas, the typed API client, shared validation, design tokens. | Schemas and endpoint functions for every resource, custom-field validation, health monitor, theme tokens. |
-| `packages/config` | `@ops/config` | Shared ESLint, Prettier, and TypeScript settings.                                                 | ESLint base flat config, Prettier config, `strict.json`, `base.json`, and `library.json` tsconfigs.       |
+| Path              | Package       | Responsibility                                                                                    | Today                                                                                                                           |
+| ----------------- | ------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api`        | `@ops/api`    | REST API. Owns the database, business rules, sign-in, permissions, and the audit trail.           | 49 paths, sign-in and sessions, a policy on every route, scoped queries, role-shaped responses, audit log, outbox, Swagger.     |
+| `apps/web`        | `@ops/web`    | Manager dashboard for supervisors, managers, and admins.                                          | `/login`, `/activate`, and a protected `/` showing the signed-in user, sign-out, and the API status card.                       |
+| `apps/mobile`     | `@ops/mobile` | Worker app for iOS and Android from one codebase.                                                 | Login, Activate, and Home screens (name, role, sign-out), tokens in SecureStore. Not yet run on a phone.                        |
+| `packages/shared` | `@ops/shared` | The wire contract, defined once: schemas, the typed API client, shared validation, design tokens. | Schemas and endpoint functions for every resource and `/auth/*`, the auth session manager, auth wording, health monitor, theme. |
+| `packages/config` | `@ops/config` | Shared ESLint, Prettier, and TypeScript settings.                                                 | ESLint base flat config, Prettier config, `strict.json`, `base.json`, and `library.json` tsconfigs. Unchanged since Phase 1.    |
 
 Each folder has a `memory.md` with its key files and conventions.
 
@@ -98,49 +107,60 @@ Each folder has a `memory.md` with its key files and conventions.
 never the reverse. ESLint enforces it (`no-restricted-imports` on `src/platform/**` in
 `apps/api/eslint.config.mjs`).
 
-| Folder        | What it is                                                                                            |
-| ------------- | ----------------------------------------------------------------------------------------------------- |
-| `config/`     | Environment schema (`env.ts`) and the global config module. Host code.                                |
-| `prisma/`     | The single Prisma client, connected lazily. Host code.                                                |
-| `health/`     | `GET /health`, the only `@Public()` route.                                                            |
-| `platform/`   | Reusable components with no Operations imports (see the table below).                                 |
-| `operations/` | The Operations domain: one NestJS module per resource, plus `common/`, `scope/`, `storage/`, `seed/`. |
-| `generated/`  | The generated Prisma client. Git-ignored; never edited.                                               |
+| Folder                   | What it is                                                                                                       |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `config/`                | Environment schema (`env.ts`) and the global config module. Host code.                                           |
+| `prisma/`                | The single Prisma client, connected lazily. Host code.                                                           |
+| `health/`                | `GET /health` (`@Public()`).                                                                                     |
+| `platform/`              | Reusable components with no Operations imports (see the table below).                                            |
+| `operations/`            | The Operations domain: one NestJS module per resource, plus `access/`, `common/`, `scope/`, `storage/`, `seed/`. |
+| `route-policies.spec.ts` | The "no route without a policy" test (boots the real modules with a fake database).                              |
+| `generated/`             | The generated Prisma client. Git-ignored; never edited.                                                          |
 
 `src/platform`:
 
-| Folder             | Contents                                                                                                                                                                                        |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `request-context/` | `RequestContext` (AsyncLocalStorage holding the correlation id and the actor), the middleware, correlation id sanitising, the one-line request log.                                             |
-| `http/`            | `ApiException`, `ApiExceptionFilter`, `ZodPipe`, `ApiDocs` (OpenAPI from Zod), pagination helpers, filter helpers (`nameFilter`, `escapeLike`, `dateRangeFilter`), `requireActor`, `@Public()`. |
-| `audit/`           | `AuditService` (the only writer), snapshot, diff and redaction helpers, `AuditQueryService`, `GET /audit-events`.                                                                               |
-| `outbox/`          | `OutboxService` (`publish`, `readAfter`, `markProcessed`), `OutboxQueryService`, `GET /outbox-events`.                                                                                          |
-| `dev-auth/`        | **TEMPORARY.** `DevActorGuard` and `isDevAuthEnabled`. Deleted in Phase 3.                                                                                                                      |
-| `docs/`            | Swagger UI and OpenAPI document setup.                                                                                                                                                          |
+| Folder             | Contents                                                                                                                                                                                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `request-context/` | `RequestContext` (AsyncLocalStorage holding the correlation id and the actor `{ userId, organizationId, sessionId? }`), the middleware, correlation id sanitising, the one-line request log.                                                                 |
+| `http/`            | `ApiException` (including `rateLimited`, 429 with `Retry-After`), `ApiExceptionFilter`, `ZodPipe`, `ApiDocs`, pagination and filter helpers, `requireActor`, `@Public()`.                                                                                    |
+| `auth/`            | `AuthGuard`, `AuthController` (`/auth/*`), `AuthService`, `AuthAdminService` (the contract business modules call), sessions, access tokens, CSRF, one-time codes, password hashing and policy, identifiers, rate limiter, settings, `AUTH_PROFILE_PROVIDER`. |
+| `authz/`           | `@Policy(name)`, `@Authenticated()`, `@DevelopmentOnly()`, and the `REQUEST_AUTHORIZER` / `RequestAuthorizer` seam. Names only: what a policy means is decided by the host.                                                                                  |
+| `notifications/`   | `NotificationSender` interface, `NOTIFICATION_SENDER` token, `LoggingNotificationSender` (the only implementation).                                                                                                                                          |
+| `audit/`           | `AuditService` (the only writer), snapshot, diff and redaction helpers, `AuditQueryService`, `GET /audit-events` (`audit.read`).                                                                                                                             |
+| `outbox/`          | `OutboxService` (`publish`, `readAfter`, `markProcessed`), `OutboxQueryService`, `GET /outbox-events` (`outbox.read`, `@DevelopmentOnly()`).                                                                                                                 |
+| `docs/`            | Swagger UI and OpenAPI document setup, with a bearer scheme and the access cookie documented.                                                                                                                                                                |
 
-`PlatformModule` is global. Importing it registers the request context middleware, the exception
-filter, the guard, and the two read-only controllers for the whole application. It expects the host
-to provide a global `PrismaService` and a `ConfigService` answering `NODE_ENV` and
-`DEV_AUTH_ENABLED`.
+`PlatformModule` is global. Importing it registers, for the whole application, the request context
+middleware, a `Cache-Control: no-store` middleware on `/auth/*`, the exception filter, `AuthGuard`
+as the one `APP_GUARD`, and the auth, audit, and outbox controllers. It expects the host to provide
+a global `PrismaService` (with the auth tables, `auditEvent`, and `outboxEvent`) and a
+`ConfigService` answering the keys listed in `auth/auth-settings.ts`, and optionally, from a global
+module, `REQUEST_AUTHORIZER` (without it every `@Policy` route is refused) and
+`AUTH_PROFILE_PROVIDER` (without it users are described with no roles). Replaceable by providing
+another value under the token: `NOTIFICATION_SENDER`, `RATE_LIMITER`, `AUTH_CLOCK`, `AUTH_RANDOM`.
 
 `src/operations`:
 
-| Folder                                                                                                              | Contents                                                                                                                                     |
-| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `organization/`, `users/`, `memberships/`, `sites/`, `teams/`, `log-types/`, `tasks/`, `work-logs/`, `attachments/` | One module each: a controller (HTTP only), a service (rules and transactions), and a `toXxx` mapper from the database row to the wire shape. |
-| `scope/`                                                                                                            | `resolveScope` (pure function), `ScopeService`, and two inspection endpoints.                                                                |
-| `common/`                                                                                                           | `ChangeRecorder`, `references.ts` (`assertActiveReferences`, `assertValidParent`), `hierarchy.ts`, `db.ts` helpers.                          |
-| `storage/`                                                                                                          | The `FileStorage` interface and its injection token. No implementation is bound and nothing injects it.                                      |
-| `seed/`                                                                                                             | `demo-seed.ts`, the demo data, created through the real services.                                                                            |
+| Folder                                                                                                              | Contents                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `organization/`, `users/`, `memberships/`, `sites/`, `teams/`, `log-types/`, `tasks/`, `work-logs/`, `attachments/` | One module each: a controller (HTTP and `@Policy` only), a service (access rules, transactions), and mappers from the row to the wire shape(s).                                              |
+| `access/`                                                                                                           | The authorization layer (global `AccessModule`): `policies.ts` (the registry), `AccessService`, `access-context.ts`, `decision.ts`, `visibility.ts`, `rules/`, the two seam implementations. |
+| `scope/`                                                                                                            | `resolveScope` (pure function), `ScopeService`, `GET /scope/me` and `GET /users/:id/scope`.                                                                                                  |
+| `common/`                                                                                                           | `ChangeRecorder`, `references.ts` (`assertActiveReferences`, `assertValidParent`), `hierarchy.ts`, `db.ts` helpers.                                                                          |
+| `memberships/admin-guard.ts`                                                                                        | `assertAdminRemains`: the last-admin check under a per-organization advisory lock.                                                                                                           |
+| `storage/`                                                                                                          | The `FileStorage` interface and its injection token. No implementation is bound and nothing injects it.                                                                                      |
+| `seed/`                                                                                                             | `demo-seed.ts`: the demo data, created through the real services; `DEV_PASSWORDS`.                                                                                                           |
 
 ### Data model
 
-Defined in `apps/api/prisma/schema.prisma`, applied by two migrations in
-`apps/api/prisma/migrations/`. Ids are UUID version 7 (`@default(uuid(7))`), so they sort by
-creation time. Roles, statuses, priorities, sources, and the audit actor type are PostgreSQL enums.
-Timestamps are `timestamptz(3)`. The reasoning is in
-[ADR-0002](docs/decisions/0002-flexible-organization-and-scope-model.md) and
-[ADR-0003](docs/decisions/0003-configurable-log-types-with-custom-fields.md).
+Defined in `apps/api/prisma/schema.prisma`, applied by three migrations in
+`apps/api/prisma/migrations/` (`20261013112952_init`,
+`20261013150000_attachment_storage_key_per_org`, `20261014090000_auth`). Ids are UUID version 7
+(`@default(uuid(7))`), so they sort by creation time. Roles, statuses, priorities, sources, the
+audit actor type, and the auth enums are PostgreSQL enums. Timestamps are `timestamptz(3)`. The
+reasoning is in [ADR-0002](docs/decisions/0002-flexible-organization-and-scope-model.md),
+[ADR-0003](docs/decisions/0003-configurable-log-types-with-custom-fields.md), and
+[ADR-0004](docs/decisions/0004-authentication.md).
 
 ```mermaid
 erDiagram
@@ -180,15 +200,16 @@ erDiagram
     uuid id PK
     string name
     string slug UK
-    json settings
+    json settings "workLogEditWindowHours and free keys"
     timestamptz archivedAt
   }
   User {
     uuid id PK
     uuid organizationId FK
-    string email "unique per organization"
+    string email "optional, unique per organization"
+    string phone "optional, unique per organization"
+    string username "optional, unique per organization"
     string displayName
-    string phone
     timestamptz archivedAt
   }
   Site {
@@ -214,7 +235,7 @@ erDiagram
     uuid organizationId FK
     uuid userId FK
     Role role
-    boolean orgWide
+    boolean orgWide "always true for manager and admin"
     timestamptz archivedAt
   }
   MembershipSite {
@@ -244,7 +265,7 @@ erDiagram
     TaskPriority priority
     uuid siteId FK "optional"
     uuid teamId FK "optional"
-    uuid createdById FK
+    uuid createdById FK "set by the server"
     timestamptz dueAt
     timestamptz completedAt
     timestamptz archivedAt
@@ -259,7 +280,7 @@ erDiagram
     uuid id PK
     uuid organizationId FK
     uuid clientId "unique per organization"
-    uuid authorId FK
+    uuid authorId FK "set by the server"
     timestamptz occurredAt
     uuid taskId FK "optional"
     uuid siteId FK "optional"
@@ -280,7 +301,7 @@ erDiagram
     uuid id PK
     uuid organizationId FK
     uuid workLogId FK
-    uuid uploadedById FK
+    uuid uploadedById FK "set by the server"
     string fileName
     string mimeType
     int sizeBytes
@@ -289,7 +310,7 @@ erDiagram
   }
   AuditEvent {
     uuid id PK
-    uuid organizationId "no foreign key"
+    uuid organizationId "no foreign key; null for unknown-identifier sign-in failures"
     AuditActorType actorType
     string actorId
     string action
@@ -316,22 +337,74 @@ erDiagram
   }
 ```
 
-Points the diagram does not show:
+The authentication tables are platform tables with **no foreign keys to business tables** (they
+store `userId` and `organizationId` as plain ids) and hold hashes only:
+
+```mermaid
+erDiagram
+  AuthSession ||--o{ AuthRefreshToken : "family of"
+
+  AuthCredential {
+    uuid userId PK
+    uuid organizationId
+    string passwordHash "argon2id PHC string"
+    int failedAttempts
+    timestamptz lockedUntil
+    timestamptz lastLoginAt
+  }
+  AuthOneTimeCode {
+    uuid id PK
+    uuid userId
+    uuid organizationId
+    AuthCodePurpose purpose "activation or password_reset"
+    string codeHash UK "SHA-256"
+    timestamptz expiresAt
+    timestamptz consumedAt
+    uuid issuedById
+  }
+  AuthSession {
+    uuid id PK
+    uuid userId
+    uuid organizationId
+    AuthClient client "web or mobile"
+    string deviceName
+    string userAgent
+    string ipAddress
+    timestamptz lastUsedAt
+    timestamptz expiresAt "absolute"
+    timestamptz revokedAt
+    string revokedReason
+  }
+  AuthRefreshToken {
+    uuid id PK
+    uuid sessionId FK "cascades with the session"
+    string tokenHash UK "SHA-256"
+    timestamptz expiresAt "sliding"
+    timestamptz usedAt
+  }
+```
+
+Points the diagrams do not show:
 
 - **Enums**: `Role` (`worker`, `supervisor`, `manager`, `admin`); `TaskStatus` (`todo`,
   `in_progress`, `blocked`, `done`, `cancelled`); `TaskPriority` (`low`, `normal`, `high`,
   `urgent`); `WorkLogStatus` (`draft`, `submitted`, `approved`, `rejected`); `WorkLogSource`
-  (`manual`, `voice`, `photo`, `ai`); `AuditActorType` (`user`, `system`). The arrays in
-  `packages/shared/src/domain/enums.ts` must match them exactly, in the same order.
-- **`AuditEvent` and `OutboxEvent` are platform tables.** They have no foreign keys to business
-  tables and store entity ids as plain strings, so they can move to another product unchanged.
+  (`manual`, `voice`, `photo`, `ai`); `AuditActorType` (`user`, `system`); `AuthCodePurpose`;
+  `AuthClient`. The business enum arrays in `packages/shared/src/domain/enums.ts` must match the
+  Prisma enums exactly, in the same order.
+- **A user has at least one login identifier** (email, phone, or username), enforced by the API.
+  Identifiers are stored normalised (email and username lower-case; phone as digits with an
+  optional leading `+`). A user without an `AuthCredential` row has not been activated and cannot
+  sign in.
+- **`AuditEvent`, `OutboxEvent`, and the `Auth*` tables are platform tables.** They store entity
+  ids as plain strings, so they can move to another product unchanged.
 - **`AuditEvent` is append-only at the database level.** The first migration adds a trigger that
   raises an error on `UPDATE` or `DELETE` of a row. It does not block `TRUNCATE` (the integration
   test harness relies on that), so a database role allowed to truncate can still empty the log.
-- **Indexes** start with `organizationId` on every business table, followed by the common filters
-  (status, site, team, author, `occurredAt`, `dueAt`, `archivedAt`).
-- **Foreign keys** are `ON DELETE RESTRICT`. Only the membership scope rows and task assignee rows
-  cascade with their parent. Nothing is deleted through the API; records are archived.
+- **Indexes** start with `organizationId` on every business table, followed by the common filters.
+- **Foreign keys** are `ON DELETE RESTRICT`. Only the membership scope rows, task assignee rows,
+  and refresh tokens cascade with their parent. Nothing is deleted through the API; records are
+  archived.
 - **Attachments are metadata only.** The bytes will live behind the `FileStorage` interface
   (Phase 4). No file can be uploaded or downloaded today.
 - **`source` and `aiMetadata`** are reserved for the AI phases. `source` is always `manual` in
@@ -339,23 +412,185 @@ Points the diagram does not show:
 
 ### Request flow
 
-1. **Boot** (`src/main.ts`): the environment is validated before Nest starts. The `x-powered-by`
-   header is disabled, the request context middleware is installed first, CORS is enabled for
-   `CORS_ORIGINS`, and Swagger is mounted only when `NODE_ENV` is `development`.
-2. **Request context middleware**: takes the correlation id from the `x-request-id` request header
-   when it is safe (at most 64 characters, letters, digits and `. _ : -`), otherwise generates a
-   UUID. It echoes the id in the `x-request-id` response header and writes one JSON log line when
-   the response finishes: method, path without the query string, status, duration, correlation id,
-   actor id. Bodies, headers, and query values are never logged. `/health` and `/docs*` are logged
-   at debug level. The middleware runs twice on purpose: once on the HTTP adapter so that a request
-   with a malformed body still gets an id, and once from `PlatformModule` after the body parser,
-   to re-enter the same context.
-3. **Guard**: `DevActorGuard` (global) gives every non-public request an acting user, or answers 401. See "Acting user" below.
+1. **Boot** (`src/main.ts`): the environment is validated before Nest starts (one line per bad
+   variable, values never printed; see Configuration). `x-powered-by` is disabled; when
+   `TRUST_PROXY_HOPS` is above 0, Express trusts exactly that many proxies for the client address.
+   The request context middleware is installed first. CORS allows only `CORS_ORIGINS`, with
+   credentials, the headers `Content-Type`, `Accept`, `Authorization`, `x-csrf-token`, and
+   `x-request-id`, and exposes `x-request-id` and `Retry-After`. Swagger is mounted only when
+   `NODE_ENV` is `development`.
+2. **Request context middleware**: takes the correlation id from `x-request-id` when it is safe
+   (at most 64 characters, letters, digits and `. _ : -`), otherwise generates a UUID, echoes it,
+   and writes one JSON log line when the response finishes (method, path without the query string,
+   status, duration, correlation id, actor id). Bodies, headers, cookies, and query values are
+   never logged. `/health` and `/docs*` are logged at debug level. It runs twice on purpose: on the
+   HTTP adapter (so a request with a malformed body still gets an id) and from `PlatformModule`
+   after the body parser.
+3. **`AuthGuard`**, the one global guard (see Authentication): development-only routes answer 404
+   outside development and test; `@Public()` routes pass; otherwise the request is authenticated
+   against the database, CSRF is checked for cookie sessions, the actor is put in
+   `RequestContext`, and the route's policy is applied through the `RequestAuthorizer`
+   (see Authorization).
 4. **Controller**: `ZodPipe` validates the body, query, and path parameters against schemas from
-   `@ops/shared`. The controller reads the actor with `requireActor()` and passes
-   `organizationId` to the service. It contains no rules.
-5. **Service**: runs the rules and the write inside one database transaction (next section).
-6. **Errors**: `ApiExceptionFilter` (global) turns anything thrown into the standard error body.
+   `@ops/shared` (400). The controller calls one service method. It contains no rules and no role
+   checks.
+5. **Service**: gets the caller with `AccessService.context()` (cached for the request), applies
+   the pure access rules and visibility filters (404, 403, 422), and runs the write inside one
+   transaction (409 for state conflicts).
+6. **Errors**: `ApiExceptionFilter` (global) turns anything thrown into the standard error body
+   and sets `Retry-After` for 429.
+
+### Authentication
+
+Reusable platform module `src/platform/auth/`. The decision, its tradeoffs, and how SSO would plug
+in are in [ADR-0004](docs/decisions/0004-authentication.md).
+
+**The guard's order of checks** (`auth.guard.ts`), for every HTTP request:
+
+1. A route or controller marked `@DevelopmentOnly()` answers 404 (the same body as an unknown
+   route) unless `NODE_ENV` is `development` or `test`, before anything else and for everyone.
+2. `@Public()` routes pass with no actor.
+3. **Authenticate.** The access token comes from `Authorization: Bearer`; only when the request has
+   no `Authorization` header at all, from the `access_token` cookie (an unusable header never falls
+   back to the cookie). The JWT must verify (HS256, fixed header, `iss`, `aud`, `exp`, `iat`). Then
+   the database is asked: the session exists, is not revoked or expired, and matches the token's
+   user and organization; a `web` session is accepted only from the cookie and a `mobile` session
+   only from the header; the user exists, is in that organization, and is not archived. Any
+   failure is 401 "Sign in to continue".
+4. **CSRF**, for cookie-authenticated requests that are not `GET`, `HEAD`, or `OPTIONS`: `Origin`
+   must be one of `CORS_ORIGINS` (missing or `null` refused) and `x-csrf-token` must be the
+   session's token. Otherwise 403.
+5. The actor `{ userId, organizationId, sessionId }` is set in `RequestContext`.
+6. **Policy.** No declaration: 403, logged as a programming error. `@Authenticated()`: pass. Any
+   other name: `RequestAuthorizer.authorize({ policy, actor })` from the host (missing: 403).
+
+**Endpoints** (`auth.controller.ts`; every answer carries `Cache-Control: no-store`):
+
+| Route                        | Access        | What it does                                                                                                                                        |
+| ---------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/login`           | public        | `{ identifier, password, client: 'web' \| 'mobile', organizationSlug?, deviceName? }`. Web: cookies, `tokens: null`, `csrfToken`. Mobile: `tokens`. |
+| `POST /auth/refresh`         | public        | Mobile sends `refreshToken` in the body, web an empty body (cookie). Rotates the refresh token.                                                     |
+| `GET /auth/me`               | authenticated | The signed-in user (with organization name, roles, highest role), the session, and the CSRF token again for web.                                    |
+| `POST /auth/logout`          | public        | Always 204. Ends the session named by the access token (an expired one is accepted) or by the refresh token (cookie or body); clears cookies.       |
+| `POST /auth/logout-all`      | authenticated | Ends every session of the user, this one included.                                                                                                  |
+| `GET /auth/sessions`         | authenticated | The user's own active sessions (devices), never a token.                                                                                            |
+| `DELETE /auth/sessions/:id`  | authenticated | Ends one of the user's own sessions; another user's id is 404.                                                                                      |
+| `POST /auth/set-password`    | public        | `{ code, password }`: activation and reset. Ends every session of the user. Bad code 422; weak password 400 (code not used up).                     |
+| `POST /auth/change-password` | authenticated | `{ currentPassword, newPassword }`. Wrong current password is 400 (not 401). Ends the other sessions.                                               |
+
+**Sessions and tokens.** Access token: JWT, 15 minutes, claims `sub`, `org`, `sid`. Refresh token:
+256 random bits stored as SHA-256, single use (conditional update), sliding 30 days, never beyond
+the session's absolute 90 days. A used token presented again within
+`AUTH_REFRESH_REUSE_GRACE_SECONDS` (10) is a lost race (401, nothing revoked); later it is reuse:
+the session is revoked and `auth.refresh_reuse_detected` is audited.
+
+**Cookies versus bearer.** Web: `access_token` (`Path=/`) and `refresh_token` (`Path=/auth`),
+`HttpOnly; SameSite=Lax`, `Secure` outside development and test, `Domain` only with
+`AUTH_COOKIE_DOMAIN`; no tokens in the body. Mobile: tokens in the body, no cookies, sent back as
+`Authorization: Bearer`.
+
+**CSRF.** The token is `base64url(HMAC-SHA256(key derived from the secret, sessionId))`: bound to
+the session, stored nowhere, stable across refreshes. Login (web), refresh (cookie), set-password,
+and logout rely on the Origin check alone (reasons in ADR-0004).
+
+**One-time codes.** 80 bits, `XXXX-XXXX-XXXX-XXXX`, stored as SHA-256, single use; activation 72
+hours, reset 60 minutes; a new code cancels older unused codes of the same purpose. Admins issue
+them with `POST /users` (activation, returned as `activation`), `POST /users/:id/activation-code`,
+and `POST /users/:id/password-reset`. The code and link (`WEB_APP_URL/activate?code=...`) are in
+the response and in the log **in development only**.
+
+**Rate limiting and lockout.** `RateLimiter` interface, in-memory per process (`RATE_LIMITER`):
+login 20/min per IP and 10/5 min per identifier; refresh 120/min per IP and 10/min per token;
+set-password 10/min per IP and 5/10 min per code; change-password 5/5 min per user. Over the
+limit: 429 `rate_limited` with `Retry-After`. Lockout after 5 consecutive failures for 15 minutes,
+stored on `AuthCredential`; attempts during a lock neither count nor extend it, and concurrent
+failures cannot clear it. Every failed sign-in answers the same 401 "The sign-in details are not
+correct".
+
+**Notification sender.** `NotificationSender.sendOneTimeCode(...)` in `src/platform/notifications/`.
+The bound implementation, `LoggingNotificationSender`, logs that a code was issued (by user id),
+the code and link only in development, and warns elsewhere that nothing was delivered.
+
+**Security audit events** (entity type `auth`, through `AuditService`, never in the outbox):
+`auth.login_succeeded`, `auth.login_failed` (with reason), `auth.locked_out`, `auth.logout`,
+`auth.logout_all`, `auth.session_revoked`, `auth.refresh_reuse_detected`, `auth.code_issued`,
+`auth.activated`, `auth.password_reset`, `auth.password_changed`. A failure for an unknown
+identifier has no organization and only a keyed fingerprint of what was typed.
+
+**The seams.** Business modules use only `RequestContext.actor()` and `AuthAdminService`
+(`issueOneTimeCode`, `revokeUserSessions`, `setPasswordForSeed`, `isActivated`,
+`activatedUserIds`), always inside their own transaction. The Operations domain provides
+`AUTH_PROFILE_PROVIDER` (organization name and roles of a user) and `REQUEST_AUTHORIZER`.
+
+### Authorization
+
+The model, the reasoning, and the documented limits are in
+[ADR-0005](docs/decisions/0005-authorization-model.md). It lives in `src/operations/access/`.
+
+- **Policy registry** (`policies.ts`): every policy name with the roles that may use such a route
+  at all. `listPolicies()` returns it. Unknown name: 403 (fail closed).
+- **`OperationsRequestAuthorizer`**: the function-level check the guard calls. A non-production
+  policy (`outbox.read`) answers 404 in production before the role check; otherwise the caller
+  must hold one of the policy's roles (403). It resolves the access context, which stays cached
+  for the services.
+- **`AccessService.context()`**: the caller's `AccessContext` (user, organization, roles highest
+  first, `highestRole`, `isAdmin`, `isManagerOrAbove`, `isSupervisorOrAbove`, resolved scope),
+  resolved once per request from `ScopeService` and cached on the request's context store. No
+  actor, or an archived or missing user: 401. `runAsSystem(organizationId, work)` gives code
+  outside a request (the seed) an admin context that is nobody's author; it throws inside a
+  request.
+- **Pure rules** (`rules/work-log.rules.ts`, `task.rules.ts`, `user.rules.ts`, `place.rules.ts`,
+  `membership.rules.ts`, `attachment.rules.ts`, `organization.rules.ts`): plain data in, a
+  `Decision` out (`allowed`, `not_found`, `forbidden`, `conflict`). `enforce()` (`decision.ts`) is
+  the only place a decision becomes 404, 403, or 409.
+- **`visibility.ts`**: each resource's visibility is one `Visibility` value; `isVisible()` reads it
+  for one record and `visibilityWhere()` turns the same value into a Prisma `where` fragment. The
+  list filter and the detail check cannot disagree.
+- **404 versus 403**: 404 when the record is missing, in another organization, or outside the
+  caller's visibility; 403 when it is visible but the action is not allowed, or the role may not
+  use the route; 409 when the state forbids it for everyone; 422 for a bad or invisible reference
+  in a body. Order: 401 / CSRF 403 / route 403 (guard), 400 (pipe), then 404, 403, 409 (service).
+  A work-log status move that does not exist is 409 for anyone who can see the log.
+- **Role-shaped responses**: users as `profile: basic | contact | full`; the organization as
+  `view: summary | full`; tasks name people by id.
+
+#### Permissions matrix
+
+As implemented on 2026-10-16 in `policies.ts` and `rules/`, and checked cell by cell by
+`apps/api/test/permissions-matrix.int-spec.ts`. "Their people" means the users of a supervisor's
+scope (`userIds`). "Colleagues" means everyone who works at a site or team the user works at
+(descendants included) and the supervisors of that place. "Task peers" means co-assignees and
+creators of the user's non-archived tasks. A user with no active membership gets 403 on every
+`@Policy` route; `/auth/*` and `/scope/me` still work for them.
+
+| Resource / action                        | Worker                                                                                               | Supervisor                                                                                                                 | Manager                | Admin                                                     |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------- |
+| Organization read                        | `summary`                                                                                            | `summary`                                                                                                                  | `summary`              | `full`                                                    |
+| Organization update                      | 403                                                                                                  | 403                                                                                                                        | 403                    | yes                                                       |
+| Users list / get                         | self `full`; `basic` for colleagues and task peers; others 404                                       | self `full`; `contact` for their people; `basic` for colleagues and task peers; others 404                                 | `contact` for everyone | `full` for everyone                                       |
+| Users update                             | own `displayName` only (403 otherwise)                                                               | same                                                                                                                       | same                   | any field of anyone                                       |
+| Users create, archive, restore, codes    | 403                                                                                                  | 403                                                                                                                        | 403                    | yes (last admin: 409)                                     |
+| `GET /scope/me` / `GET /users/:id/scope` | yes / 403                                                                                            | yes / 403                                                                                                                  | yes / 403              | yes / yes                                                 |
+| Memberships read / manage                | 403                                                                                                  | 403                                                                                                                        | 403                    | yes (no escalation; last admin: 409)                      |
+| Sites and teams read                     | where they work (descendants included) and places of their assigned tasks; others 404                | their scope, where they work, and places of their tasks; others 404                                                        | all                    | all                                                       |
+| Sites and teams manage                   | 403                                                                                                  | 403                                                                                                                        | yes                    | yes                                                       |
+| Log types read / manage                  | read / 403                                                                                           | read / 403                                                                                                                 | yes / yes              | yes / yes                                                 |
+| Tasks read                               | assigned to them; others 404                                                                         | in their scope, assigned to their people, created by them, or assigned to them; others 404                                 | all                    | all                                                       |
+| Tasks create, edit, assign, archive      | 403                                                                                                  | site or team in scope (else 403); references visible (else 422); assignees among their people (else 422)                   | all                    | all                                                       |
+| Tasks change status                      | when assigned: `todo`, `in_progress`, `blocked`, `done`; not `cancelled`; not a cancelled task (403) | any status on tasks they manage; otherwise the worker rule                                                                 | any                    | any                                                       |
+| Work logs read                           | own; others 404                                                                                      | own, in their scope, and their people's; others 404                                                                        | all                    | all                                                       |
+| Work logs create                         | own, `draft` or `submitted`, references visible (else 422)                                           | same                                                                                                                       | same                   | same                                                      |
+| Work logs edit content                   | author only, within the edit window (edge inclusive), not `approved`                                 | same; never someone else's (403)                                                                                           | same                   | same                                                      |
+| Work logs change status                  | author: `draft`↔`submitted`, `rejected`→`submitted`, under the edit rule                             | also review logs they can see: `submitted`→`approved`/`rejected`, `approved`/`rejected`→`submitted`; never their own (403) | same as supervisor     | same as supervisor                                        |
+| Work logs archive                        | author under the edit rule                                                                           | author under the edit rule, or as reviewer (not their own)                                                                 | same as supervisor     | same as supervisor                                        |
+| Attachments read / add / archive         | follow the parent log (read: can see it; change: the archive rule)                                   | same                                                                                                                       | same                   | same                                                      |
+| Audit events                             | 403                                                                                                  | 403                                                                                                                        | 403                    | yes, own organization                                     |
+| Outbox events                            | 403                                                                                                  | 403                                                                                                                        | 403                    | development and test only; 404 for everyone in production |
+
+The edit window is `organization.settings.workLogEditWindowHours` (default 24), counted from the
+log's `createdAt`. A move not listed for work-log status is 409. An organization-wide supervisor
+sees and manages like a manager for tasks and work logs, but still may not manage sites, teams,
+log types, users, or memberships.
 
 ### The write pattern
 
@@ -363,36 +598,39 @@ Every write in the Operations domain is **one transaction containing the busines
 event, and its outbox event**:
 
 ```text
+context = await access.context()             // who is asking (401 if nobody)
 prisma.$transaction(tx =>
-  load the current row (404 if missing or in another organization, 409 if archived)
-  check references with assertActiveReferences (422)
-  write the row
+  load the row through the caller's visibility (404 if missing, other organization, or invisible)
+  enforce(rule(context, facts, ...))         // 403 visible but not allowed, 409 impossible move
+  reject archived rows (409)
+  check references with assertActiveReferences, through the caller's visibility (422)
+  write the row (author fields from the context, never from the body)
   changes.record(tx, { organizationId, entityType, verb, entityId, before, after, extra })
+  revoke sessions through AuthAdminService when access was taken away
 )
 ```
 
 `ChangeRecorder` (`src/operations/common/change-recorder.ts`) is the only caller of
-`AuditService.record` and `OutboxService.publish`. It writes both with the same name,
-`<entityType>.<verb>`, and the same transaction client, so the three rows commit or roll back
-together. A service must never write a business row outside this pattern.
+`AuditService.record` and `OutboxService.publish` in the domain. It writes both with the same name,
+`<entityType>.<verb>`, and the same transaction client, so the rows commit or roll back together.
+A service must never write a business row outside this pattern. (The auth module writes its own
+security events through `AuditService` directly, in its own transactions, and never to the outbox.
+The seed back-dates work log `createdAt` with a direct update, outside the pattern, on purpose.)
 
 - **Audit event**: actor (`user` with the id, or `system` when there is no request, as in the
-  seed), action, entity type and id, `before`, `after`, `changes` (a top-level field diff,
-  `{ field: { from, to } }`, null on create), correlation id, time.
+  seed), action, entity type and id, `before`, `after`, `changes` (a top-level field diff), correlation
+  id, time. A user's stored record holds nothing from the auth tables.
 - **Outbox event**: the same name as `eventType`, the entity as the aggregate, and the payload
-  `{ ...extra, <entity>: after }`. The entity sits under its camelCase name (`site`, `workLog`,
-  `logType`) in its wire shape, so a consumer does not need to re-read it. `extra` carries facts
-  such as `{ from, to }` for a status change or `{ added, removed }` for assignees.
+  `{ ...extra, <entity>: after }`.
 - **Redaction**: before storing, both replace the value of any key that looks sensitive, at any
-  depth, with `"[redacted]"`. The default pattern matches key names containing `password`,
-  `passphrase`, `passcode`, `secret`, `token`, `api_key`, `credential`, or `authorization`, and
-  names ending in `hash`. This is by key name, so it also catches a custom field keyed `token_no`.
-- **No-op writes record nothing**: archiving an archived record, restoring an active one, setting
-  the status a record already has, or sending the assignee list a task already has returns the
-  record unchanged with no audit or outbox row. A retried work log create (same `clientId`) also
-  records nothing.
+  depth, with `"[redacted]"`: key names containing `password`, `passphrase`, `passcode`, `secret`,
+  `token`, `api_key`, `credential`, or `authorization`, and names ending in `hash`. This still
+  applies in Phase 3; the auth module additionally never puts a password, code, or token in a
+  payload, and the `secrets` integration suite checks logs, audit, and outbox.
+- **No-op writes record nothing**: archiving an archived record, restoring an active one, the same
+  status, the same assignees, or a retried work log create (same `clientId`, same author).
 
-Actions and event types in use (31):
+Domain actions and event types (31):
 
 | Entity         | Verbs                                                                   |
 | -------------- | ----------------------------------------------------------------------- |
@@ -406,206 +644,164 @@ Actions and event types in use (31):
 | `work_log`     | `created`, `updated`, `status_changed`, `archived`                      |
 | `attachment`   | `created`, `archived`                                                   |
 
+Plus the eleven `auth.*` audit actions listed under Authentication (audit only).
+
 The outbox has no consumer yet. `OutboxService.readAfter` and `markProcessed` exist for the Phase 7
-consumer and are called only by tests; nothing sets `processedAt`. Sequence numbers are assigned
-at insert, not at commit, so a consumer that relies on the cursor alone can miss an event from a
-transaction that commits late. The Phase 7 consumer must re-read a short window or use
-`processedAt`.
+consumer and are called only by tests. Sequence numbers are assigned at insert, not at commit, so a
+consumer that relies on the cursor alone can miss an event from a transaction that commits late.
 
 ### API surface
 
-38 paths. Every route except `GET /health` needs an acting user. The organization is always the
-acting user's; it is never taken from the URL or the body.
+49 paths. Every route declares `@Public()`, `@Authenticated()`, or `@Policy(...)`; the policy is
+shown in brackets. The organization is always the caller's; it is never taken from the URL or the
+body.
 
-| Resource     | Routes                                                                                                                                                     |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Health       | `GET /health` (public)                                                                                                                                     |
-| Organization | `GET /organization`, `PATCH /organization` (name, settings)                                                                                                |
-| Users        | `GET /users`, `POST /users`, `GET /users/:id`, `PATCH /users/:id`, `POST /users/:id/archive`, `POST /users/:id/restore`                                    |
-| Scope        | `GET /scope/me`, `GET /users/:id/scope` (inspection only)                                                                                                  |
-| Memberships  | `GET /memberships`, `POST /memberships`, `GET /memberships/:id`, `PATCH /memberships/:id`, `POST /memberships/:id/archive`                                 |
-| Sites        | `GET /sites`, `POST /sites`, `GET /sites/:id`, `PATCH /sites/:id`, `POST /sites/:id/archive`, `POST /sites/:id/restore`                                    |
-| Teams        | `GET /teams`, `POST /teams`, `GET /teams/:id`, `PATCH /teams/:id`, `POST /teams/:id/archive`, `POST /teams/:id/restore`                                    |
-| Log types    | `GET /log-types`, `POST /log-types`, `GET /log-types/:id`, `PATCH /log-types/:id`, `POST /log-types/:id/archive`                                           |
-| Tasks        | `GET /tasks`, `POST /tasks`, `GET /tasks/:id`, `PATCH /tasks/:id`, `PATCH /tasks/:id/status`, `PUT /tasks/:id/assignees`, `POST /tasks/:id/archive`        |
-| Work logs    | `GET /work-logs`, `POST /work-logs`, `GET /work-logs/:id`, `PATCH /work-logs/:id`, `PATCH /work-logs/:id/status`, `POST /work-logs/:id/archive`            |
-| Attachments  | `GET /work-logs/:workLogId/attachments`, `POST /work-logs/:workLogId/attachments`, `GET /attachments/:id`, `POST /attachments/:id/archive` (metadata only) |
-| Audit events | `GET /audit-events`, `GET /audit-events/:id` (read-only)                                                                                                   |
-| Outbox       | `GET /outbox-events`, `GET /outbox-events/:id` (read-only; internal and testing use, not a product API)                                                    |
+| Resource     | Routes                                                                                                                                                                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Health       | `GET /health` (public)                                                                                                                                                                                                                     |
+| Auth         | the nine `/auth/*` routes above                                                                                                                                                                                                            |
+| Organization | `GET /organization` [`organization.read`], `PATCH /organization` [`organization.update`]                                                                                                                                                   |
+| Users        | `GET /users`, `GET /users/:id` [`user.read`]; `PATCH /users/:id` [`user.update`]; `POST /users`, `POST /users/:id/archive`, `POST /users/:id/restore`, `POST /users/:id/activation-code`, `POST /users/:id/password-reset` [`user.manage`] |
+| Scope        | `GET /scope/me` (authenticated), `GET /users/:id/scope` [`user.read_scope`]                                                                                                                                                                |
+| Memberships  | `GET /memberships`, `GET /memberships/:id` [`membership.read`]; `POST /memberships`, `PATCH /memberships/:id`, `POST /memberships/:id/archive` [`membership.manage`]                                                                       |
+| Sites        | `GET /sites`, `GET /sites/:id` [`site.read`]; `POST`, `PATCH /:id`, `POST /:id/archive`, `POST /:id/restore` [`site.manage`]                                                                                                               |
+| Teams        | `GET /teams`, `GET /teams/:id` [`team.read`]; `POST`, `PATCH /:id`, `POST /:id/archive`, `POST /:id/restore` [`team.manage`]                                                                                                               |
+| Log types    | `GET /log-types`, `GET /log-types/:id` [`log_type.read`]; `POST`, `PATCH /:id`, `POST /:id/archive` [`log_type.manage`]                                                                                                                    |
+| Tasks        | `GET /tasks`, `GET /tasks/:id` [`task.read`]; `POST`, `PATCH /:id`, `PUT /:id/assignees`, `POST /:id/archive` [`task.manage`]; `PATCH /tasks/:id/status` [`task.change_status`]                                                            |
+| Work logs    | `GET /work-logs`, `GET /work-logs/:id` [`work_log.read`]; `POST` [`work_log.create`]; `PATCH /:id` [`work_log.update`]; `PATCH /:id/status` [`work_log.change_status`]; `POST /:id/archive` [`work_log.archive`]                           |
+| Attachments  | `GET /work-logs/:workLogId/attachments`, `GET /attachments/:id` [`attachment.read`]; `POST /work-logs/:workLogId/attachments` [`attachment.create`]; `POST /attachments/:id/archive` [`attachment.archive`] (metadata only)                |
+| Audit events | `GET /audit-events`, `GET /audit-events/:id` [`audit.read`]                                                                                                                                                                                |
+| Outbox       | `GET /outbox-events`, `GET /outbox-events/:id` [`outbox.read`, development and test only]                                                                                                                                                  |
 
-Only users, sites, and teams can be restored. There is no delete route anywhere.
+Only users, sites, and teams can be restored. There is no delete route except
+`DELETE /auth/sessions/:id`, which ends a session.
 
 In development the OpenAPI document is generated from the same Zod schemas that validate the
-requests (`ApiDocs`), and served at `/docs` (Swagger UI), `/docs-json`, and `/docs-yaml`. Those
-routes do not exist in any other environment.
+requests (`ApiDocs`), and served at `/docs` (Swagger UI), `/docs-json`, and `/docs-yaml`, with a
+bearer scheme (paste a mobile `tokens.accessToken` into **Authorize**) and the access cookie
+documented. Those routes do not exist in any other environment.
 
 ### HTTP conventions
 
 **Error body.** Every non-2xx response except `GET /health` has the shape of `apiErrorSchema` in
-`@ops/shared`:
+`@ops/shared` (`statusCode`, `code`, `message`, `details`, `correlationId`, `timestamp`). `code` is
+one of `validation_failed`, `unauthenticated`, `forbidden`, `not_found`, `conflict`,
+`unprocessable`, `rate_limited`, `service_unavailable`, `internal_error`. Clients branch on
+`code`, never on `message`. Unexpected errors are logged with the correlation id and answered with
+a generic 500. (An unknown route, and the outbox in production, answer Nest's own 404.)
 
-```json
-{
-  "statusCode": 422,
-  "code": "unprocessable",
-  "message": "The request refers to records that do not exist or are archived",
-  "details": [
-    { "path": "siteId", "message": "Site ... does not exist in this organization or is archived" }
-  ],
-  "correlationId": "the x-request-id of the request",
-  "timestamp": "2026-10-13T10:00:00.000Z"
-}
-```
+| Status  | When                                                                                                                                                                                                                                       |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 400     | A body, query, or path parameter fails its schema (request bodies are strict: an unknown key, including `authorId`, is a 400); a weak new password; a wrong current password; a manager or admin membership that is not organization-wide. |
+| 401     | No valid session (one message), or a failed sign-in (one message).                                                                                                                                                                         |
+| 403     | The CSRF checks failed; the role may not use the route; the record is visible but the action is not allowed; sorting users by email without seeing every email.                                                                            |
+| 404     | The record does not exist, belongs to another organization, or is outside the caller's visibility. Indistinguishable on purpose.                                                                                                           |
+| 409     | The record's state forbids the change (archived, impossible status move, last admin, already activated) or a unique value is in use.                                                                                                       |
+| 422     | A body refers to a record that is missing, archived, in another organization, or invisible to the caller; an unknown, used, or expired one-time code.                                                                                      |
+| 429     | A rate limit on `/auth/*` was hit; `Retry-After` says when to try again.                                                                                                                                                                   |
+| 200/201 | `POST /work-logs` answers 201 for a new log, and 200 with the stored log when its author retries the same `clientId`.                                                                                                                      |
 
-`code` is one of `validation_failed`, `unauthenticated`, `forbidden`, `not_found`, `conflict`,
-`unprocessable`, `service_unavailable`, `internal_error`. Clients branch on `code`, never on
-`message`. Unexpected errors are logged with the correlation id and answered with a generic 500.
-
-| Status  | When                                                                                                                           |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| 400     | A body, query, or path parameter fails its schema. Request bodies are strict: an unknown key is a 400 with that key in `path`. |
-| 401     | No acting user (see below).                                                                                                    |
-| 404     | The record does not exist, or belongs to another organization. The two cases are indistinguishable on purpose.                 |
-| 409     | Changing an archived record, or a unique value already in use (user email, log type key, attachment storage key).              |
-| 422     | A body refers to a record that is in another organization or archived, or a parent that would create a cycle.                  |
-| 200/201 | `POST /work-logs` answers 201 for a new log, and 200 with the stored log when the organization already has that `clientId`.    |
-
-**Lists.** Every list endpoint returns `{ items, page, pageSize, total }`.
-
-- `page` starts at 1. `pageSize` defaults to 25 and is at most 100.
-- `sort=field:asc` or `sort=field:desc`, restricted to the fields each endpoint allows. `id` is
-  added as a tie-breaker so pages are stable.
-- Archived records are left out unless `includeArchived=true`.
-- `search` is a case-insensitive "contains" on the fields the endpoint names. The term is matched
-  literally: `%` and `_` are escaped.
-- Date ranges are inclusive at the lower bound and exclusive at the upper bound everywhere:
-  `from` / `to` on audit and outbox events, `occurredFrom` / `occurredTo` on work logs,
-  `dueFrom` / `dueTo` on tasks.
-- `action` (audit) and `eventType` (outbox) match exactly, or as a prefix when the value ends in a
-  dot or an asterisk (`task.` and `task.*`).
-- The outbox `sequence` is a 64-bit integer sent as a decimal string. `afterSequence` is the
-  consumer cursor; a value that does not fit in 64 bits is a 400.
+**Lists.** Every list endpoint returns `{ items, page, pageSize, total }`, filtered to what the
+caller may see before paging. `page` starts at 1; `pageSize` defaults to 25, at most 100.
+`sort=field:asc|desc` on the allowed fields, with `id` as a tie-breaker. Archived records are left
+out unless `includeArchived=true`. `search` is a case-insensitive literal "contains". Date ranges
+are inclusive at the lower bound and exclusive at the upper bound everywhere. `action` (audit) and
+`eventType` (outbox) match exactly, or as a prefix when the value ends in a dot or an asterisk. The
+outbox `sequence` is a 64-bit integer sent as a decimal string.
 
 **Updates.** `PATCH` bodies are partial: a field left out is unchanged, `null` clears a nullable
 field, and an empty body is a 400. Archive and restore are `POST .../archive` and
 `POST .../restore` and answer 200 with the record.
 
-### Acting user: the dev header (TEMPORARY)
-
-There is no authentication. Until Phase 3, the acting user comes from a development-only request
-header, **`x-dev-user-id`**, which holds a user id. Anyone who can reach the API with this enabled
-can act as any user. It exists only so that audit records have an actor.
-
-How it is gated, in three independent layers:
-
-1. **Policy** (`platform/dev-auth/dev-auth.policy.ts`): the header is honoured only when
-   `NODE_ENV === 'development'` **and** `DEV_AUTH_ENABLED === true` (a boolean). Anything missing,
-   unknown, or oddly typed means off.
-2. **Boot** (`config/env.ts`): `NODE_ENV` defaults to `production` when unset. If
-   `DEV_AUTH_ENABLED` is true and `NODE_ENV` is anything but `development`, validation fails and
-   the process exits before Nest starts. `NODE_ENV` is not read from `.env`; the package scripts
-   set it (`dev` sets `development`, `start` sets `production`).
-3. **Guard** (`platform/dev-auth/dev-actor.guard.ts`): re-evaluates the policy on its own. When
-   dev auth is off, every non-public route answers 401 and the header is never read. When it is
-   on, the header must be a UUID naming an existing, non-archived user; otherwise 401. The guard
-   logs a warning at startup while dev auth is enabled.
-
-As a further precaution the API listens on `127.0.0.1` in the default configuration, so it is not
-reachable from the local network.
-
-Consequence: a production build (`pnpm --filter @ops/api start`) refuses to start while `.env`
-has `DEV_AUTH_ENABLED=true`, and with the flag off it answers 401 on everything except `/health`.
-That is the intended state until Phase 3 replaces the `dev-auth/` folder with real sign-in.
-
-### Scope model (resolved, not enforced)
+### Scope model (resolved and enforced)
 
 A user's access is described by memberships: a role plus a scope (the whole organization, any
-sites, any teams, as a union). `resolveScope` turns them into a `ResolvedScope`:
+sites, any teams, as a union). `resolveScope` turns them into a `ResolvedScope`, and the access
+layer applies it on every route:
 
-| Field      | Meaning                                                                                                |
-| ---------- | ------------------------------------------------------------------------------------------------------ |
-| `active`   | False when the user is archived; nothing else grants anything then.                                    |
-| `roles`    | Distinct roles of the user's active memberships.                                                       |
-| `orgWide`  | True when a supervisor, manager, or admin membership covers the whole organization.                    |
-| `siteIds`  | Sites the user may see, descendants included. Every site when `orgWide`.                               |
-| `teamIds`  | Teams the user may see, descendants included. Every team when `orgWide`.                               |
-| `userIds`  | Users whose records the user may see, always including themselves. The literal `'all'` when `orgWide`. |
-| `memberOf` | Where the user works as a worker: `{ orgWide, siteIds, teamIds }`, descendants included.               |
+| Field          | Meaning                                                                                                     |
+| -------------- | ----------------------------------------------------------------------------------------------------------- |
+| `active`       | False when the user is archived; nothing else grants anything then (the access layer answers 401).          |
+| `roles`        | Distinct roles of the user's active memberships.                                                            |
+| `orgWide`      | True when a supervisor, manager, or admin membership covers the whole organization.                         |
+| `siteIds`      | Sites the user oversees, descendants included. Every site when `orgWide`.                                   |
+| `teamIds`      | Teams the user oversees, descendants included. Every team when `orgWide`.                                   |
+| `userIds`      | "Their people": users whose records the user may see, always including themselves. `'all'` when `orgWide`.  |
+| `colleagueIds` | People the user works with, visible by name only: co-workers at their places and those places' supervisors. |
+| `memberOf`     | Where the user works as a worker: `{ orgWide, siteIds, teamIds }`, descendants included.                    |
 
-The rules are listed in [ADR-0002](docs/decisions/0002-flexible-organization-and-scope-model.md)
-and in the comment on `resolveScope`. In short: worker memberships grant no view of other people;
-supervisor, manager, and admin memberships grant the same view over their scope; memberships
-combine as a union; archived memberships and archived users grant nothing; archived sites and
-teams still count.
-
-**Nothing enforces this yet.** Any acting user can read and change everything in their own
-organization. The result is exposed only for inspection at `GET /scope/me` and
-`GET /users/:id/scope`. `ScopeService` reads every membership, site, and team of the organization
-on each call.
+The rules are in the comment on `resolveScope` and in ADR-0002 as amended by ADR-0005. In short:
+worker memberships give no view of other people's records; supervisor memberships give a view over
+their scope; manager and admin memberships always cover the whole organization; memberships combine
+as a union; archived memberships and archived users grant nothing; archived sites and teams still
+count. `ScopeService` reads every membership, site, and team of the organization once per request.
 
 ### Typed API client
 
 `packages/shared/src/api-client/` is the one way the web and mobile apps call the API.
 
-- **Transport** (`createApiTransport`): the only place that performs HTTP. It adds headers and a
-  timeout (10 s by default), parses the body, validates it against the schema passed by the
-  caller, and returns an `ApiResult`. Calls never throw.
+- **Transport** (`createApiTransport`): the only place that performs HTTP. It adds headers, the
+  bearer token (`auth.getAccessToken`), the CSRF header on non-GET requests
+  (`auth.getCsrfToken`), `credentials`, and a timeout (10 s by default), parses the body,
+  validates it, and returns an `ApiResult`. Calls never throw. **On a 401 it calls
+  `auth.refresh()` once** (concurrent 401s share one refresh) and repeats the request once; a
+  second 401 or a failed refresh calls `auth.onAuthLost()`. There is no loop.
 - **`ApiResult<Data>`** is `{ ok: true, status, data }` or `{ ok: false, failure }`, where
-  `failure.kind` is `network`, `timeout`, `invalid-response`, or `http` (the API's standard error
-  body, in `failure.error`).
-- **Endpoint functions**: each resource file in `src/domain/` and `src/platform/` exports an
-  `xxxEndpoints(transport)` function next to its schemas. `createApiClient(options)` assembles them
-  into one object: `health`, `organization`, `users`, `memberships`, `sites`, `teams`, `logTypes`,
-  `tasks`, `workLogs`, `attachments`, `scope`, `auditEvents`, `outboxEvents`.
-- **Headers** come from `getHeaders` in the options. That is where the dev header goes today and
-  where a token will go in Phase 3. Neither app sets it yet.
-- **Health monitor** (`createHealthMonitor`): framework-free. It checks `/health` and, while
-  nothing answers (network error or timeout), retries after 2, 4, 8, and 16 seconds, then stops
-  until a manual check. `describeHealth` maps its state to the wording both apps show.
+  `failure.kind` is `network`, `timeout`, `invalid-response`, or `http`.
+- **Endpoint functions**: each resource file exports an `xxxEndpoints(transport)` function next to
+  its schemas. `createApiClient(options)` (`create-api-client.ts`) assembles them: `health`,
+  `auth`, `organization`, `users`, `memberships`, `sites`, `teams`, `logTypes`, `tasks`,
+  `workLogs`, `attachments`, `scope`, `auditEvents`, `outboxEvents`.
+- **Auth session manager** (`createAuthSessionManager`, `auth-session.ts`): framework-free sign-in
+  state (`loading`, `signedOut` with a notice, `signedIn` with the user) and the API client bound
+  to it. `mode: 'web'`: cookies (`credentials: 'include'`), CSRF token in memory only, `GET
+/auth/me` on start. `mode: 'mobile'`: tokens in a `TokenStorage` (SecureStore in the app), the
+  rotated pair saved before it is used. Single-flight refresh, sign-out that renews once if the
+  access token had expired, and "sign out everywhere" that stays signed in when the server could
+  not confirm it. `auth-text.ts` holds every user-facing sentence and `roleLabel`; `auth-forms.ts`
+  the form validation both apps use.
+- **Health monitor** (`createHealthMonitor`): unchanged; retries after 2, 4, 8, and 16 seconds.
 
-Each app builds its client once (`apps/web/src/lib/api/client.ts`,
-`apps/mobile/src/api/client.ts`) and it is `null` when the API URL is not configured. To add a
-resource: write the schemas and `xxxEndpoints` in `@ops/shared`, then add it to `createApiClient`.
+Each app builds its session once (`apps/web/src/lib/api/client.ts`, `apps/mobile/src/api/client.ts`)
+and it is `null` when the API URL is not configured.
 
 ### Design tokens and branding
 
 - **Tokens** live in `packages/shared/src/theme/`: colours, spacing, radii, font sizes, and font
-  weights as plain constants. The palette was sampled from the client's logo (`docs/brand/`):
-  background `#000000`, gold primary `#D4A454`, brand red `#D80611`. The theme is dark only.
-- **Contrast is tested.** `CONTRAST_REQUIREMENTS` lists every foreground and background pairing the
-  tokens are meant for, and the unit tests check each against WCAG AA. The brand red fails AA as
-  normal text on black, so it is used only for decoration; text that must be red uses
+  weights. The palette was sampled from the client's logo (`docs/brand/`): background `#000000`,
+  gold primary `#D4A454`, brand red `#D80611`. The theme is dark only.
+- **Contrast is tested.** `CONTRAST_REQUIREMENTS` lists every foreground and background pairing,
+  and the unit tests check each against WCAG AA. The brand red is decoration only; red text uses
   `accentText` / `danger` (`#FF6B6E`).
-- **Web**: the root layout sets the tokens as CSS custom properties on `<html>`
-  (`themeCssVariables`). Stylesheets use only `var(--color-...)`, `var(--space-...)`,
-  `var(--radius-...)`, `var(--font-size-...)`.
+- **Web**: the root layout sets the tokens as CSS custom properties on `<html>`. Stylesheets use
+  only `var(--...)`.
 - **Mobile**: screens import the token constants directly into `StyleSheet.create`.
-- **Brand module**: each app has one (`apps/web/src/lib/brand.ts`,
-  `apps/mobile/src/config/brand.ts`) holding the name, the app label, the logo, and the
-  "Powered by Kaneri.ai" line. Components read the brand from there and never spell out a client
-  name. The name falls back to "Operations" when the variable is not set.
+- **Brand module**: each app has one (`apps/web/src/lib/brand.ts`, `apps/mobile/src/config/brand.ts`)
+  holding the name, app label, logo, and "Powered by Kaneri.ai". The name falls back to
+  "Operations" when the variable is not set.
 
-To re-brand for another client:
-
-1. Set `NEXT_PUBLIC_BRAND_NAME` and `EXPO_PUBLIC_BRAND_NAME`.
-2. Replace the image files, keeping names and sizes: `apps/web/public/brand/logo-512.png`,
-   `apps/web/src/app/icon.png`, `apps/web/src/app/apple-icon.png`, and the three files in
-   `apps/mobile/assets/brand/` (`logo-512.png`, `icon-1024.png`, `adaptive-icon-foreground.png`).
-3. If the colours differ, change `darkTheme` in `packages/shared/src/theme/tokens.ts` and run the
-   tests; a pairing that no longer meets AA fails.
-4. Restart the dev servers (the names are inlined at bundle time).
-
-The mobile slug, scheme, and bundle identifiers in `apps/mobile/app.config.ts` are deliberately
-neutral, but `ai.kaneri.operations` is hard-coded and must come from configuration before the
-first store or development build.
+To re-brand for another client: set `NEXT_PUBLIC_BRAND_NAME` and `EXPO_PUBLIC_BRAND_NAME`; replace
+`apps/web/public/brand/logo-512.png`, `apps/web/src/app/icon.png`, `apps/web/src/app/apple-icon.png`,
+and the three files in `apps/mobile/assets/brand/` (same names and sizes); change `darkTheme` if the
+colours differ and run the tests; set the organization slug variables for that deployment; restart
+the dev servers. The mobile bundle identifiers (`ai.kaneri.operations`) are still hard-coded in
+`apps/mobile/app.config.ts` and must come from configuration before the first store or development
+build (Phase 4).
 
 ### Structure inside the clients
 
-- **Web**: `src/app/` holds routes and layout, `src/components/` holds UI, `src/hooks/` connects
-  shared logic to React, and `src/lib/` holds logic with no React in it (`env.ts`, `brand.ts`,
-  `api/client.ts`).
-- **Mobile**: `src/screens/` (presentation), `src/hooks/` (state), `src/api/` (the client),
-  `src/config/` (environment and brand).
+- **Web**: `src/app/` holds routes (`/`, `/login`, `/activate`) and layout; `src/components/` UI,
+  including `auth-provider.tsx` (subscribes to the session manager and guards routes);
+  `src/hooks/` connects shared logic to React; `src/lib/` holds logic with no React in it
+  (`env.ts`, `brand.ts`, `api/client.ts`, `auth/routes.ts`). The route guard is a convenience,
+  not a security control: the API is the authority. `next.config.ts` sends security headers
+  (`X-Frame-Options`, `frame-ancestors`, `nosniff`, referrer and permissions policies, HSTS in
+  production; `no-referrer` and `no-store` on `/login` and `/activate`). There is no
+  `script-src` / `style-src` policy yet: it needs per-request nonces.
+- **Mobile**: `App.tsx` picks the screen from the sign-in state (`src/navigation/screen.ts`; no
+  navigation library yet); `src/screens/` (Login, Activate, Home, Loading), `src/components/`,
+  `src/hooks/` (form and sign-out state), `src/auth/` (provider, SecureStore token storage),
+  `src/api/` (the session and client), `src/config/` (environment and brand).
 
 The rule in both: code that talks to the API or decides something lives outside components,
 returns typed results instead of throwing, and is unit tested without a network. Logic both apps
@@ -616,14 +812,20 @@ need lives in `@ops/shared`.
 One `.env` file at the repo root serves every app and Docker Compose. `.env.example` is committed
 and lists every variable. Each app reads its variables in exactly one file and validates them:
 
-| App    | File                            | Behaviour when invalid                                                               |
-| ------ | ------------------------------- | ------------------------------------------------------------------------------------ |
-| API    | `apps/api/src/config/env.ts`    | Exits at boot with one line per variable. Values are never printed.                  |
-| Web    | `apps/web/src/lib/env.ts`       | Never throws. The status card shows "API not configured"; the brand name falls back. |
-| Mobile | `apps/mobile/src/config/env.ts` | Never throws. The screen shows "API not configured"; the brand name falls back.      |
+| App    | File                            | Behaviour when invalid                                                                     |
+| ------ | ------------------------------- | ------------------------------------------------------------------------------------------ |
+| API    | `apps/api/src/config/env.ts`    | Exits at boot with one line per variable. Values are never printed.                        |
+| Web    | `apps/web/src/lib/env.ts`       | Never throws. "API not configured"; the brand name falls back; no slug is sent when unset. |
+| Mobile | `apps/mobile/src/config/env.ts` | Never throws. Same behaviour as the web app.                                               |
 
-`apps/mobile/app.config.ts` also reads `EXPO_PUBLIC_BRAND_NAME`, because it runs in Node before the
-bundle exists.
+API: required `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_MS`, `API_HOST`, `API_PORT`, `CORS_ORIGINS`,
+`LOG_LEVEL`, `AUTH_ACCESS_TOKEN_SECRET` (at least 32 characters), `WEB_APP_URL`; optional with
+defaults `NODE_ENV` (production), `TRUST_PROXY_HOPS` (0), and the `AUTH_*` durations and limits
+(see README section 8). **Production refusals**: a placeholder-looking or repetitive secret, and a
+`WEB_APP_URL` that is not `https://`. The absolute session lifetime may not be shorter than the
+refresh lifetime. `apps/mobile/app.config.ts` also reads `EXPO_PUBLIC_BRAND_NAME`, because it runs
+in Node before the bundle exists. Every variable must also be listed in `globalPassThroughEnv` in
+`turbo.json`.
 
 ### Build, tooling, and tests
 
@@ -631,12 +833,16 @@ Turborepo runs tasks across the workspace. Every task depends on `^build`, so `@
 compiled before the apps that import it. The reasons for each tool and version are in
 [ADR-0001](docs/decisions/0001-tech-stack.md).
 
-- **Unit tests** (`pnpm test`) need no database and no network.
+- **Unit tests** (`pnpm test`) need no database and no network: 367 in `@ops/api` (15 suites,
+  including the access rules, visibility, auth, and `route-policies.spec.ts`), 546 in
+  `@ops/shared`, 46 in `@ops/web`, 20 in `@ops/mobile`.
 - **Integration tests** (`pnpm test:integration`) boot the real Nest application in-process and
-  call it over HTTP against a separate PostgreSQL database named by `DATABASE_URL_TEST`. They are
-  not part of `pnpm test` or Turbo. A guard refuses any database whose name does not end in
-  `_test` or that equals the development database, because the suite truncates every table
-  between tests.
+  call it over HTTP against a separate PostgreSQL database named by `DATABASE_URL_TEST`: 1,208
+  tests in 14 suites, about 150 seconds. They authenticate through the harness: `as(userId)` opens
+  a real `mobile` session and sends its bearer token; `loginAs`, `bearer`, and `browser()` (a
+  cookie jar with Origin and CSRF handling) test the sign-in paths themselves. A guard refuses any
+  database whose name does not end in `_test` or that equals the development database, because the
+  suite truncates every table between tests.
 
 ## Planned architecture
 
@@ -648,47 +854,12 @@ revised by ADR when a decision changes.
 1. **The core application works without AI.** Logging work, monitoring it, permissions, and audit
    must be complete and useful with the AI layer switched off or unavailable.
 2. **The AI layer sits on top and consumes events.** The core already writes them to the outbox.
-   The AI layer will read them and read data through the same API-level services as any other
-   caller.
 3. **The AI layer never bypasses permissions.** Every AI read is made on behalf of a specific user
-   or a specific scope and passes through the same permission checks. A summary written for a
-   supervisor contains only what that supervisor is allowed to see.
-4. **AI-proposed actions need human approval.** The AI layer creates proposals. A person with the
-   right role approves or rejects each one. Only an approved proposal is executed, by the core
+   or scope and passes through the same access rules (`AccessContext`, the rule functions, and the
+   visibility filters are plain functions, callable outside HTTP).
+4. **AI-proposed actions need human approval.** Only an approved proposal is executed, by the core
    application, not by the AI layer.
-5. **Everything automated is audited.** Proposals, approvals, rejections, and executed actions are
-   written to the audit log with who, what, when, and why.
-
-### Authentication and permissions (planned, Phase 3)
-
-- Real sign-in replaces `platform/dev-auth/`. The mechanism is not chosen and needs an ADR.
-- Access is decided by **role plus scope**, using the resolved scope described above.
-- Enforcement lives **in the API**. Clients hide what a user cannot do, but that is presentation
-  only; the API is the authority and must reject out-of-scope requests on its own.
-- Queries are filtered by scope at the data-access level, not after loading.
-- The same rule applies to the AI layer (see Layering, point 3).
-- Every permission rule gets tests for both the allowed and the denied case.
-
-Open design points Phase 3 must settle before wiring routes:
-
-- **Record visibility**: how `siteIds`, `teamIds`, `userIds`, and `memberOf` combine for one
-  record.
-- **Per-field permissions**: request bodies currently trust the caller. Any user can set
-  `authorId` to someone else, create or move a work log to `approved`, edit an approved log, and
-  receive the stored log of any user in the organization by retrying its `clientId`.
-- **Status transitions**: any status can be set from any status today.
-- **Who may read audit and outbox events.** They hold full entity snapshots, including email,
-  phone, free text, and GPS positions.
-- **Caching** the resolved scope per request.
-
-Intended visibility, to be confirmed in the Phase 3 ADR:
-
-| Role       | Sees                                                  |
-| ---------- | ----------------------------------------------------- |
-| worker     | Their own work logs.                                  |
-| supervisor | Work logs of the teams or sites they supervise.       |
-| manager    | Work logs of every team and site in their scope.      |
-| admin      | Everything, plus user, team, and site administration. |
+5. **Everything automated is audited**: proposals, approvals, rejections, executed actions.
 
 ### File storage (planned, Phase 4)
 
@@ -696,67 +867,72 @@ Intended visibility, to be confirmed in the Phase 3 ADR:
 hands the client a short-lived upload target, the client uploads the bytes straight to storage,
 and the API then records the metadata. Before a provider is bound, the API must generate the
 storage key itself (prefixed with the organization id) and stop accepting `storageKey` in the
-create body; today the client supplies it.
+create body; today the client supplies it (and a duplicate key answers 409, see ADR-0005).
 
 ### Offline-first mobile (planned, Phase 5)
 
-Workers often have poor connectivity, so the mobile app must record work without a network.
+Workers often have poor connectivity, so the mobile app must record work without a network: a
+local store written first, an outbox queue sent when the network returns, idempotent sync through
+the client-generated `clientId` (the server side exists), and a documented conflict rule (not
+chosen; there is no row version today). Phase 4 builds the worker app online-only, but it must
+already open signed in from the stored session when the network is down.
 
-- **Local store**: work logs and their attachments are written to on-device storage first.
-- **Outbox queue**: each local change is queued and sent when the network is available.
-- **Idempotent sync**: every queued change carries a client-generated identifier. The server side
-  of this exists: `POST /work-logs` is idempotent per (organization, `clientId`).
-- **Conflict handling**: the server detects conflicting edits and applies a documented rule. The
-  rule is not chosen yet and needs an ADR. There is no row version or optimistic locking today;
-  concurrent updates are last-write-wins and can record a stale `before` in the audit log.
+### Before production (Phase 8)
 
-Phase 4 builds the worker app online-only. Phase 5 adds the local store, outbox, and sync.
+A shared rate-limit store, `TRUST_PROXY_HOPS` set in deployment, a real `NotificationSender`
+(email or SMS), a CSP with `script-src` nonces on the web app, HTTPS with the web app and API on
+the same site, and a retention and erasure decision for personal data in the audit log and outbox.
 
 ## Reusable Kaneri platform components
 
 Kaneri.ai builds AI-agent and automation products. These components are intended to be shared
 across Kaneri products later.
 
-| Component        | Responsibility                                                          | State                                                                                 |
-| ---------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Configuration    | Typed, validated settings from the environment.                         | Exists in `src/config/`, mixed with this API's own variable list.                     |
-| Request context  | Correlation id, acting user, one structured log line per request.       | Exists: `src/platform/request-context/`.                                              |
-| HTTP conventions | Error body, Zod validation pipe, pagination, filters, OpenAPI from Zod. | Exists: `src/platform/http/`, `src/platform/docs/`, schemas in `@ops/shared`.         |
-| Audit log        | Append-only record of who did what, when, and through which actor.      | Exists: `src/platform/audit/`, table `AuditEvent`.                                    |
-| Event outbox     | Domain events written in the same transaction as the change.            | Exists (write and read): `src/platform/outbox/`, table `OutboxEvent`. No consumer.    |
-| File storage     | Provider-neutral interface for upload targets and download URLs.        | Interface only, in `src/operations/storage/` (no Operations imports). Phase 4.        |
-| Design tokens    | Theme constants, contrast maths, CSS variables.                         | Exists: `packages/shared/src/theme/`.                                                 |
-| Typed API client | Transport, result type, health monitor.                                 | Exists: `packages/shared/src/api-client/` (the resource list is Operations-specific). |
-| Auth             | Identity, sign-in, sessions or tokens.                                  | Planned, Phase 3. `dev-auth/` is a temporary stand-in.                                |
-| Permissions      | Role and scope checks, usable by HTTP handlers and by the AI layer.     | Planned, Phase 3. Scope resolution exists in `src/operations/scope/`.                 |
-| Notifications    | Delivering messages to users over one or more channels.                 | Planned, Phase 6 or later.                                                            |
-| AI layer         | Event consumption, provider abstraction, proposals, approval workflow.  | Planned, Phase 7.                                                                     |
+| Component        | Responsibility                                                          | State                                                                                                                        |
+| ---------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Configuration    | Typed, validated settings from the environment.                         | Exists in `src/config/`, mixed with this API's own variable list.                                                            |
+| Request context  | Correlation id, acting user, one structured log line per request.       | Exists: `src/platform/request-context/`.                                                                                     |
+| HTTP conventions | Error body, Zod validation pipe, pagination, filters, OpenAPI from Zod. | Exists: `src/platform/http/`, `src/platform/docs/`, schemas in `@ops/shared`.                                                |
+| Audit log        | Append-only record of who did what, when, and through which actor.      | Exists: `src/platform/audit/`, table `AuditEvent`.                                                                           |
+| Event outbox     | Domain events written in the same transaction as the change.            | Exists (write and read): `src/platform/outbox/`, table `OutboxEvent`. No consumer.                                           |
+| Auth             | Identity, sign-in, sessions, tokens, CSRF, rate limits, lockout.        | Exists: `src/platform/auth/`, tables `Auth*`. In-house (ADR-0004); an external provider would plug in behind the same seams. |
+| Permissions seam | Route policies and the authorizer interface the host implements.        | Exists: `src/platform/authz/`. The Operations rules (`src/operations/access/`) are domain code behind it.                    |
+| Notifications    | Delivering messages to users over one or more channels.                 | Interface exists: `src/platform/notifications/`, logging implementation only. Real email or SMS: Phase 8.                    |
+| File storage     | Provider-neutral interface for upload targets and download URLs.        | Interface only, in `src/operations/storage/` (no Operations imports). Phase 4.                                               |
+| Design tokens    | Theme constants, contrast maths, CSS variables.                         | Exists: `packages/shared/src/theme/`.                                                                                        |
+| Typed API client | Transport with refresh-once, result type, auth session manager, health. | Exists: `packages/shared/src/api-client/` (the resource list is Operations-specific).                                        |
+| AI layer         | Event consumption, provider abstraction, proposals, approval workflow.  | Planned, Phase 7.                                                                                                            |
 
 **Design rule.** Each platform component is a self-contained module with **no Operations-specific
-imports**. It must not import work logs, teams, sites, or any other domain module. Operations
-behaviour is supplied through configuration or an interface that the Operations code implements.
-Dependencies point one way: Operations modules may import platform modules, never the reverse.
+imports**. Operations behaviour is supplied through configuration or an interface that the
+Operations code implements (`REQUEST_AUTHORIZER`, `AUTH_PROFILE_PROVIDER`). Dependencies point one
+way: Operations modules may import platform modules, never the reverse.
 
 What "self-contained" means today, and what extraction would still need:
 
-- The platform modules write through narrow structural types (`AuditWriter`, `OutboxWriter`,
-  `DevActorUserReader`), not through the Operations Prisma types, so they do not depend on the
-  schema beyond their own tables.
-- They do import the host's `PrismaService` (`src/prisma/`) and constants and schemas from
-  `@ops/shared`. Extraction means supplying a database handle by injection and moving the
-  `common/` and `platform/` parts of `@ops/shared` with them.
-- `src/config/` defines this API's own variable list. When configuration is extracted, the generic
-  part (validate, format errors, expose typed values) moves and the schema stays with the app.
+- The platform modules write through narrow structural types (`AuditWriter`, `OutboxWriter`, the
+  `AuthDatabase` in `auth/auth-db.ts`), not through the Operations Prisma types, so they depend on
+  the schema only for their own tables (the auth module also reads `user` and `organization`
+  rows through that narrow type).
+- They import the host's `PrismaService` (`src/prisma/`) and constants and schemas from
+  `@ops/shared` (`src/common/`, `src/platform/`). Extraction means supplying a database handle by
+  injection and moving those parts of `@ops/shared` with them.
+- `src/config/` defines this API's own variable list; the generic part (validate, format errors,
+  expose typed values) would move and the schema stay with the app.
 
 ## Constraints that apply to every phase
 
 - TypeScript strict mode everywhere.
 - No credentials or environment-specific values in code. Everything configurable is an environment
-  variable listed in `.env.example`.
-- Provider-specific code (storage, notifications, AI models) sits behind an interface.
+  variable listed in `.env.example`, validated by the consuming app, and passed through by Turbo.
+- Provider-specific code (storage, notifications, AI models, identity providers) sits behind an
+  interface.
 - Data shapes that cross the network are defined once, in `@ops/shared`, as Zod schemas.
+- Every route declares its policy; every service takes the caller from `AccessService.context()`
+  and uses the access rules and visibility filters.
 - Every write records an audit event and an outbox event in the same transaction, through
   `ChangeRecorder`.
-- Every business record carries `organizationId`, and every query filters on the acting user's
-  organization.
+- Every business record carries `organizationId`, and every query filters on the caller's
+  organization and visibility.
+- Never log, store, or return a password, one-time code, or token.
 - No client name in code. The brand comes from configuration and each app's brand module.

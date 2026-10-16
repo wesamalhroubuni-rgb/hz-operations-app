@@ -11,8 +11,24 @@ export class ApiException extends HttpException {
     readonly code: ApiErrorCode,
     message: string,
     readonly details?: ApiErrorDetail[],
+    /** Seconds the caller should wait; the filter sends it as the `Retry-After` header. */
+    readonly retryAfterSeconds?: number,
   ) {
     super(message, status);
+  }
+
+  /** Too many attempts. Answers 429 with a `Retry-After` header. */
+  static rateLimited(
+    message = 'Too many attempts. Try again later.',
+    retryAfterSeconds = 60,
+  ): ApiException {
+    return new ApiException(
+      HttpStatus.TOO_MANY_REQUESTS,
+      'rate_limited',
+      message,
+      undefined,
+      Math.max(1, Math.ceil(retryAfterSeconds)),
+    );
   }
 
   static validation(details: ApiErrorDetail[], message = 'The request is not valid'): ApiException {

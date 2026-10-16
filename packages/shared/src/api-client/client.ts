@@ -2,11 +2,14 @@ import type { z } from 'zod';
 import { apiErrorSchema, type ApiError } from '../common/errors.js';
 import { healthResponseSchema, type HealthResponse } from '../health.js';
 
-/** Header carrying the acting user's id. Development only, until Phase 3 adds real sign-in. */
-export const DEV_USER_HEADER = 'x-dev-user-id';
-
 /** Header carrying the request's correlation id, in both directions. */
 export const REQUEST_ID_HEADER = 'x-request-id';
+
+/**
+ * Header carrying the CSRF token. Required on every state-changing request that is authenticated
+ * by cookie (the web app). Requests authenticated by a bearer token (mobile) do not need it.
+ */
+export const CSRF_HEADER = 'x-csrf-token';
 
 export const DEFAULT_API_TIMEOUT_MS = 10_000;
 
@@ -38,6 +41,30 @@ export interface ApiRequest<Schema extends z.ZodType> {
   /** Non-2xx statuses whose body is still a valid success body (GET /health answers 503). */
   alsoAccept?: readonly number[];
   timeoutMs?: number;
+  /**
+   * Set on the sign-in, refresh and set-password calls themselves: a 401 from them is the
+   * answer, not a reason to refresh the session and try again.
+   */
+  skipAuthRefresh?: boolean;
+}
+
+/**
+ * How the transport authenticates requests and recovers from an expired access token. The web
+ * app relies on cookies (`credentials: 'include'`) and supplies only the CSRF token; the mobile
+ * app supplies the bearer token. Both supply `refresh`.
+ */
+export interface ApiAuthHooks {
+  /** Bearer token for the Authorization header, or null when there is none (cookie sessions). */
+  getAccessToken?: () => string | null | Promise<string | null>;
+  /** CSRF token for cookie sessions; sent on every request that is not GET or HEAD. */
+  getCsrfToken?: () => string | null;
+  /**
+   * Obtains a new access token. Resolves true when the session was renewed. Called at most once
+   * per failed request, and concurrent 401s share one call.
+   */
+  refresh?: () => Promise<boolean>;
+  /** The session could not be renewed: the user must sign in again. */
+  onAuthLost?: () => void;
 }
 
 export interface ApiClientOptions {
@@ -45,8 +72,11 @@ export interface ApiClientOptions {
   /** Defaults to the global fetch. Pass a stub in tests. */
   fetch?: typeof fetch;
   timeoutMs?: number;
-  /** Extra headers for every request (the dev user header today, a token from Phase 3). */
+  /** Extra headers for every request. */
   getHeaders?: () => Record<string, string> | Promise<Record<string, string>>;
+  /** `include` makes the browser send and store the API's cookies (the web app). */
+  credentials?: 'include' | 'omit' | 'same-origin';
+  auth?: ApiAuthHooks;
 }
 
 export interface ApiTransport {
@@ -77,9 +107,52 @@ function messageOf(error: unknown): string {
  */
 export function createApiTransport(options: ApiClientOptions): ApiTransport {
   const doFetch = options.fetch ?? fetch;
+  const auth = options.auth;
+  let refreshing: Promise<boolean> | null = null;
+
+  /** One refresh at a time: every request that hit a 401 meanwhile waits for the same answer. */
+  function refreshOnce(): Promise<boolean> {
+    if (!auth?.refresh) {
+      return Promise.resolve(false);
+    }
+    refreshing ??= auth
+      .refresh()
+      .catch(() => false)
+      .finally(() => {
+        refreshing = null;
+      });
+    return refreshing;
+  }
 
   return {
     async request(request) {
+      const first = await send(request);
+      if (
+        first.ok ||
+        request.skipAuthRefresh ||
+        first.failure.kind !== 'http' ||
+        first.failure.status !== 401
+      ) {
+        return first;
+      }
+      // The access token expired or was revoked. Renew the session once and repeat the request
+      // once; a second 401 is final, so there is no loop.
+      if (!(await refreshOnce())) {
+        auth?.onAuthLost?.();
+        return first;
+      }
+      const second = await send(request);
+      if (!second.ok && second.failure.kind === 'http' && second.failure.status === 401) {
+        auth?.onAuthLost?.();
+      }
+      return second;
+    },
+  };
+
+  async function send<Schema extends z.ZodType>(
+    request: ApiRequest<Schema>,
+  ): Promise<ApiResult<z.infer<Schema>>> {
+    {
       const timeoutMs = request.timeoutMs ?? options.timeoutMs ?? DEFAULT_API_TIMEOUT_MS;
       const controller = new AbortController();
       let timedOut = false;
@@ -99,9 +172,19 @@ export function createApiTransport(options: ApiClientOptions): ApiTransport {
         if (request.body !== undefined) {
           headers['Content-Type'] = 'application/json';
         }
+        const method = request.method ?? 'GET';
+        const accessToken = await auth?.getAccessToken?.();
+        if (accessToken) {
+          headers.Authorization = `Bearer ${accessToken}`;
+        }
+        const csrfToken = method === 'GET' ? null : auth?.getCsrfToken?.();
+        if (csrfToken) {
+          headers[CSRF_HEADER] = csrfToken;
+        }
         const response = await doFetch(buildUrl(options.baseUrl, request.path, request.query), {
-          method: request.method ?? 'GET',
+          method,
           headers,
+          ...(options.credentials ? { credentials: options.credentials } : {}),
           body: request.body === undefined ? undefined : JSON.stringify(request.body),
           signal: controller.signal,
         });
@@ -153,8 +236,8 @@ export function createApiTransport(options: ApiClientOptions): ApiTransport {
             ok: false,
             failure: { kind: 'invalid-response', status, message: `Unexpected HTTP ${status}` },
           };
-    },
-  };
+    }
+  }
 }
 
 /** Endpoints that exist before any domain module: the health check. */

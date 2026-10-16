@@ -4,12 +4,14 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export interface RequestActor {
   userId: string;
   organizationId: string;
+  /** The session the request was authenticated with. Absent outside real sign-in (seed, jobs). */
+  sessionId?: string;
 }
 
 export interface RequestContextStore {
   /** Identifier of the request, echoed in the `x-request-id` response header, logs and audit. */
   correlationId: string;
-  /** Null until an authentication step sets it (the dev header today, real sign-in in Phase 3). */
+  /** Null until an authentication step sets it (the platform guard). */
   actor: RequestActor | null;
 }
 

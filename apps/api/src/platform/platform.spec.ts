@@ -6,7 +6,6 @@ import {
   toJsonSnapshot,
 } from './audit/audit-snapshot';
 import { AuditService, type AuditWriter } from './audit/audit.service';
-import { isDevAuthEnabled } from './dev-auth/dev-auth.policy';
 import { dateRangeFilter, escapeLike, nameFilter } from './http/filters';
 import {
   clampBatchSize,
@@ -76,26 +75,6 @@ describe('request log', () => {
       correlationId: 'c-1',
       actorId: null,
     });
-  });
-});
-
-describe('isDevAuthEnabled', () => {
-  it('is true only for development with the flag set to boolean true', () => {
-    expect(isDevAuthEnabled({ nodeEnv: 'development', devAuthEnabled: true })).toBe(true);
-  });
-
-  it.each([
-    ['production', true],
-    ['test', true],
-    [undefined, true],
-    ['development', false],
-    ['development', 'true'],
-    ['development', 1],
-    ['development', undefined],
-    ['Development', true],
-    ['production', false],
-  ])('is false for NODE_ENV=%p DEV_AUTH_ENABLED=%p', (nodeEnv, devAuthEnabled) => {
-    expect(isDevAuthEnabled({ nodeEnv, devAuthEnabled })).toBe(false);
   });
 });
 
