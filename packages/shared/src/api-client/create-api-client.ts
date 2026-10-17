@@ -10,6 +10,7 @@ import { usersEndpoints } from '../domain/users.js';
 import { workLogsEndpoints } from '../domain/work-logs.js';
 import { auditEventsEndpoints } from '../platform/audit.js';
 import { authEndpoints } from '../platform/auth.js';
+import { notificationsEndpoints } from '../platform/notifications.js';
 import { outboxEventsEndpoints } from '../platform/outbox.js';
 import { createApiTransport, healthEndpoints, type ApiClientOptions } from './client.js';
 
@@ -39,6 +40,7 @@ export function createApiClient(options: ApiClientOptions) {
     workLogs: workLogsEndpoints(transport),
     attachments: attachmentsEndpoints(transport),
     scope: scopeEndpoints(transport),
+    notifications: notificationsEndpoints(transport),
     auditEvents: auditEventsEndpoints(transport),
     outboxEvents: outboxEventsEndpoints(transport),
   };

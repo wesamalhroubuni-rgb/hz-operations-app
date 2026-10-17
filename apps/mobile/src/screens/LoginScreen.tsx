@@ -1,38 +1,28 @@
-import { AUTH_NOTICE_MESSAGES, AUTH_TEXT, type AuthSessionNotice } from '@ops/shared';
-
+import { useAuth } from '../auth/AuthProvider';
 import { AuthScreenLayout } from '../components/AuthScreenLayout';
 import { Button } from '../components/Button';
 import { PasswordField, TextField } from '../components/FormField';
 import { Message } from '../components/Message';
 import { useLoginForm } from '../hooks/useLoginForm';
+import { t } from '../i18n';
+import type { SignedOutScreenProps } from '../navigation/types';
 
-interface LoginScreenProps {
-  /** Why the form is shown although the user was signed in before, if that is the case. */
-  notice: AuthSessionNotice | null;
-  /** The user has just set a password on the activation screen. */
-  passwordSet: boolean;
-  onRetry: () => void;
-  onHaveCode: () => void;
-}
-
-export function LoginScreen({
-  notice,
-  passwordSet,
-  onRetry,
-  onHaveCode,
-}: Readonly<LoginScreenProps>) {
+export function LoginScreen({ route, navigation }: Readonly<SignedOutScreenProps<'Login'>>) {
+  const { state, retry } = useAuth();
   const form = useLoginForm();
+  const notice = state.status === 'signedOut' ? state.notice : null;
+  const passwordSet = route.params?.passwordSet === true;
 
   return (
-    <AuthScreenLayout title={AUTH_TEXT.signInTitle}>
+    <AuthScreenLayout title={t('auth.signInTitle')}>
       {passwordSet && form.failure === null ? (
-        <Message tone="success" text={AUTH_TEXT.passwordSet} />
+        <Message tone="success" text={t('auth.passwordSet')} />
       ) : null}
 
       {notice !== null && form.failure === null ? (
-        <Message tone="notice" text={AUTH_NOTICE_MESSAGES[notice]}>
+        <Message tone="notice" text={t(`authNotices.${notice}`)}>
           {notice === 'unreachable' ? (
-            <Button variant="secondary" label={AUTH_TEXT.retry} onPress={onRetry} />
+            <Button variant="secondary" label={t('auth.retry')} onPress={retry} />
           ) : undefined}
         </Message>
       ) : null}
@@ -40,7 +30,7 @@ export function LoginScreen({
       {form.failure !== null ? <Message tone="error" text={form.failure} /> : null}
 
       <TextField
-        label={AUTH_TEXT.identifierLabel}
+        label={t('auth.identifierLabel')}
         value={form.identifier}
         onValueChange={form.setIdentifier}
         error={form.errors.identifier}
@@ -57,7 +47,7 @@ export function LoginScreen({
         editable={!form.submitting}
       />
       <PasswordField
-        label={AUTH_TEXT.passwordLabel}
+        label={t('auth.passwordLabel')}
         value={form.password}
         onValueChange={form.setPassword}
         error={form.errors.password}
@@ -70,11 +60,16 @@ export function LoginScreen({
         editable={!form.submitting}
       />
       <Button
-        label={form.submitting ? AUTH_TEXT.signingIn : AUTH_TEXT.signIn}
+        size="large"
+        label={form.submitting ? t('auth.signingIn') : t('auth.signIn')}
         onPress={() => void form.submit()}
         busy={form.submitting}
       />
-      <Button variant="link" label={AUTH_TEXT.haveCode} onPress={onHaveCode} />
+      <Button
+        variant="link"
+        label={t('auth.haveCode')}
+        onPress={() => navigation.navigate('Activate')}
+      />
     </AuthScreenLayout>
   );
 }

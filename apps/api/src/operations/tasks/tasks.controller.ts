@@ -112,7 +112,9 @@ export class TasksController {
     description:
       'Whoever manages the task sets any status. An assignee moves their task between `todo`, ' +
       '`in_progress`, `blocked` and `done`. Sets `completedAt` when the task becomes done and ' +
-      'clears it when it leaves done.',
+      'clears it when it leaves done. `reason` (required for `blocked`) is stored as the ' +
+      "task's `statusReason`; a change without a reason clears it. Sending the current status " +
+      'and reason changes nothing.',
     body: changeTaskStatusSchema,
     response: taskSchema,
     errors: CHANGE_ERRORS,
@@ -121,7 +123,7 @@ export class TasksController {
     @Param('id', new ZodPipe(idSchema)) id: string,
     @Body(new ZodPipe(changeTaskStatusSchema)) body: ChangeTaskStatus,
   ): Promise<Task> {
-    return this.tasks.changeStatus(id, body.status);
+    return this.tasks.changeStatus(id, body);
   }
 
   @Put(':id/assignees')

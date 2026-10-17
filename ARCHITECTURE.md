@@ -1,11 +1,13 @@
 # ARCHITECTURE.md
 
 How the system is structured, and how it is intended to grow. Every section says whether it
-describes something that **exists today** or something that is **planned**. As of 2026-10-16 the
-Phase 3 code exists: the Phase 2 backend core (data model, REST API, audit log, event outbox, scope
-resolution, typed API client, client branding) plus sign-in, sessions, and permission enforcement
-on every route, with minimal login screens in both clients. There are no feature screens, no file
-storage, no offline storage, and no AI layer.
+describes something that **exists today** or something that is **planned**. As of 2026-10-17 the
+Phase 4 code exists: the Phase 2 backend core (data model, REST API, audit log, event outbox, scope
+resolution, typed API client, client branding), the Phase 3 sign-in and permission enforcement on
+every route, and from Phase 4 the worker app on the phone, S3-compatible photo storage with
+verified uploads and signed downloads, in-app and push notifications, and the outbox consumer that
+feeds them. The web app still has only its login pages. There is no offline storage and no AI
+layer.
 
 ## Naming
 
@@ -29,11 +31,11 @@ anomaly flags, and proposed actions that a human must approve.
 ```mermaid
 flowchart TB
   subgraph clients [Clients]
-    mobile["apps/mobile<br/>Worker app (Expo / React Native)<br/>login, activation, placeholder home"]
+    mobile["apps/mobile<br/>Worker app (Expo / React Native)<br/>tasks, work logs, photos, location,<br/>notifications, profile"]
     web["apps/web<br/>Manager dashboard (Next.js)<br/>login, activation, placeholder home"]
   end
 
-  shared["packages/shared<br/>Zod schemas, typed API client,<br/>auth session manager, design tokens"]
+  shared["packages/shared<br/>Zod schemas, typed API client,<br/>auth session manager, upload helper,<br/>custom-field forms, design tokens"]
 
   subgraph api [apps/api - NestJS REST API]
     host["Host: config, Prisma, health"]
@@ -42,7 +44,9 @@ flowchart TB
       http["HTTP conventions<br/>errors, ZodPipe, pagination, docs"]
       auth["Auth<br/>AuthGuard (the one global guard),<br/>sessions, tokens, CSRF, rate limits"]
       authz["Authz seam<br/>@Policy, RequestAuthorizer"]
-      notify["Notification sender<br/>(logging implementation)"]
+      storage["File storage<br/>S3FileStorage, image verification"]
+      notify["Notifications<br/>in-app list, channels (Expo push),<br/>push tokens, one-time code sender"]
+      consumer["Outbox consumer"]
       audit["Audit log"]
       outbox["Event outbox"]
     end
@@ -50,19 +54,22 @@ flowchart TB
       access["Access layer<br/>policy registry, AccessService,<br/>rules, visibility"]
       scope["Scope resolution"]
       org["Organization, users, memberships,<br/>sites, teams"]
-      work["Log types, tasks, work logs,<br/>attachment metadata"]
+      work["Log types, tasks, work logs,<br/>attachments (upload flow, cleanup)"]
+      rules["Notification rules"]
       recorder["ChangeRecorder"]
-      storage["FileStorage interface<br/>(no provider)"]
     end
   end
 
   db[("PostgreSQL 17<br/>Docker Compose")]
+  objects[("Object storage<br/>MinIO in Docker Compose (dev)")]
+  expo["Expo push service<br/>(then APNs / FCM)"]
 
   ai["AI layer<br/>summaries, anomalies, proposed actions<br/>(planned, Phase 7)"]
   human["Human approval<br/>(planned)"]
 
   mobile -->|"HTTPS + JSON, Bearer token"| api
   web -->|"HTTPS + JSON, httpOnly cookies + CSRF header"| api
+  mobile -->|"signed PUT and GET URLs"| objects
   mobile -.->|imports| shared
   web -.->|imports| shared
   api -.->|imports| shared
@@ -73,19 +80,28 @@ flowchart TB
   auth --> notify
   recorder --> audit
   recorder --> outbox
+  work --> storage
+  storage --> objects
+  outbox --> consumer
+  consumer -->|"registered handlers"| rules
+  rules --> notify
+  notify --> expo
+  expo --> mobile
   api --> db
 
-  outbox -.->|"events (planned consumer)"| ai
+  consumer -.->|"events (planned handlers)"| ai
   ai -.->|"reads through the same access rules"| access
+  ai -.->|"alerts through the channels"| notify
   ai -.->|proposes| human
   human -.->|"approved actions, audited"| operations
 ```
 
 Solid arrows exist today. Dotted arrows to and from the AI layer and human approval are planned.
-The arrow from auth to the access layer is an injected interface: the platform defines the token,
-the Operations domain provides the implementation, so the import still points one way. Today the
-clients call `/health` and the `/auth/*` routes; the rest of the API is exercised by the tests,
-Swagger, and manual requests.
+The arrows from auth to the access layer and from the consumer to the notification rules are
+injected: the platform defines a token or a registration function, the Operations domain provides
+the implementation, so the import still points one way. Today the mobile app calls the worker
+routes (tasks, work logs, attachments, notifications, `/auth/*`); the web app calls `/health` and
+`/auth/*`; the rest is exercised by the tests, Swagger, and manual requests.
 
 ## What exists today
 
@@ -93,10 +109,10 @@ Swagger, and manual requests.
 
 | Path              | Package       | Responsibility                                                                                    | Today                                                                                                                           |
 | ----------------- | ------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api`        | `@ops/api`    | REST API. Owns the database, business rules, sign-in, permissions, and the audit trail.           | 49 paths, sign-in and sessions, a policy on every route, scoped queries, role-shaped responses, audit log, outbox, Swagger.     |
-| `apps/web`        | `@ops/web`    | Manager dashboard for supervisors, managers, and admins.                                          | `/login`, `/activate`, and a protected `/` showing the signed-in user, sign-out, and the API status card.                       |
-| `apps/mobile`     | `@ops/mobile` | Worker app for iOS and Android from one codebase.                                                 | Login, Activate, and Home screens (name, role, sign-out), tokens in SecureStore. Not yet run on a phone.                        |
-| `packages/shared` | `@ops/shared` | The wire contract, defined once: schemas, the typed API client, shared validation, design tokens. | Schemas and endpoint functions for every resource and `/auth/*`, the auth session manager, auth wording, health monitor, theme. |
+| `apps/api`        | `@ops/api`    | REST API. Owns the database, business rules, sign-in, permissions, files, notifications, audit.   | 56 paths, sign-in, a policy on every route, scoped queries, photo uploads, notifications, outbox consumer, audit, Swagger.      |
+| `apps/web`        | `@ops/web`    | Manager dashboard for supervisors, managers, and admins.                                          | `/login`, `/activate`, and a protected `/` showing the signed-in user, sign-out, and the API status card. Unchanged in Phase 4. |
+| `apps/mobile`     | `@ops/mobile` | Worker app for iOS and Android from one codebase.                                                 | The worker screens (home, tasks, work logs with photos and location, notifications, profile), push. Not yet run on a phone.     |
+| `packages/shared` | `@ops/shared` | The wire contract, defined once: schemas, the typed API client, shared validation, design tokens. | Schemas and endpoints for every resource, `/auth/*`, notifications; session manager, upload helper, custom-field forms, theme.  |
 | `packages/config` | `@ops/config` | Shared ESLint, Prettier, and TypeScript settings.                                                 | ESLint base flat config, Prettier config, `strict.json`, `base.json`, and `library.json` tsconfigs. Unchanged since Phase 1.    |
 
 Each folder has a `memory.md` with its key files and conventions.
@@ -107,37 +123,45 @@ Each folder has a `memory.md` with its key files and conventions.
 never the reverse. ESLint enforces it (`no-restricted-imports` on `src/platform/**` in
 `apps/api/eslint.config.mjs`).
 
-| Folder                   | What it is                                                                                                       |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `config/`                | Environment schema (`env.ts`) and the global config module. Host code.                                           |
-| `prisma/`                | The single Prisma client, connected lazily. Host code.                                                           |
-| `health/`                | `GET /health` (`@Public()`).                                                                                     |
-| `platform/`              | Reusable components with no Operations imports (see the table below).                                            |
-| `operations/`            | The Operations domain: one NestJS module per resource, plus `access/`, `common/`, `scope/`, `storage/`, `seed/`. |
-| `route-policies.spec.ts` | The "no route without a policy" test (boots the real modules with a fake database).                              |
-| `generated/`             | The generated Prisma client. Git-ignored; never edited.                                                          |
+| Folder                   | What it is                                                                                                      |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `config/`                | Environment schema (`env.ts`) and the global config module. Host code.                                          |
+| `prisma/`                | The single Prisma client, connected lazily. Host code.                                                          |
+| `health/`                | `GET /health` (`@Public()`).                                                                                    |
+| `platform/`              | Reusable components with no Operations imports (see the table below).                                           |
+| `operations/`            | The Operations domain: one module per resource, plus `access/`, `common/`, `scope/`, `notifications/`, `seed/`. |
+| `route-policies.spec.ts` | The "no route without a policy" test (boots the real modules with a fake database).                             |
+| `generated/`             | The generated Prisma client. Git-ignored; never edited.                                                         |
 
 `src/platform`:
 
-| Folder             | Contents                                                                                                                                                                                                                                                     |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `request-context/` | `RequestContext` (AsyncLocalStorage holding the correlation id and the actor `{ userId, organizationId, sessionId? }`), the middleware, correlation id sanitising, the one-line request log.                                                                 |
-| `http/`            | `ApiException` (including `rateLimited`, 429 with `Retry-After`), `ApiExceptionFilter`, `ZodPipe`, `ApiDocs`, pagination and filter helpers, `requireActor`, `@Public()`.                                                                                    |
-| `auth/`            | `AuthGuard`, `AuthController` (`/auth/*`), `AuthService`, `AuthAdminService` (the contract business modules call), sessions, access tokens, CSRF, one-time codes, password hashing and policy, identifiers, rate limiter, settings, `AUTH_PROFILE_PROVIDER`. |
-| `authz/`           | `@Policy(name)`, `@Authenticated()`, `@DevelopmentOnly()`, and the `REQUEST_AUTHORIZER` / `RequestAuthorizer` seam. Names only: what a policy means is decided by the host.                                                                                  |
-| `notifications/`   | `NotificationSender` interface, `NOTIFICATION_SENDER` token, `LoggingNotificationSender` (the only implementation).                                                                                                                                          |
-| `audit/`           | `AuditService` (the only writer), snapshot, diff and redaction helpers, `AuditQueryService`, `GET /audit-events` (`audit.read`).                                                                                                                             |
-| `outbox/`          | `OutboxService` (`publish`, `readAfter`, `markProcessed`), `OutboxQueryService`, `GET /outbox-events` (`outbox.read`, `@DevelopmentOnly()`).                                                                                                                 |
-| `docs/`            | Swagger UI and OpenAPI document setup, with a bearer scheme and the access cookie documented.                                                                                                                                                                |
+| Folder             | Contents                                                                                                                                                                                                                                                              |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `request-context/` | `RequestContext` (AsyncLocalStorage holding the correlation id and the actor `{ userId, organizationId, sessionId? }`), the middleware, correlation id sanitising, the one-line request log.                                                                          |
+| `http/`            | `ApiException` (including `rateLimited`, 429 with `Retry-After`), `ApiExceptionFilter`, `ZodPipe`, `ApiDocs`, pagination and filter helpers, `requireActor`, `@Public()`.                                                                                             |
+| `auth/`            | `AuthGuard`, `AuthController` (`/auth/*`), `AuthService`, `AuthAdminService` (the contract business modules call), sessions, access tokens, CSRF, one-time codes, password hashing and policy, identifiers, rate limiter, settings, `AUTH_PROFILE_PROVIDER`.          |
+| `authz/`           | `@Policy(name)`, `@Authenticated()`, `@DevelopmentOnly()`, and the `REQUEST_AUTHORIZER` / `RequestAuthorizer` seam. Names only: what a policy means is decided by the host.                                                                                           |
+| `storage/`         | `FileStorage` interface and `FILE_STORAGE` token, `S3FileStorage` (two S3 clients: internal and signer), `images.ts` (verify, re-encode, thumbnail; `ImageProcessor`), `concurrency.ts`, `storage-settings.ts`, the global `StorageModule`. ADR-0006.                 |
+| `notifications/`   | `NotificationChannel` interface, `NotificationService` (`notify`, `notifyInTransaction`, `deliver`), the in-app list and `/notifications` routes, `PushTokenService`, `ExpoPushClient`, `ExpoPushChannel`; plus the Phase 3 `NotificationSender` for codes. ADR-0007. |
+| `audit/`           | `AuditService` (the only writer), snapshot, diff and redaction helpers, `AuditQueryService`, `GET /audit-events` (`audit.read`).                                                                                                                                      |
+| `outbox/`          | `OutboxService` (`publish`, `readAfter`, `markProcessed`), `OutboxQueryService`, `GET /outbox-events` (`outbox.read`, `@DevelopmentOnly()`), and the `OutboxConsumer` with its pure bookkeeping (`outbox-consumer-state.ts`). ADR-0007.                               |
+| `docs/`            | Swagger UI and OpenAPI document setup, with a bearer scheme and the access cookie documented.                                                                                                                                                                         |
 
 `PlatformModule` is global. Importing it registers, for the whole application, the request context
 middleware, a `Cache-Control: no-store` middleware on `/auth/*`, the exception filter, `AuthGuard`
-as the one `APP_GUARD`, and the auth, audit, and outbox controllers. It expects the host to provide
-a global `PrismaService` (with the auth tables, `auditEvent`, and `outboxEvent`) and a
-`ConfigService` answering the keys listed in `auth/auth-settings.ts`, and optionally, from a global
-module, `REQUEST_AUTHORIZER` (without it every `@Policy` route is refused) and
+as the one `APP_GUARD`, the auth, audit, and outbox controllers, and the global `StorageModule` and
+`NotificationsModule` (with the `/notifications` controller). It expects the host to provide a
+global `PrismaService` (with the auth tables, `auditEvent`, `outboxEvent`, `notification`,
+`pushToken`, and `outboxConsumerCursor`) and a `ConfigService` answering the keys listed in
+`auth/auth-settings.ts` and `storage/storage-settings.ts` plus `PUSH_ENABLED`,
+`EXPO_ACCESS_TOKEN`, `OUTBOX_CONSUMER_ENABLED`, and `OUTBOX_POLL_INTERVAL_MS`, and optionally, from
+a global module, `REQUEST_AUTHORIZER` (without it every `@Policy` route is refused) and
 `AUTH_PROFILE_PROVIDER` (without it users are described with no roles). Replaceable by providing
-another value under the token: `NOTIFICATION_SENDER`, `RATE_LIMITER`, `AUTH_CLOCK`, `AUTH_RANDOM`.
+another value under the token: `NOTIFICATION_SENDER`, `RATE_LIMITER`, `AUTH_CLOCK`, `AUTH_RANDOM`,
+`FILE_STORAGE` (the integration tests bind an in-memory fake), `NOTIFICATION_CHANNELS`,
+`EXPO_PUSH_CLIENT`, `OUTBOX_CONSUMER_OPTIONS`, `EXPO_PUSH_CHANNEL_OPTIONS`. The notification and
+consumer switches are on only when the configured value is exactly `true`; the API's environment
+schema defaults both to `true`, a test configuration that omits them leaves them off.
 
 `src/operations`:
 
@@ -148,14 +172,16 @@ another value under the token: `NOTIFICATION_SENDER`, `RATE_LIMITER`, `AUTH_CLOC
 | `scope/`                                                                                                            | `resolveScope` (pure function), `ScopeService`, `GET /scope/me` and `GET /users/:id/scope`.                                                                                                  |
 | `common/`                                                                                                           | `ChangeRecorder`, `references.ts` (`assertActiveReferences`, `assertValidParent`), `hierarchy.ts`, `db.ts` helpers.                                                                          |
 | `memberships/admin-guard.ts`                                                                                        | `assertAdminRemains`: the last-admin check under a per-organization advisory lock.                                                                                                           |
-| `storage/`                                                                                                          | The `FileStorage` interface and its injection token. No implementation is bound and nothing injects it.                                                                                      |
+| `attachments/`                                                                                                      | The upload flow (`attachments.service.ts`: start, renew, complete, archive, signed URLs) and `attachment-cleanup.service.ts` (hourly expiry and purge). ADR-0006.                            |
+| `notifications/`                                                                                                    | Which events notify whom (`notification-rules.ts`, pure), the English text catalogue (`notification-messages.ts`), and the service that registers the outbox handlers. ADR-0007.             |
 | `seed/`                                                                                                             | `demo-seed.ts`: the demo data, created through the real services; `DEV_PASSWORDS`.                                                                                                           |
 
 ### Data model
 
-Defined in `apps/api/prisma/schema.prisma`, applied by three migrations in
+Defined in `apps/api/prisma/schema.prisma`, applied by four migrations in
 `apps/api/prisma/migrations/` (`20261013112952_init`,
-`20261013150000_attachment_storage_key_per_org`, `20261014090000_auth`). Ids are UUID version 7
+`20261013150000_attachment_storage_key_per_org`, `20261014090000_auth`,
+`20261017090000_phase4_mobile`). Ids are UUID version 7
 (`@default(uuid(7))`), so they sort by creation time. Roles, statuses, priorities, sources, the
 audit actor type, and the auth enums are PostgreSQL enums. Timestamps are `timestamptz(3)`. The
 reasoning is in [ADR-0002](docs/decisions/0002-flexible-organization-and-scope-model.md),
@@ -268,6 +294,7 @@ erDiagram
     uuid createdById FK "set by the server"
     timestamptz dueAt
     timestamptz completedAt
+    string statusReason "required for blocked"
     timestamptz archivedAt
   }
   TaskAssignee {
@@ -293,6 +320,9 @@ erDiagram
     float longitude
     float locationAccuracy
     WorkLogStatus status
+    uuid reviewedById "who approved or rejected last"
+    timestamptz reviewedAt
+    string reviewNote "rejection reason"
     WorkLogSource source
     json aiMetadata "always null today"
     timestamptz archivedAt
@@ -303,9 +333,14 @@ erDiagram
     uuid workLogId FK
     uuid uploadedById FK "set by the server"
     string fileName
-    string mimeType
-    int sizeBytes
-    string storageKey "unique per organization"
+    string mimeType "image/jpeg or image/png"
+    int sizeBytes "declared, then the stored size"
+    string storageKey "chosen by the API, unique per organization"
+    AttachmentStatus status "pending or ready"
+    string thumbnailKey
+    int width
+    int height
+    timestamptz completedAt
     timestamptz archivedAt
   }
   AuditEvent {
@@ -384,20 +419,56 @@ erDiagram
   }
 ```
 
+The Phase 4 notification tables are platform tables too, with no foreign keys to business tables:
+
+```mermaid
+erDiagram
+  Notification {
+    uuid id PK
+    uuid organizationId
+    uuid recipientId
+    string type "task.assigned, work_log.approved, work_log.rejected"
+    string title
+    string body
+    json data "ids only, e.g. taskId"
+    uuid sourceEventId "unique with recipientId and type"
+    timestamptz readAt
+    timestamptz createdAt
+  }
+  PushToken {
+    uuid id PK
+    uuid organizationId
+    uuid userId
+    uuid sessionId "the session it registered with"
+    string token UK "Expo push token"
+    PushPlatform platform "ios or android"
+    timestamptz createdAt
+    timestamptz lastSeenAt
+  }
+  OutboxConsumerCursor {
+    string consumer PK "platform.notifications"
+    bigint lastSequence
+    timestamptz updatedAt
+  }
+```
+
 Points the diagrams do not show:
 
 - **Enums**: `Role` (`worker`, `supervisor`, `manager`, `admin`); `TaskStatus` (`todo`,
   `in_progress`, `blocked`, `done`, `cancelled`); `TaskPriority` (`low`, `normal`, `high`,
   `urgent`); `WorkLogStatus` (`draft`, `submitted`, `approved`, `rejected`); `WorkLogSource`
-  (`manual`, `voice`, `photo`, `ai`); `AuditActorType` (`user`, `system`); `AuthCodePurpose`;
-  `AuthClient`. The business enum arrays in `packages/shared/src/domain/enums.ts` must match the
+  (`manual`, `voice`, `photo`, `ai`); `AttachmentStatus` (`pending`, `ready`); `PushPlatform`
+  (`ios`, `android`); `AuditActorType` (`user`, `system`); `AuthCodePurpose`; `AuthClient`. The
+  business enum arrays in `packages/shared/src/domain/enums.ts`, `ATTACHMENT_STATUSES` in
+  `domain/attachments.ts`, and `PUSH_PLATFORMS` in `platform/notifications.ts` must match the
   Prisma enums exactly, in the same order.
 - **A user has at least one login identifier** (email, phone, or username), enforced by the API.
   Identifiers are stored normalised (email and username lower-case; phone as digits with an
   optional leading `+`). A user without an `AuthCredential` row has not been activated and cannot
   sign in.
-- **`AuditEvent`, `OutboxEvent`, and the `Auth*` tables are platform tables.** They store entity
-  ids as plain strings, so they can move to another product unchanged.
+- **`AuditEvent`, `OutboxEvent`, the `Auth*` tables, `Notification`, `PushToken`, and
+  `OutboxConsumerCursor` are platform tables.** They store entity ids as plain strings, so they can
+  move to another product unchanged.
 - **`AuditEvent` is append-only at the database level.** The first migration adds a trigger that
   raises an error on `UPDATE` or `DELETE` of a row. It does not block `TRUNCATE` (the integration
   test harness relies on that), so a database role allowed to truncate can still empty the log.
@@ -405,8 +476,12 @@ Points the diagrams do not show:
 - **Foreign keys** are `ON DELETE RESTRICT`. Only the membership scope rows, task assignee rows,
   and refresh tokens cascade with their parent. Nothing is deleted through the API; records are
   archived.
-- **Attachments are metadata only.** The bytes will live behind the `FileStorage` interface
-  (Phase 4). No file can be uploaded or downloaded today.
+- **Attachment bytes live in object storage**, behind `FileStorage` (see File storage below). The
+  row holds the API-chosen key of the verified copy and of its thumbnail, never a URL.
+- **`Task.statusReason`** is set from the `reason` of a status change (required for `blocked`) and
+  cleared by a change without one. **`WorkLog.reviewedById`, `reviewedAt`, `reviewNote`** are set
+  when a reviewer approves or rejects and cleared when the log goes back to `submitted` or
+  `draft`; the API returns them as `review: { reviewedById, reviewedAt, note } | null`.
 - **`source` and `aiMetadata`** are reserved for the AI phases. `source` is always `manual` in
   practice and the API accepts only `null` for `aiMetadata`.
 
@@ -423,7 +498,8 @@ Points the diagrams do not show:
    (at most 64 characters, letters, digits and `. _ : -`), otherwise generates a UUID, echoes it,
    and writes one JSON log line when the response finishes (method, path without the query string,
    status, duration, correlation id, actor id). Bodies, headers, cookies, and query values are
-   never logged. `/health` and `/docs*` are logged at debug level. It runs twice on purpose: on the
+   never logged; the push token in `DELETE /notifications/push-tokens/<token>` is replaced by
+   `:token` (any letter case). `/health` and `/docs*` are logged at debug level. It runs twice on purpose: on the
    HTTP adapter (so a request with a malformed body still gets an id) and from `PlatformModule`
    after the body parser.
 3. **`AuthGuard`**, the one global guard (see Authentication): development-only routes answer 404
@@ -515,7 +591,14 @@ the code and link only in development, and warns elsewhere that nothing was deli
 `auth.login_succeeded`, `auth.login_failed` (with reason), `auth.locked_out`, `auth.logout`,
 `auth.logout_all`, `auth.session_revoked`, `auth.refresh_reuse_detected`, `auth.code_issued`,
 `auth.activated`, `auth.password_reset`, `auth.password_changed`. A failure for an unknown
-identifier has no organization and only a keyed fingerprint of what was typed.
+identifier has no organization and only a keyed fingerprint of what was typed. Device push tokens
+add `push_token.registered` and `push_token.removed` (entity type `push_token`, see
+Notifications).
+
+**Session-end hook.** `SessionService.onSessionsEnded(listener)` runs a listener inside every
+transaction that ends sessions (logout, logout everywhere, ending one session, refresh reuse,
+password change or reset, archiving, membership reduction). The notifications module uses it to
+remove the push tokens of those sessions in the same commit.
 
 **The seams.** Business modules use only `RequestContext.actor()` and `AuthAdminService`
 (`issueOneTimeCode`, `revokeUserSessions`, `setPasswordForSeed`, `isActivated`,
@@ -556,7 +639,7 @@ The model, the reasoning, and the documented limits are in
 
 #### Permissions matrix
 
-As implemented on 2026-10-16 in `policies.ts` and `rules/`, and checked cell by cell by
+As implemented on 2026-10-17 in `policies.ts` and `rules/`, and checked cell by cell by
 `apps/api/test/permissions-matrix.int-spec.ts`. "Their people" means the users of a supervisor's
 scope (`userIds`). "Colleagues" means everyone who works at a site or team the user works at
 (descendants included) and the supervisors of that place. "Task peers" means co-assignees and
@@ -578,14 +661,24 @@ creators of the user's non-archived tasks. A user with no active membership gets
 | Tasks read                               | assigned to them; others 404                                                                         | in their scope, assigned to their people, created by them, or assigned to them; others 404                                 | all                    | all                                                       |
 | Tasks create, edit, assign, archive      | 403                                                                                                  | site or team in scope (else 403); references visible (else 422); assignees among their people (else 422)                   | all                    | all                                                       |
 | Tasks change status                      | when assigned: `todo`, `in_progress`, `blocked`, `done`; not `cancelled`; not a cancelled task (403) | any status on tasks they manage; otherwise the worker rule                                                                 | any                    | any                                                       |
+| Tasks status reason                      | `blocked` needs a `reason` (400 without); the same status with a new reason updates it               | same                                                                                                                       | same                   | same                                                      |
 | Work logs read                           | own; others 404                                                                                      | own, in their scope, and their people's; others 404                                                                        | all                    | all                                                       |
 | Work logs create                         | own, `draft` or `submitted`, references visible (else 422)                                           | same                                                                                                                       | same                   | same                                                      |
 | Work logs edit content                   | author only, within the edit window (edge inclusive), not `approved`                                 | same; never someone else's (403)                                                                                           | same                   | same                                                      |
 | Work logs change status                  | author: `draft`↔`submitted`, `rejected`→`submitted`, under the edit rule                             | also review logs they can see: `submitted`→`approved`/`rejected`, `approved`/`rejected`→`submitted`; never their own (403) | same as supervisor     | same as supervisor                                        |
+| Work logs review note                    | not a reviewer: cannot approve or reject (403)                                                       | `rejected` needs a `note` (400); may repeat the decision to correct the note                                               | same as supervisor     | same as supervisor                                        |
 | Work logs archive                        | author under the edit rule                                                                           | author under the edit rule, or as reviewer (not their own)                                                                 | same as supervisor     | same as supervisor                                        |
-| Attachments read / add / archive         | follow the parent log (read: can see it; change: the archive rule)                                   | same                                                                                                                       | same                   | same                                                      |
+| Attachments read                         | `ready` ones of logs they can see; `pending` ones only if they uploaded them (others 404)            | same                                                                                                                       | same                   | same                                                      |
+| Attachments upload / renew / complete    | the parent log's archive rule (author within the edit window, not approved)                          | same, or as reviewer of a log they can see (not their own)                                                                 | same as supervisor     | same as supervisor                                        |
+| Attachments archive                      | the parent log's archive rule                                                                        | same                                                                                                                       | same                   | same                                                      |
+| Notifications and push tokens            | own only (`@Authenticated`); another user's notification or token 404                                | same                                                                                                                       | same                   | same                                                      |
 | Audit events                             | 403                                                                                                  | 403                                                                                                                        | 403                    | yes, own organization                                     |
 | Outbox events                            | 403                                                                                                  | 403                                                                                                                        | 403                    | development and test only; 404 for everyone in production |
+
+The Phase 4 rows (task status reason, review note, pending attachments, upload renew and
+complete, notifications) are covered by the `tasks`, `work-logs`, `uploads`, `worker-app`, and
+`notifications` suites rather than by the matrix suite, which covers starting an upload and
+reading a ready attachment.
 
 The edit window is `organization.settings.workLogEditWindowHours` (default 24), counted from the
 log's `createdAt`. A move not listed for work-log status is 409. An organization-wide supervisor
@@ -628,9 +721,17 @@ The seed back-dates work log `createdAt` with a direct update, outside the patte
   applies in Phase 3; the auth module additionally never puts a password, code, or token in a
   payload, and the `secrets` integration suite checks logs, audit, and outbox.
 - **No-op writes record nothing**: archiving an archived record, restoring an active one, the same
-  status, the same assignees, or a retried work log create (same `clientId`, same author).
+  status (with the same task reason or review note), the same assignees, completing a ready
+  attachment, or a retried work log create (same `clientId`, same author).
+- **Status payloads** carry what the notification rules need: `task.status_changed` has
+  `{ from, to, reason, changedById, createdById, assigneeIds, task }`; `work_log.status_changed`
+  has `{ from, to, note, changedById, authorId, reviewedById, workLog }`.
+- **Outside a request** the attachment cleanup still uses the pattern, with actor `system`.
+  `Notification` and `PushToken` rows are platform data, not business rows: the notifications
+  module writes them itself (push token changes are audited directly through `AuditService`;
+  notification rows are not audited).
 
-Domain actions and event types (31):
+Domain actions and event types (33):
 
 | Entity         | Verbs                                                                   |
 | -------------- | ----------------------------------------------------------------------- |
@@ -642,39 +743,43 @@ Domain actions and event types (31):
 | `log_type`     | `created`, `updated`, `archived`                                        |
 | `task`         | `created`, `updated`, `status_changed`, `assignees_changed`, `archived` |
 | `work_log`     | `created`, `updated`, `status_changed`, `archived`                      |
-| `attachment`   | `created`, `archived`                                                   |
+| `attachment`   | `upload_started`, `completed`, `archived`, `upload_expired` (system)    |
 
-Plus the eleven `auth.*` audit actions listed under Authentication (audit only).
+Plus the eleven `auth.*` audit actions listed under Authentication and `push_token.registered` and
+`push_token.removed` (audit only).
 
-The outbox has no consumer yet. `OutboxService.readAfter` and `markProcessed` exist for the Phase 7
-consumer and are called only by tests. Sequence numbers are assigned at insert, not at commit, so a
-consumer that relies on the cursor alone can miss an event from a transaction that commits late.
+The outbox has one consumer since Phase 4, `platform.notifications` (see Notifications). Sequence
+numbers are still assigned at insert, not at commit; the consumer's 60-second settle rule is what
+keeps it from missing a late-committing event.
 
 ### API surface
 
-49 paths. Every route declares `@Public()`, `@Authenticated()`, or `@Policy(...)`; the policy is
+56 paths (49 in Phase 3, plus two attachment paths and five notification paths). Every route
+declares `@Public()`, `@Authenticated()`, or `@Policy(...)`; the policy is
 shown in brackets. The organization is always the caller's; it is never taken from the URL or the
 body.
 
-| Resource     | Routes                                                                                                                                                                                                                                     |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Health       | `GET /health` (public)                                                                                                                                                                                                                     |
-| Auth         | the nine `/auth/*` routes above                                                                                                                                                                                                            |
-| Organization | `GET /organization` [`organization.read`], `PATCH /organization` [`organization.update`]                                                                                                                                                   |
-| Users        | `GET /users`, `GET /users/:id` [`user.read`]; `PATCH /users/:id` [`user.update`]; `POST /users`, `POST /users/:id/archive`, `POST /users/:id/restore`, `POST /users/:id/activation-code`, `POST /users/:id/password-reset` [`user.manage`] |
-| Scope        | `GET /scope/me` (authenticated), `GET /users/:id/scope` [`user.read_scope`]                                                                                                                                                                |
-| Memberships  | `GET /memberships`, `GET /memberships/:id` [`membership.read`]; `POST /memberships`, `PATCH /memberships/:id`, `POST /memberships/:id/archive` [`membership.manage`]                                                                       |
-| Sites        | `GET /sites`, `GET /sites/:id` [`site.read`]; `POST`, `PATCH /:id`, `POST /:id/archive`, `POST /:id/restore` [`site.manage`]                                                                                                               |
-| Teams        | `GET /teams`, `GET /teams/:id` [`team.read`]; `POST`, `PATCH /:id`, `POST /:id/archive`, `POST /:id/restore` [`team.manage`]                                                                                                               |
-| Log types    | `GET /log-types`, `GET /log-types/:id` [`log_type.read`]; `POST`, `PATCH /:id`, `POST /:id/archive` [`log_type.manage`]                                                                                                                    |
-| Tasks        | `GET /tasks`, `GET /tasks/:id` [`task.read`]; `POST`, `PATCH /:id`, `PUT /:id/assignees`, `POST /:id/archive` [`task.manage`]; `PATCH /tasks/:id/status` [`task.change_status`]                                                            |
-| Work logs    | `GET /work-logs`, `GET /work-logs/:id` [`work_log.read`]; `POST` [`work_log.create`]; `PATCH /:id` [`work_log.update`]; `PATCH /:id/status` [`work_log.change_status`]; `POST /:id/archive` [`work_log.archive`]                           |
-| Attachments  | `GET /work-logs/:workLogId/attachments`, `GET /attachments/:id` [`attachment.read`]; `POST /work-logs/:workLogId/attachments` [`attachment.create`]; `POST /attachments/:id/archive` [`attachment.archive`] (metadata only)                |
-| Audit events | `GET /audit-events`, `GET /audit-events/:id` [`audit.read`]                                                                                                                                                                                |
-| Outbox       | `GET /outbox-events`, `GET /outbox-events/:id` [`outbox.read`, development and test only]                                                                                                                                                  |
+| Resource      | Routes                                                                                                                                                                                                                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Health        | `GET /health` (public)                                                                                                                                                                                                                                                                            |
+| Auth          | the nine `/auth/*` routes above                                                                                                                                                                                                                                                                   |
+| Organization  | `GET /organization` [`organization.read`], `PATCH /organization` [`organization.update`]                                                                                                                                                                                                          |
+| Users         | `GET /users`, `GET /users/:id` [`user.read`]; `PATCH /users/:id` [`user.update`]; `POST /users`, `POST /users/:id/archive`, `POST /users/:id/restore`, `POST /users/:id/activation-code`, `POST /users/:id/password-reset` [`user.manage`]                                                        |
+| Scope         | `GET /scope/me` (authenticated), `GET /users/:id/scope` [`user.read_scope`]                                                                                                                                                                                                                       |
+| Memberships   | `GET /memberships`, `GET /memberships/:id` [`membership.read`]; `POST /memberships`, `PATCH /memberships/:id`, `POST /memberships/:id/archive` [`membership.manage`]                                                                                                                              |
+| Sites         | `GET /sites`, `GET /sites/:id` [`site.read`]; `POST`, `PATCH /:id`, `POST /:id/archive`, `POST /:id/restore` [`site.manage`]                                                                                                                                                                      |
+| Teams         | `GET /teams`, `GET /teams/:id` [`team.read`]; `POST`, `PATCH /:id`, `POST /:id/archive`, `POST /:id/restore` [`team.manage`]                                                                                                                                                                      |
+| Log types     | `GET /log-types`, `GET /log-types/:id` [`log_type.read`]; `POST`, `PATCH /:id`, `POST /:id/archive` [`log_type.manage`]                                                                                                                                                                           |
+| Tasks         | `GET /tasks`, `GET /tasks/:id` [`task.read`]; `POST`, `PATCH /:id`, `PUT /:id/assignees`, `POST /:id/archive` [`task.manage`]; `PATCH /tasks/:id/status` `{ status, reason? }` [`task.change_status`]                                                                                             |
+| Work logs     | `GET /work-logs`, `GET /work-logs/:id` [`work_log.read`]; `POST` [`work_log.create`]; `PATCH /:id` [`work_log.update`]; `PATCH /:id/status` `{ status, note? }` [`work_log.change_status`]; `POST /:id/archive` [`work_log.archive`]                                                              |
+| Attachments   | `GET /work-logs/:workLogId/attachments`, `GET /attachments/:id` [`attachment.read`]; `POST /work-logs/:workLogId/attachments` (start), `POST /attachments/:id/upload-url` (renew), `POST /attachments/:id/complete` [`attachment.create`]; `POST /attachments/:id/archive` [`attachment.archive`] |
+| Notifications | `GET /notifications`, `POST /notifications/:id/read`, `POST /notifications/read-all`, `POST /notifications/push-tokens`, `DELETE /notifications/push-tokens/:token` (all authenticated, own data only)                                                                                            |
+| Audit events  | `GET /audit-events`, `GET /audit-events/:id` [`audit.read`]                                                                                                                                                                                                                                       |
+| Outbox        | `GET /outbox-events`, `GET /outbox-events/:id` [`outbox.read`, development and test only]                                                                                                                                                                                                         |
 
-Only users, sites, and teams can be restored. There is no delete route except
-`DELETE /auth/sessions/:id`, which ends a session.
+Only users, sites, and teams can be restored. The only delete routes are
+`DELETE /auth/sessions/:id`, which ends a session, and `DELETE /notifications/push-tokens/:token`,
+which unregisters a device.
 
 In development the OpenAPI document is generated from the same Zod schemas that validate the
 requests (`ApiDocs`), and served at `/docs` (Swagger UI), `/docs-json`, and `/docs-yaml`, with a
@@ -696,9 +801,10 @@ a generic 500. (An unknown route, and the outbox in production, answer Nest's ow
 | 401     | No valid session (one message), or a failed sign-in (one message).                                                                                                                                                                         |
 | 403     | The CSRF checks failed; the role may not use the route; the record is visible but the action is not allowed; sorting users by email without seeing every email.                                                                            |
 | 404     | The record does not exist, belongs to another organization, or is outside the caller's visibility. Indistinguishable on purpose.                                                                                                           |
-| 409     | The record's state forbids the change (archived, impossible status move, last admin, already activated) or a unique value is in use.                                                                                                       |
-| 422     | A body refers to a record that is missing, archived, in another organization, or invisible to the caller; an unknown, used, or expired one-time code.                                                                                      |
-| 429     | A rate limit on `/auth/*` was hit; `Retry-After` says when to try again.                                                                                                                                                                   |
+| 409     | The record's state forbids the change (archived, impossible status move, last admin, already activated, 20 attachments on a log, upload not received yet) or a unique value is in use.                                                     |
+| 422     | A body refers to a record that is missing, archived, in another organization, or invisible to the caller; an unknown, used, or expired one-time code; an uploaded file that is not a valid image of its type (`details[0].path` `file`).   |
+| 429     | A rate limit on `/auth/*` or on the upload steps was hit; `Retry-After` says when to try again.                                                                                                                                            |
+| 503     | The file storage is unreachable, or no image-decode slot became free within 30 seconds (`service_unavailable`).                                                                                                                            |
 | 200/201 | `POST /work-logs` answers 201 for a new log, and 200 with the stored log when its author retries the same `clientId`.                                                                                                                      |
 
 **Lists.** Every list endpoint returns `{ items, page, pageSize, total }`, filtered to what the
@@ -736,6 +842,79 @@ their scope; manager and admin memberships always cover the whole organization; 
 as a union; archived memberships and archived users grant nothing; archived sites and teams still
 count. `ScopeService` reads every membership, site, and team of the organization once per request.
 
+### File storage and uploads
+
+The decision, its reasons, and its known limits are in
+[ADR-0006](docs/decisions/0006-file-storage-and-upload-flow.md).
+
+- **Provider**: `S3FileStorage` (`src/platform/storage/`) on any S3-compatible store; MinIO in
+  Docker Compose for development (`alpine/minio`, pinned by digest, API port on `MINIO_BIND_HOST`,
+  console on `127.0.0.1`). The `internal` client talks to `STORAGE_ENDPOINT`; the `signer` client
+  writes `STORAGE_PUBLIC_ENDPOINT` into signed URLs, so that address must be reachable by the phone
+  or browser. Development and test create the bucket at start-up and boot even when the storage is
+  down (upload routes then answer 503); production needs an existing bucket or the boot fails.
+- **Flow**:
+
+  ```text
+  phone                               API                                   storage
+  POST /work-logs/:id/attachments --> pending row, API-chosen key
+                                  <-- { attachment, upload: { url, PUT, headers, expiresAt } }
+  PUT bytes (signed type and size) ---------------------------------------> upload key
+  POST /attachments/:id/complete  --> stat, read <= UPLOAD_MAX_BYTES, magic bytes,
+                                      full decode (<= 24 MP), re-encode   --> <key>.<nonce>.verified.<ext>
+                                      320 px JPEG thumbnail               --> <verified>.thumb.jpg
+                                      row: ready, storageKey = verified key, size, width, height
+                                      delete the upload object            --> (upload key gone)
+                                  <-- attachment with signed url and thumbnailUrl
+  ```
+
+  A failed check deletes the object and answers 422; the row stays pending and
+  `POST /attachments/:id/upload-url` renews its URL. Upload URLs sign `Content-Type` and
+  `Content-Length` and live `UPLOAD_URL_TTL_SECONDS` (300).
+
+- **Limits**: `UPLOAD_MAX_BYTES` (10 MiB); JPEG and PNG only (the phone converts HEIC); at most
+  20 non-archived attachments per log (advisory lock per log); 2 image decodes at a time per
+  process (30 s wait, then 503); 60 starts, completions, and renewals per user in 10 minutes each
+  (429).
+- **Downloads**: signed `url`, `thumbnailUrl`, and `urlsExpireAt` only for ready, non-archived
+  attachments loaded through the caller's visibility, valid `DOWNLOAD_URL_TTL_SECONDS` (300), with
+  an `inline` `Content-Disposition` and a sanitised file name. Keys are never returned.
+- **Cleanup** (hourly per process): pending attachments older than 24 hours are archived as
+  `attachment.upload_expired` (actor `system`) and then their object is deleted; the upload bytes
+  of attachments archived while pending are purged once their upload URL has expired, retried for
+  48 hours. Archiving a ready attachment keeps its bytes.
+
+### Notifications
+
+The decision, its reasons, and its known limits are in
+[ADR-0007](docs/decisions/0007-push-notifications-and-notification-channels.md).
+
+```text
+business write --> outbox event --> OutboxConsumer (platform.notifications, polls every 2 s)
+  --> Operations handler (task.created, task.assignees_changed, work_log.status_changed)
+      re-checks current state --> NotificationService.notify
+        --> Notification rows (the in-app list, source of truth), committed
+        --> channels after commit: ExpoPushChannel --> Expo --> APNs / FCM --> phone
+```
+
+- **Who is notified**: added assignees of a task, except whoever assigned them (`task.assigned`);
+  the author of a log a reviewer approved or rejected, unless the author reviewed it
+  (`work_log.approved`, `work_log.rejected`). A repeated approval notifies nobody, a repeated
+  rejection notifies again. The task must still be assigned to the recipient and not archived; the
+  log must still have the announced status and not be archived.
+- **Text**: English catalogue in `src/operations/notifications/notification-messages.ts`. The
+  in-app row has the full text; the push has generic text only.
+- **Push tokens**: bound to the user and the session; one per session; removed in the same
+  transaction as any session end, when Expo reports `DeviceNotRegistered`, and at delivery for a
+  dead session. Audited without the token (six-character suffix only).
+- **Consumer**: cursor in `OutboxConsumerCursor`; handles events at once but moves the cursor past
+  an event only 60 seconds after first seeing it; 5 attempts with backoff, then give up; 200 events
+  per read, 2000 per pass; first start begins after the newest event. Switched by
+  `OUTBOX_CONSUMER_ENABLED` and `OUTBOX_POLL_INTERVAL_MS`; tests call `processPending()`.
+- **Expo push**: on only with `PUSH_ENABLED=true`; receipts checked every 5 minutes, in memory.
+  Android Expo Go cannot receive remote push (a development build can); iOS Expo Go can, with an
+  EAS project id.
+
 ### Typed API client
 
 `packages/shared/src/api-client/` is the one way the web and mobile apps call the API.
@@ -751,7 +930,15 @@ count. `ScopeService` reads every membership, site, and team of the organization
 - **Endpoint functions**: each resource file exports an `xxxEndpoints(transport)` function next to
   its schemas. `createApiClient(options)` (`create-api-client.ts`) assembles them: `health`,
   `auth`, `organization`, `users`, `memberships`, `sites`, `teams`, `logTypes`, `tasks`,
-  `workLogs`, `attachments`, `scope`, `auditEvents`, `outboxEvents`.
+  `workLogs`, `attachments` (with `startUpload`, `renewUpload`, `complete`), `scope`,
+  `notifications`, `auditEvents`, `outboxEvents`.
+- **Upload helper** (`uploadAttachment`, `attachment-upload.ts`): start, PUT (supplied by the
+  platform, with progress), and complete, resumable from an `UploadCheckpoint` so a retry renews
+  the same pending attachment; `uploadRetryDelayMs` (2, 4, 8 s with jitter, 3 automatic attempts).
+  Shared so the web dashboard can reuse it.
+- **Custom-field forms** (`src/forms/custom-field-form.ts`): turns a log type's field definitions
+  into form descriptors, initial values, and wire values, and maps API validation details back to
+  fields; validation itself is the Phase 2 `validateCustomFieldValues`.
 - **Auth session manager** (`createAuthSessionManager`, `auth-session.ts`): framework-free sign-in
   state (`loading`, `signedOut` with a notice, `signedIn` with the user) and the API client bound
   to it. `mode: 'web'`: cookies (`credentials: 'include'`), CSRF token in memory only, `GET
@@ -784,9 +971,10 @@ To re-brand for another client: set `NEXT_PUBLIC_BRAND_NAME` and `EXPO_PUBLIC_BR
 `apps/web/public/brand/logo-512.png`, `apps/web/src/app/icon.png`, `apps/web/src/app/apple-icon.png`,
 and the three files in `apps/mobile/assets/brand/` (same names and sizes); change `darkTheme` if the
 colours differ and run the tests; set the organization slug variables for that deployment; restart
-the dev servers. The mobile bundle identifiers (`ai.kaneri.operations`) are still hard-coded in
-`apps/mobile/app.config.ts` and must come from configuration before the first store or development
-build (Phase 4).
+the dev servers. For a separate mobile app, set `EXPO_IOS_BUNDLE_IDENTIFIER` and
+`EXPO_ANDROID_PACKAGE` (default `ai.kaneri.operations`, a placeholder until the owner decides the
+final values; they cannot change after a store release) and that deployment's
+`EXPO_PUBLIC_EAS_PROJECT_ID`. Mobile text is in `apps/mobile/src/i18n/en.ts` and names no client.
 
 ### Structure inside the clients
 
@@ -798,10 +986,41 @@ build (Phase 4).
   (`X-Frame-Options`, `frame-ancestors`, `nosniff`, referrer and permissions policies, HSTS in
   production; `no-referrer` and `no-store` on `/login` and `/activate`). There is no
   `script-src` / `style-src` policy yet: it needs per-request nonces.
-- **Mobile**: `App.tsx` picks the screen from the sign-in state (`src/navigation/screen.ts`; no
-  navigation library yet); `src/screens/` (Login, Activate, Home, Loading), `src/components/`,
-  `src/hooks/` (form and sign-out state), `src/auth/` (provider, SecureStore token storage),
-  `src/api/` (the session and client), `src/config/` (environment and brand).
+- **Mobile** (Phase 4):
+  - **Navigation** (React Navigation 7): `App.tsx` chooses between a signed-out stack (Login,
+    Activate) and the signed-in navigator by sign-in state. Signed in: bottom tabs Home, Tasks,
+    Logs, Alerts (the notification list, with an unread badge), Profile; above them a stack with
+    TaskDetail, LogForm (new or edit), LogDetail, PhotoViewer. The signed-in part is keyed by user,
+    so another user starts with an empty cache.
+  - **Data layer** (`src/data/`): reads through TanStack Query (`queries.ts`; notifications polled
+    every 60 s; attachments refetched before their signed URLs expire). **Every write goes through
+    `repositories.ts`** (work logs, tasks, attachments, notifications), which returns a typed
+    `WriteResult` and tells the cache what changed. A new log resolves to a `SavedWorkLog` that is
+    `settled` today; Phase 5 adds a local queue behind the same interfaces and a `pending` answer,
+    without changing screens. Work log creates are retried once on a network failure (the
+    `clientId` makes it safe).
+  - **Uploads** (`uploadQueue.ts`): photos of a saved log are uploaded one at a time from a queue
+    persisted per user in AsyncStorage; 3 automatic retries (2, 4, 8 s with jitter), then a manual
+    Retry on the log screen; a checkpoint per photo makes a retry renew the same attachment.
+  - **Photos** (`src/device/`): camera or gallery, resized to 1600 px on the long edge and
+    re-encoded as JPEG at 0.7 (HEIC becomes JPEG, metadata dropped), kept in
+    `Paths.document/pending-photos/` until the upload completes, sent with `expo-file-system` and
+    progress (a `fetch` fallback). Up to 10 photos per log in the form.
+  - **Location**: foreground permission only, asked once; a last-known position under 2 minutes
+    old, else a fresh high-accuracy fix within 10 seconds; never blocks saving.
+  - **Drafts and retention** (`src/storage/`): the new-log form is drafted in AsyncStorage per
+    user (`ops.drafts.newWorkLog.<userId>`; edit forms are not drafted); drafts and queued uploads
+    older than 14 days are deleted at app start. Tokens stay in SecureStore only.
+  - **i18n** (`src/i18n/`): every sentence through `t(key)` from a typed catalogue (`en.ts`); a new
+    language is a new file added to `CATALOGUES`; the phone's language is picked with
+    `expo-localization`; styles use `start` / `end` and `applyLayoutDirection()` switches React
+    Native to right to left for an RTL language.
+  - **Push** (`src/push/`): registers after sign-in and on cold start, again when returning to the
+    foreground after 24 hours, unregisters before sign-out; skipped in Expo Go on Android and
+    without `EXPO_PUBLIC_EAS_PROJECT_ID`; a tapped notification opens the task or log (ids are
+    checked to be UUIDs).
+  - Other folders: `src/screens/`, `src/components/`, `src/hooks/`, `src/logic/` (pure, tested),
+    `src/auth/`, `src/api/`, `src/config/`.
 
 The rule in both: code that talks to the API or decides something lives outside components,
 returns typed results instead of throwing, and is unit tested without a network. Logic both apps
@@ -819,13 +1038,20 @@ and lists every variable. Each app reads its variables in exactly one file and v
 | Mobile | `apps/mobile/src/config/env.ts` | Never throws. Same behaviour as the web app.                                               |
 
 API: required `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_MS`, `API_HOST`, `API_PORT`, `CORS_ORIGINS`,
-`LOG_LEVEL`, `AUTH_ACCESS_TOKEN_SECRET` (at least 32 characters), `WEB_APP_URL`; optional with
-defaults `NODE_ENV` (production), `TRUST_PROXY_HOPS` (0), and the `AUTH_*` durations and limits
-(see README section 8). **Production refusals**: a placeholder-looking or repetitive secret, and a
-`WEB_APP_URL` that is not `https://`. The absolute session lifetime may not be shorter than the
-refresh lifetime. `apps/mobile/app.config.ts` also reads `EXPO_PUBLIC_BRAND_NAME`, because it runs
-in Node before the bundle exists. Every variable must also be listed in `globalPassThroughEnv` in
-`turbo.json`.
+`LOG_LEVEL`, `AUTH_ACCESS_TOKEN_SECRET` (at least 32 characters), `WEB_APP_URL`, `STORAGE_ENDPOINT`,
+`STORAGE_PUBLIC_ENDPOINT`, `STORAGE_REGION`, `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY_ID`,
+`STORAGE_SECRET_ACCESS_KEY`; optional with defaults `NODE_ENV` (production), `TRUST_PROXY_HOPS`
+(0), the `AUTH_*` durations and limits, `STORAGE_FORCE_PATH_STYLE` (true), `UPLOAD_MAX_BYTES`
+(10 MiB, at most 25 MiB), `UPLOAD_URL_TTL_SECONDS` and `DOWNLOAD_URL_TTL_SECONDS` (300),
+`EXPO_ACCESS_TOKEN` (none), `PUSH_ENABLED` and `OUTBOX_CONSUMER_ENABLED` (true),
+`OUTBOX_POLL_INTERVAL_MS` (2000) (see README section 8). **Production refusals**: a
+placeholder-looking or repetitive auth secret or storage secret key, and a `WEB_APP_URL` or
+`STORAGE_PUBLIC_ENDPOINT` that is not `https://`. The absolute session lifetime may not be shorter
+than the refresh lifetime. Docker Compose reads `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`,
+`MINIO_BIND_HOST`, `MINIO_PORT`, and `MINIO_CONSOLE_PORT`. `apps/mobile/app.config.ts` also reads
+`EXPO_PUBLIC_BRAND_NAME`, `EXPO_PUBLIC_EAS_PROJECT_ID`, `EXPO_IOS_BUNDLE_IDENTIFIER`, and
+`EXPO_ANDROID_PACKAGE` (both default to `ai.kaneri.operations`), because it runs in Node before the
+bundle exists. Every app variable must also be listed in `globalPassThroughEnv` in `turbo.json`.
 
 ### Build, tooling, and tests
 
@@ -833,12 +1059,16 @@ Turborepo runs tasks across the workspace. Every task depends on `^build`, so `@
 compiled before the apps that import it. The reasons for each tool and version are in
 [ADR-0001](docs/decisions/0001-tech-stack.md).
 
-- **Unit tests** (`pnpm test`) need no database and no network: 367 in `@ops/api` (15 suites,
-  including the access rules, visibility, auth, and `route-policies.spec.ts`), 546 in
-  `@ops/shared`, 46 in `@ops/web`, 20 in `@ops/mobile`.
+- **Unit tests** (`pnpm test`) need no database and no network: 477 in `@ops/api` (21 suites,
+  including the access rules, visibility, auth, storage, notifications, the outbox consumer, and
+  `route-policies.spec.ts`), 650 in `@ops/shared` (13 files), 46 in `@ops/web`, 154 in
+  `@ops/mobile` (15 suites).
 - **Integration tests** (`pnpm test:integration`) boot the real Nest application in-process and
-  call it over HTTP against a separate PostgreSQL database named by `DATABASE_URL_TEST`: 1,208
-  tests in 14 suites, about 150 seconds. They authenticate through the harness: `as(userId)` opens
+  call it over HTTP against a separate PostgreSQL database named by `DATABASE_URL_TEST`: 1,339
+  tests in 18 suites (as reported on 2026-10-17), about 3 minutes. They bind an in-memory
+  `FileStorage` fake, except `storage-minio`, which uses the real MinIO with its own bucket
+  `hz-attachments-test`; the outbox consumer and push are off and tests call `processPending()`
+  with a fake Expo client. They authenticate through the harness: `as(userId)` opens
   a real `mobile` session and sends its bearer token; `loginAs`, `bearer`, and `browser()` (a
   cookie jar with Origin and CSRF handling) test the sign-in paths themselves. A guard refuses any
   database whose name does not end in `_test` or that equals the development database, because the
@@ -861,52 +1091,58 @@ revised by ADR when a decision changes.
    application, not by the AI layer.
 5. **Everything automated is audited**: proposals, approvals, rejections, executed actions.
 
-### File storage (planned, Phase 4)
-
-`FileStorage` (`apps/api/src/operations/storage/file-storage.ts`) assumes direct uploads: the API
-hands the client a short-lived upload target, the client uploads the bytes straight to storage,
-and the API then records the metadata. Before a provider is bound, the API must generate the
-storage key itself (prefixed with the organization id) and stop accepting `storageKey` in the
-create body; today the client supplies it (and a duplicate key answers 409, see ADR-0005).
-
 ### Offline-first mobile (planned, Phase 5)
 
 Workers often have poor connectivity, so the mobile app must record work without a network: a
-local store written first, an outbox queue sent when the network returns, idempotent sync through
-the client-generated `clientId` (the server side exists), and a documented conflict rule (not
-chosen; there is no row version today). Phase 4 builds the worker app online-only, but it must
-already open signed in from the stored session when the network is down.
+local store written first, a queue sent when the network returns, idempotent sync through the
+client-generated `clientId` (the server side exists), and a documented conflict rule (not chosen;
+there is no row version today). Phase 4 prepared it: every write already goes through
+`apps/mobile/src/data/repositories.ts`, screens already handle a `pending` `SavedWorkLog`, and
+photo uploads already have a persisted queue. Phase 5 adds the local queue behind the
+repositories, drafts for the edit form, and the signed-in state when the server is unreachable at
+start (today the app shows the sign-in screen with an "unreachable" notice and keeps the tokens).
+
+### Web dashboard (planned, Phase 6)
+
+Photo upload from the browser reuses `uploadAttachment` but needs a CORS rule on the bucket.
+Notification text is rendered on the server in English; storing each user's language and
+localising it belongs here.
 
 ### Before production (Phase 8)
 
-A shared rate-limit store, `TRUST_PROXY_HOPS` set in deployment, a real `NotificationSender`
-(email or SMS), a CSP with `script-src` nonces on the web app, HTTPS with the web app and API on
-the same site, and a retention and erasure decision for personal data in the audit log and outbox.
+A shared rate-limit store (sign-in and upload limits, the decode limit is per process by design),
+`TRUST_PROXY_HOPS` set in deployment, a real `NotificationSender` (email or SMS), a CSP with
+`script-src` nonces on the web app, HTTPS with the web app and API on the same site, a real S3
+provider with a private bucket policy and a scoped key, a replacement for the community MinIO
+image, durable push receipts, a purge marker for orphan upload bytes, and a retention and erasure
+decision for personal data in the audit log, the outbox, and stored photos.
 
 ## Reusable Kaneri platform components
 
 Kaneri.ai builds AI-agent and automation products. These components are intended to be shared
 across Kaneri products later.
 
-| Component        | Responsibility                                                          | State                                                                                                                        |
-| ---------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Configuration    | Typed, validated settings from the environment.                         | Exists in `src/config/`, mixed with this API's own variable list.                                                            |
-| Request context  | Correlation id, acting user, one structured log line per request.       | Exists: `src/platform/request-context/`.                                                                                     |
-| HTTP conventions | Error body, Zod validation pipe, pagination, filters, OpenAPI from Zod. | Exists: `src/platform/http/`, `src/platform/docs/`, schemas in `@ops/shared`.                                                |
-| Audit log        | Append-only record of who did what, when, and through which actor.      | Exists: `src/platform/audit/`, table `AuditEvent`.                                                                           |
-| Event outbox     | Domain events written in the same transaction as the change.            | Exists (write and read): `src/platform/outbox/`, table `OutboxEvent`. No consumer.                                           |
-| Auth             | Identity, sign-in, sessions, tokens, CSRF, rate limits, lockout.        | Exists: `src/platform/auth/`, tables `Auth*`. In-house (ADR-0004); an external provider would plug in behind the same seams. |
-| Permissions seam | Route policies and the authorizer interface the host implements.        | Exists: `src/platform/authz/`. The Operations rules (`src/operations/access/`) are domain code behind it.                    |
-| Notifications    | Delivering messages to users over one or more channels.                 | Interface exists: `src/platform/notifications/`, logging implementation only. Real email or SMS: Phase 8.                    |
-| File storage     | Provider-neutral interface for upload targets and download URLs.        | Interface only, in `src/operations/storage/` (no Operations imports). Phase 4.                                               |
-| Design tokens    | Theme constants, contrast maths, CSS variables.                         | Exists: `packages/shared/src/theme/`.                                                                                        |
-| Typed API client | Transport with refresh-once, result type, auth session manager, health. | Exists: `packages/shared/src/api-client/` (the resource list is Operations-specific).                                        |
-| AI layer         | Event consumption, provider abstraction, proposals, approval workflow.  | Planned, Phase 7.                                                                                                            |
+| Component        | Responsibility                                                          | State                                                                                                                          |
+| ---------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Configuration    | Typed, validated settings from the environment.                         | Exists in `src/config/`, mixed with this API's own variable list.                                                              |
+| Request context  | Correlation id, acting user, one structured log line per request.       | Exists: `src/platform/request-context/`.                                                                                       |
+| HTTP conventions | Error body, Zod validation pipe, pagination, filters, OpenAPI from Zod. | Exists: `src/platform/http/`, `src/platform/docs/`, schemas in `@ops/shared`.                                                  |
+| Audit log        | Append-only record of who did what, when, and through which actor.      | Exists: `src/platform/audit/`, table `AuditEvent`.                                                                             |
+| Event outbox     | Domain events written in the same transaction as the change.            | Exists: `src/platform/outbox/`, table `OutboxEvent`.                                                                           |
+| Outbox consumer  | Reads the outbox in order and dispatches events to registered handlers. | Exists (Phase 4, ADR-0007): `outbox-consumer.ts`, table `OutboxConsumerCursor`. Knows no event names.                          |
+| Auth             | Identity, sign-in, sessions, tokens, CSRF, rate limits, lockout.        | Exists: `src/platform/auth/`, tables `Auth*`. In-house (ADR-0004); an external provider would plug in behind the same seams.   |
+| Permissions seam | Route policies and the authorizer interface the host implements.        | Exists: `src/platform/authz/`. The Operations rules (`src/operations/access/`) are domain code behind it.                      |
+| Notifications    | Delivering messages to users over one or more channels.                 | Exists (Phase 4, ADR-0007): in-app list, `NotificationChannel` interface, Expo push channel, push tokens. Codes: logging only. |
+| File storage     | Provider-neutral storage with signed upload and download URLs.          | Exists (Phase 4, ADR-0006): `src/platform/storage/`, S3-compatible, image verification and thumbnails.                         |
+| Design tokens    | Theme constants, contrast maths, CSS variables.                         | Exists: `packages/shared/src/theme/`.                                                                                          |
+| Typed API client | Transport with refresh-once, result type, auth session manager, health. | Exists: `packages/shared/src/api-client/` (the resource list is Operations-specific).                                          |
+| AI layer         | Event consumption, provider abstraction, proposals, approval workflow.  | Planned, Phase 7.                                                                                                              |
 
 **Design rule.** Each platform component is a self-contained module with **no Operations-specific
 imports**. Operations behaviour is supplied through configuration or an interface that the
-Operations code implements (`REQUEST_AUTHORIZER`, `AUTH_PROFILE_PROVIDER`). Dependencies point one
-way: Operations modules may import platform modules, never the reverse.
+Operations code implements (`REQUEST_AUTHORIZER`, `AUTH_PROFILE_PROVIDER`) or registers with
+(`OutboxConsumer.registerHandler`, `NotificationService.notify`). Dependencies point one way:
+Operations modules may import platform modules, never the reverse.
 
 What "self-contained" means today, and what extraction would still need:
 

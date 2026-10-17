@@ -1,8 +1,9 @@
-import { AUTH_TEXT, colors, fontSizes, spacing } from '@ops/shared';
+import { colors, fontSizes, spacing } from '@ops/shared';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandHeader } from '../components/BrandHeader';
+import { t } from '../i18n';
 
 /** Shown while the stored session is read from SecureStore and checked with the API. */
 export function LoadingScreen() {
@@ -11,7 +12,7 @@ export function LoadingScreen() {
       <BrandHeader />
       <View accessible accessibilityRole="progressbar" style={styles.status}>
         <ActivityIndicator color={colors.primary} size="small" />
-        <Text style={styles.text}>{AUTH_TEXT.checkingSession}</Text>
+        <Text style={styles.text}>{t('auth.checkingSession')}</Text>
       </View>
     </SafeAreaView>
   );

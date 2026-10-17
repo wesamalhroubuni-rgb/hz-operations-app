@@ -18,13 +18,28 @@ export const DEFAULT_QUIET_PATHS: readonly string[] = [
   '/docs-yaml',
 ];
 
-/** The path of a request URL without its query string or fragment. */
+/**
+ * Path segments that carry a secret and must never reach the log, replaced by a placeholder.
+ * Today: the push token in `DELETE /notifications/push-tokens/<token>`.
+ */
+const SECRET_PATH_SEGMENTS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^(\/notifications\/push-tokens\/)[^/]+/i, '/notifications/push-tokens/:token'],
+];
+
+/**
+ * The path of a request URL without its query string or fragment, with secret segments
+ * replaced (see `SECRET_PATH_SEGMENTS`).
+ */
 export function pathOf(url: string | undefined): string {
   if (!url) {
     return '/';
   }
   const end = url.search(/[?#]/);
-  return end === -1 ? url : url.slice(0, end) || '/';
+  const path = end === -1 ? url : url.slice(0, end) || '/';
+  return SECRET_PATH_SEGMENTS.reduce(
+    (redacted, [pattern, replacement]) => redacted.replace(pattern, replacement),
+    path,
+  );
 }
 
 /** True when `path` is one of the quiet paths or lies below one of them. */

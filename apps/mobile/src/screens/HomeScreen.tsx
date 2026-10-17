@@ -1,139 +1,115 @@
-import {
-  AUTH_TEXT,
-  colors,
-  fontSizes,
-  fontWeights,
-  radii,
-  roleLabel,
-  spacing,
-  type AuthUser,
-} from '@ops/shared';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { spacing } from '@ops/shared';
+import { StyleSheet, View } from 'react-native';
 
-import { ApiStatusCard } from '../components/ApiStatusCard';
-import { BrandHeader } from '../components/BrandHeader';
+import { AppText } from '../components/AppText';
 import { Button } from '../components/Button';
-import { Message } from '../components/Message';
-import { brand } from '../config/brand';
-import { useSignOut } from '../hooks/useSignOut';
+import { LogRow, TaskRow } from '../components/rows';
+import { ScreenContainer } from '../components/ScreenContainer';
+import { EmptyState, ErrorState, LoadingState } from '../components/StateViews';
+import { useData } from '../data/DataProvider';
+import { useMyLogs, useMyTasks } from '../data/queries';
+import { useLookups } from '../hooks/useLookups';
+import { useNow } from '../hooks/useNow';
+import { usePendingPhotoCounts } from '../hooks/useUploads';
+import { t } from '../i18n';
+import { tasksForToday } from '../logic/tasks';
+import type { TabScreenProps } from '../navigation/types';
+
+const RECENT_LOGS = 3;
 
 /**
- * The placeholder home screen of a signed-in user: who they are, whether the API answers, and
- * the two ways out. Work logging comes in Phase 4.
+ * Today at a glance: what is due today or overdue, the latest logs, and the big "New log" button
+ * at the bottom where the thumb is.
  */
-export function HomeScreen({ user }: Readonly<{ user: AuthUser }>) {
-  const { busy, failure, run } = useSignOut();
+export function HomeScreen({ navigation }: Readonly<TabScreenProps<'Home'>>) {
+  const { user } = useData();
+  const now = useNow();
+  const tasks = useMyTasks();
+  const logs = useMyLogs();
+  const lookups = useLookups();
+  const pendingPhotos = usePendingPhotoCounts();
+
+  const today = tasksForToday(tasks.data ?? [], now);
+  const recent = logs.data?.pages[0]?.items.slice(0, RECENT_LOGS) ?? [];
 
   return (
-    <SafeAreaView style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <BrandHeader />
+    <ScreenContainer
+      inTab
+      refreshing={tasks.isRefetching || logs.isRefetching}
+      onRefresh={() => {
+        void tasks.refetch();
+        void logs.refetch();
+      }}
+      footer={
+        <Button
+          size="large"
+          icon="add-circle-outline"
+          label={t('home.newLog')}
+          accessibilityHint={t('home.newLogHint')}
+          onPress={() => navigation.navigate('LogForm', { mode: 'new' })}
+        />
+      }
+    >
+      <AppText variant="title">{t('home.greeting', { name: user.displayName })}</AppText>
 
-        <View style={styles.card}>
-          <Text style={styles.cardHeading}>{AUTH_TEXT.signedInAs}</Text>
-          <View accessible style={styles.identity}>
-            <Text style={styles.name}>{user.displayName}</Text>
-            <View style={styles.roleRow}>
-              <Text style={styles.badge}>{roleLabel(user.role)}</Text>
-              <Text style={styles.organization}>{user.organizationName}</Text>
-            </View>
-          </View>
+      <View style={styles.section}>
+        <AppText variant="heading">{t('home.todayTitle')}</AppText>
+        {tasks.isPending ? (
+          <LoadingState />
+        ) : tasks.isError ? (
+          <ErrorState onRetry={() => void tasks.refetch()} />
+        ) : today.length === 0 ? (
+          <EmptyState icon="checkmark-done-outline" message={t('home.nothingToday')} />
+        ) : (
+          today.map((task) => (
+            <TaskRow
+              key={task.id}
+              task={task}
+              now={now}
+              onPress={() => navigation.navigate('TaskDetail', { taskId: task.id })}
+            />
+          ))
+        )}
+        <Button
+          variant="link"
+          label={t('home.allTasks')}
+          onPress={() => navigation.navigate('Tasks')}
+        />
+      </View>
 
-          {failure !== null ? <Message tone="error" text={failure} /> : null}
-
+      <View style={styles.section}>
+        <AppText variant="heading">{t('home.recentLogsTitle')}</AppText>
+        {logs.isPending ? (
+          <LoadingState />
+        ) : logs.isError ? (
+          <ErrorState onRetry={() => void logs.refetch()} />
+        ) : recent.length === 0 ? (
+          <EmptyState icon="create-outline" message={t('home.noLogs')} />
+        ) : (
+          recent.map((log) => (
+            <LogRow
+              key={log.id}
+              log={log}
+              typeName={lookups.logTypeName(log.logTypeId)}
+              pendingPhotos={pendingPhotos.get(log.id) ?? 0}
+              onPress={() => navigation.navigate('LogDetail', { logId: log.id })}
+            />
+          ))
+        )}
+        {recent.length > 0 ? (
           <Button
-            label={busy === 'device' ? AUTH_TEXT.signingOut : AUTH_TEXT.signOut}
-            onPress={() => void run('device')}
-            disabled={busy !== null}
-            busy={busy === 'device'}
+            variant="link"
+            label={t('home.allLogs')}
+            onPress={() => navigation.navigate('Logs')}
           />
-          <Button
-            variant="secondary"
-            label={busy === 'everywhere' ? AUTH_TEXT.signingOut : AUTH_TEXT.signOutEverywhere}
-            onPress={() => void run('everywhere')}
-            disabled={busy !== null}
-            busy={busy === 'everywhere'}
-            accessibilityHint={AUTH_TEXT.signOutEverywhereHint}
-          />
-          <Text style={styles.hint}>
-            {`${AUTH_TEXT.signOutEverywhere}: ${AUTH_TEXT.signOutEverywhereHint}`}
-          </Text>
-        </View>
-
-        <ApiStatusCard />
-
-        <Text style={styles.poweredBy}>{brand.poweredBy}</Text>
-      </ScrollView>
-    </SafeAreaView>
+        ) : null}
+      </View>
+    </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  content: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    gap: spacing.xl,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.xl,
-  },
-  card: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radii.lg,
-    padding: spacing.xl,
+  section: {
     gap: spacing.md,
-  },
-  cardHeading: {
-    fontSize: fontSizes.xs,
-    fontWeight: fontWeights.semibold,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    color: colors.textMuted,
-  },
-  identity: {
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  name: {
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.semibold,
-    color: colors.textPrimary,
-  },
-  roleRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  badge: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs / 2,
-    borderWidth: 1,
-    borderColor: colors.primary,
-    borderRadius: radii.pill,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semibold,
-    color: colors.primary,
-    overflow: 'hidden',
-  },
-  organization: {
-    flexShrink: 1,
-    fontSize: fontSizes.md,
-    color: colors.textSecondary,
-  },
-  hint: {
-    fontSize: fontSizes.xs,
-    color: colors.textMuted,
-  },
-  poweredBy: {
-    fontSize: fontSizes.xs,
-    textAlign: 'center',
-    color: colors.textMuted,
   },
 });

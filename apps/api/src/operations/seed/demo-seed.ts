@@ -849,7 +849,12 @@ export async function seedDemo(app: INestApplicationContext): Promise<DemoSeedRe
       // Reviewed by the manager: a reviewer who can see every log and wrote none of them.
       const status = demo.status;
       await asUser(organizationId, userIds.manager, () =>
-        workLogsService.changeStatus(workLog.id, status),
+        workLogsService.changeStatus(
+          workLog.id,
+          status === 'rejected'
+            ? { status, note: 'Please add which shelves were changed and a photo.' }
+            : { status },
+        ),
       );
     }
   }
@@ -860,7 +865,12 @@ export async function seedDemo(app: INestApplicationContext): Promise<DemoSeedRe
     const taskId = taskIds[index];
     if (taskId && demo.status !== 'todo') {
       await asUser(organizationId, userIds[demo.createdBy], () =>
-        tasksService.changeStatus(taskId, demo.status),
+        tasksService.changeStatus(
+          taskId,
+          demo.status === 'blocked'
+            ? { status: demo.status, reason: 'Waiting for the replacement seal kit.' }
+            : { status: demo.status },
+        ),
       );
     }
   }

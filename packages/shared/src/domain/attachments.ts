@@ -9,12 +9,25 @@ import {
 import { idSchema, isoDateTimeSchema, queryBooleanSchema } from '../common/primitives.js';
 import { nullableIsoDateTimeSchema, type ListQueryParams } from './shared.js';
 
-/** Largest size the metadata accepts (the column is a 32-bit integer): 2 GiB minus one byte. */
-export const MAX_ATTACHMENT_SIZE_BYTES = 2_147_483_647;
+/** Image types the API accepts. Phones convert HEIC/HEIF to JPEG before uploading. */
+export const ATTACHMENT_MIME_TYPES = ['image/jpeg', 'image/png'] as const;
+export const attachmentMimeTypeSchema = z.enum(ATTACHMENT_MIME_TYPES);
+export type AttachmentMimeType = z.infer<typeof attachmentMimeTypeSchema>;
 
 /**
- * Metadata of a file attached to a work log. The bytes live behind the storage interface
- * (Phase 4); `storageKey` is where.
+ * Upper bound the client checks before uploading. The API's own limit (`UPLOAD_MAX_BYTES`) is
+ * authoritative and may be lower.
+ */
+export const MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024;
+
+export const ATTACHMENT_STATUSES = ['pending', 'ready'] as const;
+export const attachmentStatusSchema = z.enum(ATTACHMENT_STATUSES);
+export type AttachmentStatus = z.infer<typeof attachmentStatusSchema>;
+
+/**
+ * A photo attached to a work log. The storage key is never exposed. While `ready`, the response
+ * carries short-lived signed URLs to the image and its thumbnail (null while `pending` or for an
+ * archived attachment); fetch the attachment again for fresh ones after `urlsExpireAt`.
  */
 export const attachmentSchema = z.object({
   id: idSchema,
@@ -24,24 +37,43 @@ export const attachmentSchema = z.object({
   fileName: z.string(),
   mimeType: z.string(),
   sizeBytes: z.number().int(),
-  storageKey: z.string(),
+  status: attachmentStatusSchema,
+  width: z.number().int().nullable(),
+  height: z.number().int().nullable(),
+  url: z.string().nullable(),
+  thumbnailUrl: z.string().nullable(),
+  urlsExpireAt: nullableIsoDateTimeSchema,
   createdAt: isoDateTimeSchema,
+  completedAt: nullableIsoDateTimeSchema,
   archivedAt: nullableIsoDateTimeSchema,
 });
 export type Attachment = z.infer<typeof attachmentSchema>;
 
-/** The uploader is the acting user. */
-export const createAttachmentSchema = z.strictObject({
+/**
+ * Starts an upload. The API creates a `pending` attachment, chooses the storage key, and answers
+ * with a short-lived URL the client PUTs the bytes to; then the client calls `complete`.
+ */
+export const startAttachmentUploadSchema = z.strictObject({
   fileName: z.string().trim().min(1).max(255),
-  mimeType: z
-    .string()
-    .trim()
-    .max(127)
-    .regex(/^[\w.+-]+\/[\w.+-]+$/, { error: 'must be a MIME type such as image/jpeg' }),
-  sizeBytes: z.number().int().min(0).max(MAX_ATTACHMENT_SIZE_BYTES),
-  storageKey: z.string().trim().min(1).max(1024),
+  mimeType: attachmentMimeTypeSchema,
+  sizeBytes: z.number().int().min(1).max(MAX_ATTACHMENT_SIZE_BYTES),
 });
-export type CreateAttachment = z.infer<typeof createAttachmentSchema>;
+export type StartAttachmentUpload = z.infer<typeof startAttachmentUploadSchema>;
+
+/** Where and how to upload the bytes: send exactly these headers with a PUT of the file. */
+export const uploadTargetSchema = z.object({
+  url: z.string(),
+  method: z.literal('PUT'),
+  headers: z.record(z.string(), z.string()),
+  expiresAt: isoDateTimeSchema,
+});
+export type UploadTargetInfo = z.infer<typeof uploadTargetSchema>;
+
+export const attachmentUploadSchema = z.object({
+  attachment: attachmentSchema,
+  upload: uploadTargetSchema,
+});
+export type AttachmentUpload = z.infer<typeof attachmentUploadSchema>;
 
 export const ATTACHMENT_SORT_FIELDS = ['createdAt', 'fileName', 'sizeBytes'] as const;
 
@@ -65,12 +97,32 @@ export function attachmentsEndpoints(transport: ApiTransport) {
         schema: attachmentListSchema,
       });
     },
-    create(workLogId: string, body: CreateAttachment): Promise<ApiResult<Attachment>> {
+    /** Step 1: creates the pending attachment and returns where to PUT the bytes. */
+    startUpload(
+      workLogId: string,
+      body: StartAttachmentUpload,
+    ): Promise<ApiResult<AttachmentUpload>> {
       return transport.request({
         method: 'POST',
         path: `/work-logs/${workLogId}/attachments`,
         body,
+        schema: attachmentUploadSchema,
+      });
+    },
+    /** Step 2 (after the PUT): the API verifies the stored file and marks it ready. */
+    complete(id: string): Promise<ApiResult<Attachment>> {
+      return transport.request({
+        method: 'POST',
+        path: `/attachments/${id}/complete`,
         schema: attachmentSchema,
+      });
+    },
+    /** A fresh upload URL for a pending attachment whose earlier URL expired or failed. */
+    renewUpload(id: string): Promise<ApiResult<AttachmentUpload>> {
+      return transport.request({
+        method: 'POST',
+        path: `/attachments/${id}/upload-url`,
+        schema: attachmentUploadSchema,
       });
     },
     get(id: string): Promise<ApiResult<Attachment>> {

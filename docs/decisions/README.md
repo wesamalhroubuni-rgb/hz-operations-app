@@ -55,10 +55,12 @@ What follows from the decision: rules to obey, work it creates, things to revisi
 
 ## Index
 
-| ADR                                                       | Title                                               | Status   | Date       |
-| --------------------------------------------------------- | --------------------------------------------------- | -------- | ---------- |
-| [0001](0001-tech-stack.md)                                | Tech stack                                          | Accepted | 2026-10-12 |
-| [0002](0002-flexible-organization-and-scope-model.md)     | Flexible organization and scope model               | Accepted | 2026-10-13 |
-| [0003](0003-configurable-log-types-with-custom-fields.md) | Configurable log types with custom fields           | Accepted | 2026-10-13 |
-| [0004](0004-authentication.md)                            | In-house authentication behind a platform interface | Accepted | 2026-10-14 |
-| [0005](0005-authorization-model.md)                       | Authorization model and the 404-versus-403 rule     | Accepted | 2026-10-14 |
+| ADR                                                          | Title                                                              | Status   | Date       |
+| ------------------------------------------------------------ | ------------------------------------------------------------------ | -------- | ---------- |
+| [0001](0001-tech-stack.md)                                   | Tech stack                                                         | Accepted | 2026-10-12 |
+| [0002](0002-flexible-organization-and-scope-model.md)        | Flexible organization and scope model                              | Accepted | 2026-10-13 |
+| [0003](0003-configurable-log-types-with-custom-fields.md)    | Configurable log types with custom fields                          | Accepted | 2026-10-13 |
+| [0004](0004-authentication.md)                               | In-house authentication behind a platform interface                | Accepted | 2026-10-14 |
+| [0005](0005-authorization-model.md)                          | Authorization model and the 404-versus-403 rule                    | Accepted | 2026-10-14 |
+| [0006](0006-file-storage-and-upload-flow.md)                 | File storage and the photo upload flow                             | Accepted | 2026-10-17 |
+| [0007](0007-push-notifications-and-notification-channels.md) | Push notifications, notification channels, and the outbox consumer | Accepted | 2026-10-17 |

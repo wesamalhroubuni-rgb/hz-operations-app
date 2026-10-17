@@ -32,11 +32,13 @@ Naming: never hard-code a client name. The name shown in the apps comes from
 `NEXT_PUBLIC_BRAND_NAME` / `EXPO_PUBLIC_BRAND_NAME` through each app's brand module. "Operations"
 stays as the technical name (folder, `@ops/*`, `src/operations`, database `operations_app`).
 
-State on 2026-10-16: Phase 3 is code complete and uncommitted. The API (49 paths) has in-house
-sign-in (email, phone, or username), sessions, and a policy plus object-level rules on every route;
-web and mobile have login, activation, and a placeholder home. The development database has not
-been re-seeded for Phase 3 yet (the owner runs `pnpm db:reset`). Phase 4 is next. See
-[MEMORY.md](MEMORY.md).
+State on 2026-10-17: Phase 3 is committed (`8c8283a`). Phase 4 is code complete and uncommitted:
+the API (56 paths) adds S3-compatible photo storage (MinIO in Docker Compose for development) with
+verified uploads and signed downloads, in-app and Expo push notifications, and an outbox consumer;
+the mobile app has the worker screens (tasks, work logs with photos, location, and custom fields,
+notifications, profile). **Nothing has run on a phone yet**; the owner's phone test, a development
+build, and the commit are open. The web app still has only login, activation, and a placeholder
+home. Phase 5 (offline) is next. See [MEMORY.md](MEMORY.md).
 
 ## Engineering principles
 
@@ -93,21 +95,22 @@ not what was intended.
 All from the repo root. Package names: `@ops/api`, `@ops/web`, `@ops/mobile`, `@ops/shared`,
 `@ops/config`.
 
-| Task                    | Command                                                                                |
-| ----------------------- | -------------------------------------------------------------------------------------- |
-| Install                 | `pnpm install`                                                                         |
-| Start / stop PostgreSQL | `pnpm db:up` / `pnpm db:down` (logs: `pnpm db:logs`)                                   |
-| Run everything          | `pnpm dev`                                                                             |
-| Run one app             | `pnpm --filter @ops/api dev` (same for `@ops/web`, `@ops/mobile`)                      |
-| Checks                  | `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`                               |
-| Integration tests       | `pnpm test:integration` (needs PostgreSQL and `DATABASE_URL_TEST`; not in `pnpm test`) |
-| Formatting              | `pnpm format` (writes), `pnpm format:check`                                            |
-| Migrations              | `pnpm db:migrate` (`prisma migrate dev`); `pnpm --filter @ops/api db:deploy`           |
-| Demo data               | `pnpm db:seed` (idempotent). `pnpm db:reset` wipes the dev database: **owner only**    |
-| Other Prisma            | `pnpm --filter @ops/api db:generate`, `db:studio`                                      |
+| Task                              | Command                                                                                               |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Install                           | `pnpm install`                                                                                        |
+| Start / stop PostgreSQL and MinIO | `pnpm db:up` / `pnpm db:down` (logs: `pnpm db:logs`, PostgreSQL only; `docker compose logs -f minio`) |
+| Run everything                    | `pnpm dev`                                                                                            |
+| Run one app                       | `pnpm --filter @ops/api dev` (same for `@ops/web`, `@ops/mobile`)                                     |
+| Mobile development build          | `pnpm --filter @ops/mobile dev:client` (Expo Go: `dev`, which runs `expo start --go`)                 |
+| Checks                            | `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm test`                                              |
+| Integration tests                 | `pnpm test:integration` (needs PostgreSQL, MinIO, and `DATABASE_URL_TEST`; not in `pnpm test`)        |
+| Formatting                        | `pnpm format` (writes), `pnpm format:check`                                                           |
+| Migrations                        | `pnpm db:migrate` (`prisma migrate dev`); `pnpm --filter @ops/api db:deploy`                          |
+| Demo data                         | `pnpm db:seed` (idempotent). `pnpm db:reset` wipes the dev database: **owner only**                   |
+| Other Prisma                      | `pnpm --filter @ops/api db:generate`, `db:studio`                                                     |
 
 Ports: API 3001 on `127.0.0.1` (`/health`; in development also `/docs`, `/docs-json`,
-`/docs-yaml`), web 3000, Metro 8081, PostgreSQL 5432.
+`/docs-yaml`), web 3000, Metro 8081, PostgreSQL 5432, MinIO 9000 (S3 API) and 9001 (console).
 
 Calling the API in development: `POST /auth/login` with `"client": "mobile"` and send
 `Authorization: Bearer <tokens.accessToken>`. Identifiers per seeded role and PowerShell examples
@@ -130,14 +133,25 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   (`apps/api/src/config/env.ts`, `apps/web/src/lib/env.ts`, `apps/mobile/src/config/env.ts`), and
   to `globalPassThroughEnv` in `turbo.json`. Turbo runs tasks in strict env mode and strips any
   shell or CI variable that is not listed there.
-- PostgreSQL is published on `127.0.0.1` only. Do not widen the port mapping in
-  `docker-compose.yml`; only the API (3001) and Metro (8081) need to be reachable from a phone.
+- PostgreSQL is published on `127.0.0.1` only, and so is the MinIO console. Do not widen those
+  port mappings in `docker-compose.yml`. A phone needs the API (3001), Metro (8081), and the MinIO
+  S3 port (9000, through `MINIO_BIND_HOST`, `127.0.0.1` by default; `0.0.0.0` only for a phone
+  test). The `MINIO_*` variables are read by Docker Compose only (not in `turbo.json`).
 - The API validates its environment with Zod at boot and exits with one line per bad variable.
   Required: `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_MS`, `API_HOST`, `API_PORT`, `CORS_ORIGINS`,
-  `LOG_LEVEL`, `AUTH_ACCESS_TOKEN_SECRET` (at least 32 characters), `WEB_APP_URL`. Optional with
-  defaults: `NODE_ENV` (`production`), `TRUST_PROXY_HOPS` (0), and the `AUTH_*` durations and
-  limits. **Production refuses** a placeholder-looking or repetitive secret and a non-https
-  `WEB_APP_URL`, so `pnpm --filter @ops/api start` fails with the `.env.example` values.
+  `LOG_LEVEL`, `AUTH_ACCESS_TOKEN_SECRET` (at least 32 characters), `WEB_APP_URL`,
+  `STORAGE_ENDPOINT`, `STORAGE_PUBLIC_ENDPOINT`, `STORAGE_REGION`, `STORAGE_BUCKET`,
+  `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`. Optional with defaults: `NODE_ENV`
+  (`production`), `TRUST_PROXY_HOPS` (0), the `AUTH_*` durations and limits,
+  `STORAGE_FORCE_PATH_STYLE` (true), `UPLOAD_MAX_BYTES` (10 MiB, at most 25 MiB),
+  `UPLOAD_URL_TTL_SECONDS` and `DOWNLOAD_URL_TTL_SECONDS` (300), `EXPO_ACCESS_TOKEN` (none),
+  `PUSH_ENABLED` and `OUTBOX_CONSUMER_ENABLED` (true), `OUTBOX_POLL_INTERVAL_MS` (2000).
+  **Production refuses** a placeholder-looking or repetitive auth secret or storage secret key and
+  a non-https `WEB_APP_URL` or `STORAGE_PUBLIC_ENDPOINT`, so `pnpm --filter @ops/api start` fails
+  with the `.env.example` values.
+- `STORAGE_ENDPOINT` is where the API reaches the storage; `STORAGE_PUBLIC_ENDPOINT` is the host
+  written into signed URLs and must be reachable by the phone or browser. A running API keeps
+  signing with the value it started with: restart it after changing it.
 - `NODE_ENV` is not in `.env`. The API package scripts set it with `dotenv -v`: `dev` and
   `db:seed` use `development`, `start` uses `production`. Unset means production.
 - A running process keeps the environment it started with. After changing `.env`, restart
@@ -192,7 +206,38 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   inclusive lower bound, exclusive upper bound.
 - Audit and outbox redact by key name at any depth (`password`, `secret`, `token`, `hash` suffix,
   ...). A field or custom-field key that matches is stored as `"[redacted]"` in both.
-- The enum arrays in `packages/shared/src/domain/enums.ts` must match the Prisma enums, in order.
+- The enum arrays in `packages/shared/src/domain/enums.ts`, `ATTACHMENT_STATUSES`
+  (`domain/attachments.ts`), and `PUSH_PLATFORMS` (`platform/notifications.ts`) must match the
+  Prisma enums, in order.
+
+**Uploads and storage** (ADR-0006)
+
+- Never accept a storage key from a client. Keys come from `attachmentStorageKey` and
+  `verifiedKeyOf` in `operations/attachments/attachments.service.ts`; no key or URL ever goes into
+  a response field other than the signed URLs, or into audit or outbox payloads.
+- `complete` must keep re-encoding the upload to the API-only `.verified.` key and serving that,
+  never the uploaded object (it closes the overwrite window of a still-valid upload URL and strips
+  EXIF). Signed URLs are produced only by `AttachmentsService.present`, for ready, non-archived
+  rows loaded through `attachmentVisibilityWhere`.
+- A `pending` attachment is visible only to its uploader. Upload steps use the archive rule of the
+  log (`canChangeAttachments`).
+- Development and test create the bucket at start-up and boot without storage (upload routes 503);
+  production needs the bucket to exist. Integration tests bind an in-memory `FileStorage`
+  (`test/support/fake-file-storage.ts`); only `storage-minio` uses the real MinIO, with the bucket
+  `hz-attachments-test`.
+
+**Notifications and the outbox consumer** (ADR-0007)
+
+- Register outbox handlers from Operations modules (`OutboxConsumer.registerHandler`); the
+  platform knows no event names. Handlers must be idempotent (create notifications with the
+  event's id as `sourceEventId`) and must re-check the record's current state.
+- Only `NotificationService` writes `Notification` rows; channels run after the commit. Push text
+  must stay generic (no task title, no rejection note): put the full text in the in-app row only.
+- Push tokens are bound to the session; session ends remove them through
+  `SessionService.onSessionsEnded`. Never log a push token (mask with `maskPushToken`).
+- The consumer runs when `OUTBOX_CONSUMER_ENABLED=true` (every `OUTBOX_POLL_INTERVAL_MS`). Tests
+  run with it and `PUSH_ENABLED` off (the test configuration omits them) and call
+  `processPending()`; an agent-started API with the root `.env` has both on.
 
 **Database safety**
 
@@ -204,6 +249,7 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   it.
 - `AuditEvent` is append-only (a trigger blocks `UPDATE` and `DELETE`). Do not write code or
   migrations that change or remove audit rows.
+- `docker compose down -v` also deletes the `minio_data` volume (every photo). Do not run it.
 
 **Build order**
 
@@ -226,6 +272,10 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   `pnpm install` exits 1 while any is undecided. Current decisions: `prisma`, `@prisma/engines`,
   and `esbuild` allowed; `@parcel/watcher`, `unrs-resolver`, and `@scarf/scarf` denied.
 - `pnpm run` and `pnpm exec` perform an implicit install when a manifest has changed.
+- `pnpm add` and `pnpm install` can hang in an agent shell that attaches stdin (a prompt nobody
+  answers). Give them an empty stdin, for example `cmd /c "pnpm --filter <pkg> add <dep> < NUL"`.
+- Expo packages must be the SDK 57 versions: check with `npx expo install --check` from
+  `apps/mobile`.
 - From PowerShell, `pnpm exec dotenv ... -- <cmd>` loses the arguments after `--`. For ad-hoc
   commands call `node_modules\.bin\dotenv.cmd` directly. Package scripts are not affected.
 - The dotenv-cli shim sets `NODE_PATH` to pnpm's hoisted store, where the mobile app's Jest 29
@@ -235,15 +285,19 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
 
 **Version pins (do not bump casually; see [ADR-0001](docs/decisions/0001-tech-stack.md))**
 
-| Pin                                                                   | Why                                                                                               |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| TypeScript `~6.0.3` everywhere                                        | npm `latest` is 7.0; typescript-eslint 8 supports `<6.1`; Nest CLI and Expo templates are on 6.0. |
-| Prisma exactly `7.10.0` (three packages)                              | The npm `latest` tag points to an 8.0 release candidate.                                          |
-| React exactly `19.2.3` in web and mobile                              | The version Expo SDK 57 pins. One React version across the repo.                                  |
-| Expo SDK 57 / React Native `0.86.3`                                   | Must match each other and Expo Go. Upgrade them together.                                         |
-| NestJS 12 with a CommonJS API                                         | Nest 12 packages are ESM-only; Node 24 loads them via `require`. Do not add `"type": "module"`.   |
-| Jest 30 (api), Jest 29 + jest-expo (mobile)                           | The API test script needs `node --experimental-vm-modules`. jest-expo 57 is built for Jest 29.    |
-| `expo-splash-screen`, `expo-system-ui`, `expo-secure-store` `~57.0.x` | Expo SDK 57 packages, like `expo-status-bar`. They move with the SDK, not on their own.           |
+| Pin                                                                                                                       | Why                                                                                               |
+| ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| TypeScript `~6.0.3` everywhere                                                                                            | npm `latest` is 7.0; typescript-eslint 8 supports `<6.1`; Nest CLI and Expo templates are on 6.0. |
+| Prisma exactly `7.10.0` (three packages)                                                                                  | The npm `latest` tag points to an 8.0 release candidate.                                          |
+| React exactly `19.2.3` in web and mobile                                                                                  | The version Expo SDK 57 pins. One React version across the repo.                                  |
+| Expo SDK 57 / React Native `0.86.3`                                                                                       | Must match each other and Expo Go. Upgrade them together.                                         |
+| NestJS 12 with a CommonJS API                                                                                             | Nest 12 packages are ESM-only; Node 24 loads them via `require`. Do not add `"type": "module"`.   |
+| Jest 30 (api), Jest 29 + jest-expo (mobile)                                                                               | The API test script needs `node --experimental-vm-modules`. jest-expo 57 is built for Jest 29.    |
+| Every `expo-*` package `~57.0.x` (`expo` ~57.0.30)                                                                        | Expo SDK 57 packages. They move with the SDK, not on their own.                                   |
+| Mobile: React Navigation 7, TanStack Query 5, AsyncStorage, datetimepicker, `@expo/vector-icons`, `zod` at exact versions | Versions Expo SDK 57 accepts (`expo install`); `zod` equal to the one `@ops/shared` uses.         |
+| `sharp` `^0.35.5` (API)                                                                                                   | Prebuilt native binary, no install script, so no `allowBuilds` entry. Check that on any bump.     |
+| `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` `^3.1152.0`                                                         | Keep both on the same version.                                                                    |
+| MinIO image `alpine/minio:RELEASE.2025-10-15T17-29-55Z@sha256:...`                                                        | Community build (official images are no longer published), pinned by digest. Development only.    |
 
 **Per app**
 
@@ -262,10 +316,17 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   sets `settings.react.version` to `'19.2'` by hand; bump it when React changes. No `build` script
   by design. Expo config is `app.config.ts` (there is no `app.json`); it repeats the brand-name
   fallback from `src/config/env.ts` because it cannot import it. Expo Go shows its own icon and
-  splash. A phone cannot reach `localhost`: a phone test needs `EXPO_PUBLIC_API_URL` set to the
-  PC's LAN address and `API_HOST=0.0.0.0`. No phone test has been done (planned for Phase 4).
-  Tokens live in `expo-secure-store` (`src/auth/token-storage.ts`); screens are chosen by sign-in
-  state in `App.tsx` (no navigation library yet).
+  splash. A phone cannot reach `localhost`: a phone test needs `API_HOST=0.0.0.0`,
+  `MINIO_BIND_HOST=0.0.0.0`, and the PC's address in `EXPO_PUBLIC_API_URL` and
+  `STORAGE_PUBLIC_ENDPOINT` (README section 5). No phone test has been done yet.
+- Mobile rules: **every write goes through `src/data/repositories.ts`** (Phase 5 puts a local
+  queue behind it; screens must not call `apiClient` to change data). **Every user-facing string
+  goes through `src/i18n`** (`t('...')`, catalogue `en.ts`; styles use `start` / `end`, never
+  `left` / `right`). **Tokens only in SecureStore**; drafts and the photo upload queue in
+  AsyncStorage (`src/storage/`), deleted after 14 days. Android Expo Go has no remote push; push
+  needs the development build (`expo-dev-client`, `eas.json`, `dev:client`) and
+  `EXPO_PUBLIC_EAS_PROJECT_ID`. Bundle identifiers come from `EXPO_IOS_BUNDLE_IDENTIFIER` /
+  `EXPO_ANDROID_PACKAGE`. `eas-build-post-install` builds `@ops/shared` on EAS.
 
 **This file**
 

@@ -1,63 +1,78 @@
+import { colors } from '@ops/shared';
+import { DarkTheme, NavigationContainer, type Theme } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { apiClient } from './src/api/client';
 import { AuthProvider, useAuth } from './src/auth/AuthProvider';
-import { screenFor, type SignedOutScreen } from './src/navigation/screen';
-import { ActivateScreen } from './src/screens/ActivateScreen';
-import { HomeScreen } from './src/screens/HomeScreen';
+import { DataProvider } from './src/data/DataProvider';
+import { deleteLocalFile } from './src/device/files';
+import { applyLayoutDirection } from './src/i18n';
+import { flushPendingTarget, navigationRef } from './src/navigation/navigationRef';
+import { rootViewFor } from './src/navigation/screen';
+import { SignedInNavigator } from './src/navigation/SignedInNavigator';
+import { SignedOutNavigator } from './src/navigation/SignedOutNavigator';
+import { PushProvider } from './src/push/usePush';
 import { LoadingScreen } from './src/screens/LoadingScreen';
-import { LoginScreen } from './src/screens/LoginScreen';
+import { deviceStore } from './src/storage/deviceStore';
+import { purgeStaleLocalDataOnce } from './src/storage/retention';
+
+applyLayoutDirection();
+// At app start, with or without a session: drafts and queued uploads older than 14 days go,
+// for every user of the phone (src/storage/retention.ts).
+void purgeStaleLocalDataOnce({ store: deviceStore, deleteLocalFile });
+
+/** React Navigation's dark theme in the brand's tokens. */
+const navigationTheme: Theme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    primary: colors.primary,
+    background: colors.background,
+    card: colors.surface,
+    text: colors.textPrimary,
+    border: colors.border,
+    notification: colors.primary,
+  },
+};
 
 /**
- * The whole navigation of this phase: the sign-in state picks the screen, and a signed-out user
- * can switch between the sign-in form and the activation form. A navigation library comes with
- * the feature screens in Phase 4.
+ * The sign-in state picks the navigator (see `src/navigation/types.ts` for the map). The signed-in
+ * part is keyed by the user, so another user starts with an empty cache and their own drafts.
  */
-function Screens() {
-  const { state, retry } = useAuth();
-  const [chosen, setChosen] = useState<SignedOutScreen>('login');
-  const [passwordSet, setPasswordSet] = useState(false);
+function Root() {
+  const { state } = useAuth();
+  const view = rootViewFor(state.status);
 
-  // The "password set" notice belongs to the sign-in that follows it, not to later ones.
-  if (state.status === 'signedIn' && passwordSet) {
-    setPasswordSet(false);
+  if (view === 'loading') {
+    return <LoadingScreen />;
   }
 
-  const showLogin = useCallback(() => setChosen('login'), []);
-  const showActivate = useCallback(() => {
-    setPasswordSet(false);
-    setChosen('activate');
-  }, []);
-  const passwordWasSet = useCallback(() => {
-    setPasswordSet(true);
-    setChosen('login');
-  }, []);
-
-  switch (screenFor(state.status, chosen)) {
-    case 'loading':
-      return <LoadingScreen />;
-    case 'home':
-      return state.status === 'signedIn' ? <HomeScreen user={state.user} /> : null;
-    case 'activate':
-      return <ActivateScreen onDone={passwordWasSet} onBack={showLogin} />;
-    case 'login':
-      return (
-        <LoginScreen
-          notice={state.status === 'signedOut' ? state.notice : null}
-          passwordSet={passwordSet}
-          onRetry={retry}
-          onHaveCode={showActivate}
-        />
-      );
-  }
+  return (
+    <NavigationContainer
+      ref={navigationRef}
+      theme={navigationTheme}
+      onReady={flushPendingTarget}
+      onStateChange={flushPendingTarget}
+    >
+      {state.status === 'signedIn' && apiClient !== null ? (
+        <DataProvider key={state.user.id} user={state.user} client={apiClient}>
+          <PushProvider>
+            <SignedInNavigator />
+          </PushProvider>
+        </DataProvider>
+      ) : (
+        <SignedOutNavigator />
+      )}
+    </NavigationContainer>
+  );
 }
 
 export default function App() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <Screens />
+        <Root />
       </AuthProvider>
       {/* Light status bar icons: the brand theme is dark. */}
       <StatusBar style="light" />

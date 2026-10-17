@@ -303,11 +303,16 @@ describe('every route declares how it is governed', () => {
         .sort(),
     ).toEqual([
       'DELETE /auth/sessions/:id',
+      'DELETE /notifications/push-tokens/:token',
       'GET /auth/me',
       'GET /auth/sessions',
+      'GET /notifications',
       'GET /scope/me',
       'POST /auth/change-password',
       'POST /auth/logout-all',
+      'POST /notifications/:id/read',
+      'POST /notifications/push-tokens',
+      'POST /notifications/read-all',
     ]);
   });
 

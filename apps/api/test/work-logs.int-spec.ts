@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   attachmentSchema,
+  attachmentUploadSchema,
   WORK_LOG_MAX_FUTURE_MS,
   workLogListSchema,
   workLogSchema,
@@ -19,6 +20,9 @@ import {
   unknownId,
   type Tenant,
 } from './support/factories';
+import { MAX_ATTACHMENTS_PER_WORK_LOG } from '../src/operations/access';
+import { FakeFileStorage } from './support/fake-file-storage';
+import { makeJpeg, makePng, textBytes } from './support/test-images';
 import { startTestApp, type ApiCaller, type Json, type TestApp } from './support/test-app';
 
 describe('work logs', () => {
@@ -897,6 +901,39 @@ describe('work logs', () => {
       );
     });
 
+    it('records the review on reject (note required) and clears it when the log is reopened', async () => {
+      const author = await createUser(ctx.prisma, orgId());
+      await createMembership(ctx.prisma, orgId(), author.id, 'worker');
+      const workLog = await createWorkLog(ctx.prisma, orgId(), author.id);
+      const path = `/work-logs/${workLog.id}/status`;
+
+      expect((await api.patch(path, { status: 'rejected' })).status).toBe(400);
+      expect((await api.patch(path, { status: 'draft', note: 'x' })).status).toBe(400);
+      const rejected = await api.patch(path, { status: 'rejected', note: 'Photo missing' });
+
+      expect(rejected.status).toBe(200);
+      expect(workLogSchema.safeParse(rejected.body).success).toBe(true);
+      expect(rejected.body.review).toMatchObject({
+        reviewedById: tenant.admin.id,
+        note: 'Photo missing',
+      });
+      const events = await api.get('/outbox-events');
+      expect(events.body.items[0].payload).toMatchObject({
+        from: 'submitted',
+        to: 'rejected',
+        note: 'Photo missing',
+        changedById: tenant.admin.id,
+        authorId: author.id,
+        reviewedById: tenant.admin.id,
+      });
+
+      const reopened = await api.patch(path, { status: 'submitted' });
+      expect(reopened.status).toBe(200);
+      expect(reopened.body.review).toBeNull();
+      const approved = await api.patch(path, { status: 'approved' });
+      expect(approved.body.review).toMatchObject({ reviewedById: tenant.admin.id, note: null });
+    });
+
     it('archives a log; it leaves the default list and refuses later changes (409)', async () => {
       const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
 
@@ -922,44 +959,237 @@ describe('work logs', () => {
     });
   });
 
-  describe('attachments (metadata only)', () => {
-    const file = (extra: Record<string, unknown> = {}) => ({
+  describe('attachments (upload flow)', () => {
+    const photo = (extra: Record<string, unknown> = {}) => ({
       fileName: 'roof.jpg',
       mimeType: 'image/jpeg',
       sizeBytes: 204_800,
-      storageKey: `logs/${randomUUID()}/roof.jpg`,
       ...extra,
     });
 
-    it('records the metadata of a file on a work log (201); the uploader is the acting user', async () => {
+    /** Starts an upload as the admin, PUTs `bytes` through the fake storage, completes it. */
+    async function uploadPhoto(workLogId: string, bytes: Uint8Array, extra = {}) {
+      const started = await api.post(
+        `/work-logs/${workLogId}/attachments`,
+        photo({ sizeBytes: bytes.byteLength, ...extra }),
+      );
+      expect(started.status).toBe(201);
+      ctx.storage.uploadTo(started.body.upload.url, bytes);
+      const completed = await api.post(`/attachments/${started.body.attachment.id}/complete`);
+      return { started, completed };
+    }
+
+    it('starts an upload (201): a pending attachment, a key chosen by the API, a signed PUT target', async () => {
       const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
-      // A manager reviews the admin's log, so they may attach a file to it.
+      // A manager reviews the admin's log, so they may attach a photo to it.
       const uploader = await createUser(ctx.prisma, orgId());
       await createMembership(ctx.prisma, orgId(), uploader.id, 'manager', { orgWide: true });
-      const metadata = file({ fileName: '  roof.jpg ' });
 
       const response = await ctx
         .as(uploader.id)
-        .post(`/work-logs/${workLog.id}/attachments`, metadata);
+        .post(`/work-logs/${workLog.id}/attachments`, photo({ fileName: '  ../../roof.jpg ' }));
 
       expect(response.status).toBe(201);
-      expect(attachmentSchema.safeParse(response.body).success).toBe(true);
-      expect(response.body).toMatchObject({
+      expect(attachmentUploadSchema.safeParse(response.body).success).toBe(true);
+      expect(response.body.attachment).toMatchObject({
         organizationId: orgId(),
         workLogId: workLog.id,
         uploadedById: uploader.id,
-        fileName: 'roof.jpg',
+        fileName: '../../roof.jpg',
         mimeType: 'image/jpeg',
         sizeBytes: 204_800,
-        storageKey: metadata.storageKey,
-        archivedAt: null,
+        status: 'pending',
+        width: null,
+        height: null,
+        url: null,
+        thumbnailUrl: null,
+        urlsExpireAt: null,
+        completedAt: null,
       });
-      expect((await api.get(`/attachments/${response.body.id}`)).body).toEqual(response.body);
+      expect(response.body.attachment).not.toHaveProperty('storageKey');
+      expect(response.body.upload).toMatchObject({
+        method: 'PUT',
+        headers: { 'Content-Type': 'image/jpeg' },
+      });
+      const row = await ctx.prisma.attachment.findUniqueOrThrow({
+        where: { id: response.body.attachment.id },
+      });
+      expect(row.storageKey).toMatch(
+        new RegExp(`^org/${orgId()}/work-logs/${workLog.id}/[0-9a-f-]{36}\\.jpg$`),
+      );
+      expect(ctx.storage.uploads.at(-1)).toMatchObject({
+        storageKey: row.storageKey,
+        mimeType: 'image/jpeg',
+        sizeBytes: 204_800,
+      });
       const events = await api.get('/outbox-events');
       expect(events.body.items[0]).toMatchObject({
-        eventType: 'attachment.created',
-        payload: { attachment: response.body },
+        eventType: 'attachment.upload_started',
+        payload: { attachment: response.body.attachment },
       });
+    });
+
+    it('completes an upload: verifies the image, stores a thumbnail, signs URLs; completing again changes nothing', async () => {
+      const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
+      const bytes = await makeJpeg(80, 60);
+
+      const { started, completed } = await uploadPhoto(workLog.id, bytes);
+
+      expect(completed.status).toBe(200);
+      expect(attachmentSchema.safeParse(completed.body).success).toBe(true);
+      expect(completed.body).toMatchObject({
+        id: started.body.attachment.id,
+        status: 'ready',
+        width: 80,
+        height: 60,
+      });
+      expect(completed.body.completedAt).not.toBeNull();
+      expect(completed.body.url).toMatch(/^fake-storage:\/\/download\//);
+      expect(completed.body.thumbnailUrl).toMatch(/\.thumb\.jpg\?/);
+      expect(completed.body.urlsExpireAt).not.toBeNull();
+      const row = await ctx.prisma.attachment.findUniqueOrThrow({
+        where: { id: completed.body.id },
+      });
+      expect(row.thumbnailKey).toBe(`${row.storageKey}.thumb.jpg`);
+      // The size is that of the re-encoded copy that is served, not that of the upload.
+      expect(completed.body.sizeBytes).toBe(
+        ctx.storage.objects.get(row.storageKey)?.body.byteLength,
+      );
+      const thumbnail = ctx.storage.objects.get(`${row.storageKey}.thumb.jpg`);
+      expect(thumbnail?.contentType).toBe('image/jpeg');
+      expect(Array.from(thumbnail?.body.slice(0, 3) ?? [])).toEqual([0xff, 0xd8, 0xff]);
+
+      const events = await api.get('/outbox-events', { eventType: 'attachment.completed' });
+      expect(events.body.total).toBe(1);
+      expect(JSON.stringify(events.body.items[0].payload)).not.toContain('fake-storage');
+
+      const again = await api.post(`/attachments/${completed.body.id}/complete`);
+      expect(again.status).toBe(200);
+      expect(again.body.status).toBe('ready');
+      expect(await eventCounts(ctx.prisma)).toEqual({ audit: 2, outbox: 2 });
+      expect((await api.get(`/attachments/${completed.body.id}`)).body.url).not.toBeNull();
+    });
+
+    it('accepts a PNG declared as PNG', async () => {
+      const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
+      const { completed } = await uploadPhoto(workLog.id, await makePng(30, 40), {
+        fileName: 'plan.png',
+        mimeType: 'image/png',
+      });
+      expect(completed.status).toBe(200);
+      expect(completed.body).toMatchObject({ status: 'ready', width: 30, height: 40 });
+    });
+
+    it('answers 409 when completing before the bytes arrived', async () => {
+      const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
+      const started = await api.post(`/work-logs/${workLog.id}/attachments`, photo());
+      const response = await api.post(`/attachments/${started.body.attachment.id}/complete`);
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('conflict');
+    });
+
+    it.each([
+      ['a PNG declared as JPEG', () => makePng(), 'type_mismatch'],
+      ['a text file named .jpg', () => Promise.resolve(textBytes()), 'not_an_image'],
+      ['a truncated JPEG', async () => (await makeJpeg(200, 200)).slice(0, 300), 'corrupt'],
+    ])(
+      'refuses %s (422): deletes the object, keeps the attachment pending',
+      async (_name, make, reason) => {
+        const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
+        const { started, completed } = await uploadPhoto(workLog.id, await make());
+
+        expect(completed.status).toBe(422);
+        expect(completed.body).toMatchObject({
+          code: 'unprocessable',
+          details: [{ path: 'file', message: reason }],
+        });
+        const row = await ctx.prisma.attachment.findUniqueOrThrow({
+          where: { id: started.body.attachment.id },
+        });
+        expect(row.status).toBe('pending');
+        expect(ctx.storage.objects.has(row.storageKey)).toBe(false);
+        expect(await eventCounts(ctx.prisma)).toEqual({ audit: 1, outbox: 1 });
+      },
+    );
+
+    it('refuses a declared size above UPLOAD_MAX_BYTES (400) and a stored object above it (422)', async () => {
+      const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
+      const limit = 10 * 1024 * 1024;
+      const tooLarge = await api.post(
+        `/work-logs/${workLog.id}/attachments`,
+        photo({ sizeBytes: limit + 1 }),
+      );
+      expect(tooLarge.status).toBe(400);
+      expect(tooLarge.body.details).toEqual([
+        { path: 'sizeBytes', message: `must be at most ${limit} bytes` },
+      ]);
+
+      const started = await api.post(`/work-logs/${workLog.id}/attachments`, photo());
+      ctx.storage.uploadTo(started.body.upload.url, new Uint8Array(limit + 1));
+      const completed = await api.post(`/attachments/${started.body.attachment.id}/complete`);
+      expect(completed.status).toBe(422);
+    });
+
+    it('hides a pending attachment from everybody but its uploader', async () => {
+      const author = await createUser(ctx.prisma, orgId());
+      await createMembership(ctx.prisma, orgId(), author.id, 'worker');
+      const workLog = await createWorkLog(ctx.prisma, orgId(), author.id);
+      const started = await ctx
+        .as(author.id)
+        .post(`/work-logs/${workLog.id}/attachments`, photo({ sizeBytes: 1 }));
+      const id = started.body.attachment.id;
+
+      expect((await ctx.as(author.id).get(`/attachments/${id}`)).status).toBe(200);
+      expect((await api.get(`/attachments/${id}`)).status).toBe(404);
+      expect((await api.get(`/work-logs/${workLog.id}/attachments`)).body.total).toBe(0);
+      expect((await api.post(`/attachments/${id}/complete`)).status).toBe(404);
+      expect((await api.post(`/attachments/${id}/upload-url`)).status).toBe(404);
+    });
+
+    it('renews the upload target of a pending attachment; refuses it once ready (409)', async () => {
+      const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
+      const started = await api.post(`/work-logs/${workLog.id}/attachments`, photo());
+      const id = started.body.attachment.id;
+
+      const renewed = await api.post(`/attachments/${id}/upload-url`);
+      expect(renewed.status).toBe(200);
+      expect(attachmentUploadSchema.safeParse(renewed.body).success).toBe(true);
+      expect(FakeFileStorage.keyOf(renewed.body.upload.url)).toBe(
+        FakeFileStorage.keyOf(started.body.upload.url),
+      );
+
+      const { completed } = await uploadPhoto(workLog.id, await makeJpeg());
+      expect(completed.status).toBe(200);
+      expect((await api.post(`/attachments/${completed.body.id}/upload-url`)).status).toBe(409);
+    });
+
+    it('answers 503 when the storage is unreachable, and creates nothing', async () => {
+      const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
+      const started = await api.post(`/work-logs/${workLog.id}/attachments`, photo());
+      ctx.storage.fail = true;
+
+      const start = await api.post(`/work-logs/${workLog.id}/attachments`, photo());
+      const complete = await api.post(`/attachments/${started.body.attachment.id}/complete`);
+      const renew = await api.post(`/attachments/${started.body.attachment.id}/upload-url`);
+
+      expect([start.status, complete.status, renew.status]).toEqual([503, 503, 503]);
+      expect(start.body.code).toBe('service_unavailable');
+      expect(await ctx.prisma.attachment.count()).toBe(1);
+      // Reading does not need the storage: signing a URL makes no network call.
+      expect((await api.get(`/attachments/${started.body.attachment.id}`)).status).toBe(200);
+    });
+
+    it(`refuses more than ${MAX_ATTACHMENTS_PER_WORK_LOG} attachments on one log (409)`, async () => {
+      const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
+      for (let index = 0; index < MAX_ATTACHMENTS_PER_WORK_LOG; index += 1) {
+        const response = await api.post(
+          `/work-logs/${workLog.id}/attachments`,
+          photo({ sizeBytes: 1 }),
+        );
+        expect(response.status).toBe(201);
+      }
+      const refused = await api.post(`/work-logs/${workLog.id}/attachments`, photo());
+      expect(refused.status).toBe(409);
     });
 
     it('lists the attachments of one work log, oldest first, and sorts by name or size', async () => {
@@ -967,19 +1197,12 @@ describe('work logs', () => {
         createWorkLog(ctx.prisma, orgId(), tenant.admin.id),
         createWorkLog(ctx.prisma, orgId(), tenant.admin.id),
       ]);
-      await api.post(
-        `/work-logs/${first.id}/attachments`,
-        file({ fileName: 'b.jpg', sizeBytes: 1 }),
-      );
-      await api.post(
-        `/work-logs/${first.id}/attachments`,
-        file({ fileName: 'a.pdf', mimeType: 'application/pdf', sizeBytes: 3 }),
-      );
-      await api.post(
-        `/work-logs/${first.id}/attachments`,
-        file({ fileName: 'c.png', mimeType: 'image/png', sizeBytes: 2 }),
-      );
-      await api.post(`/work-logs/${second.id}/attachments`, file({ fileName: 'other.jpg' }));
+      const start = (workLogId: string, extra: Record<string, unknown>) =>
+        api.post(`/work-logs/${workLogId}/attachments`, photo(extra));
+      await start(first.id, { fileName: 'b.jpg', sizeBytes: 1 });
+      await start(first.id, { fileName: 'a.png', mimeType: 'image/png', sizeBytes: 3 });
+      await start(first.id, { fileName: 'c.jpg', sizeBytes: 2 });
+      await start(second.id, { fileName: 'other.jpg' });
       const fileNames = async (query: Record<string, string | number> = {}) =>
         ((await api.get(`/work-logs/${first.id}/attachments`, query)).body.items as Json[]).map(
           (item) => item.fileName,
@@ -987,86 +1210,58 @@ describe('work logs', () => {
 
       const listed = await api.get(`/work-logs/${first.id}/attachments`);
       expect(listed.body).toMatchObject({ page: 1, pageSize: 25, total: 3 });
-      expect(await fileNames()).toEqual(['b.jpg', 'a.pdf', 'c.png']);
-      expect(await fileNames({ sort: 'fileName:asc' })).toEqual(['a.pdf', 'b.jpg', 'c.png']);
-      expect(await fileNames({ sort: 'sizeBytes:desc' })).toEqual(['a.pdf', 'c.png', 'b.jpg']);
-      expect(await fileNames({ pageSize: 2, page: 2 })).toEqual(['c.png']);
+      expect(await fileNames()).toEqual(['b.jpg', 'a.png', 'c.jpg']);
+      expect(await fileNames({ sort: 'fileName:asc' })).toEqual(['a.png', 'b.jpg', 'c.jpg']);
+      expect(await fileNames({ sort: 'sizeBytes:desc' })).toEqual(['a.png', 'c.jpg', 'b.jpg']);
+      expect(await fileNames({ pageSize: 2, page: 2 })).toEqual(['c.jpg']);
       expect((await api.get(`/work-logs/${second.id}/attachments`)).body.total).toBe(1);
     });
 
-    it('archives an attachment: gone from the default list, kept in the database', async () => {
+    it('archives an attachment: gone from the default list, kept with its bytes, no URLs', async () => {
       const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
-      const created = await api.post(`/work-logs/${workLog.id}/attachments`, file());
+      const { completed } = await uploadPhoto(workLog.id, await makeJpeg());
 
-      const archived = await api.post(`/attachments/${created.body.id}/archive`);
+      const archived = await api.post(`/attachments/${completed.body.id}/archive`);
 
       expect(archived.status).toBe(200);
+      expect(archived.body).toMatchObject({ url: null, thumbnailUrl: null, urlsExpireAt: null });
       expect(archived.body.archivedAt).not.toBeNull();
       expect((await api.get(`/work-logs/${workLog.id}/attachments`)).body.total).toBe(0);
       expect(
         (await api.get(`/work-logs/${workLog.id}/attachments`, { includeArchived: true })).body
           .total,
       ).toBe(1);
-      expect(await ctx.prisma.attachment.count()).toBe(1);
-      expect((await api.get(`/attachments/${created.body.id}`)).status).toBe(200);
-    });
-
-    it('rejects a storage key that is already used (409) and records nothing', async () => {
-      const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
-      const metadata = file();
-      expect((await api.post(`/work-logs/${workLog.id}/attachments`, metadata)).status).toBe(201);
-
-      const response = await api.post(`/work-logs/${workLog.id}/attachments`, {
-        ...metadata,
-        fileName: 'copy.jpg',
+      const row = await ctx.prisma.attachment.findUniqueOrThrow({
+        where: { id: completed.body.id },
       });
-
-      expect(response.status).toBe(409);
-      expect(response.body).toMatchObject({
-        code: 'conflict',
-        message: 'An attachment with this storage key already exists',
-        details: [{ path: 'storageKey', message: 'is already in use' }],
-      });
-      expect(await ctx.prisma.attachment.count()).toBe(1);
-      expect(await eventCounts(ctx.prisma)).toEqual({ audit: 1, outbox: 1 });
-    });
-
-    it('keeps a storage key taken even after its attachment is archived (409)', async () => {
-      const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
-      const metadata = file();
-      const created = await api.post(`/work-logs/${workLog.id}/attachments`, metadata);
-      await api.post(`/attachments/${created.body.id}/archive`);
-      expect((await api.post(`/work-logs/${workLog.id}/attachments`, metadata)).status).toBe(409);
+      expect(ctx.storage.objects.has(row.storageKey)).toBe(true);
     });
 
     it.each([
       ['a missing file name', { fileName: undefined }],
       ['a blank file name', { fileName: '   ' }],
-      ['a mime type that is not one', { mimeType: 'jpeg' }],
+      ['a type that is not an accepted image', { mimeType: 'application/pdf' }],
+      ['HEIC (converted to JPEG on the phone)', { mimeType: 'image/heic' }],
+      ['a zero size', { sizeBytes: 0 }],
       ['a negative size', { sizeBytes: -1 }],
       ['a fractional size', { sizeBytes: 1.5 }],
-      ['a size over 2 GiB', { sizeBytes: 2_147_483_648 }],
       ['a size sent as text', { sizeBytes: '1024' }],
-      ['an empty storage key', { storageKey: '' }],
+      ['a storage key chosen by the client', { storageKey: 'mine/photo.jpg' }],
+      ['an uploader chosen by the client', { uploadedById: randomUUID() }],
     ])('rejects %s (400)', async (_name, extra) => {
       const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
-      const response = await api.post(`/work-logs/${workLog.id}/attachments`, file(extra));
+      const response = await api.post(`/work-logs/${workLog.id}/attachments`, photo(extra));
       expect(response.status).toBe(400);
       expect(await ctx.prisma.attachment.count()).toBe(0);
-    });
-
-    it('accepts an empty file and the largest size', async () => {
-      const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
-      const path = `/work-logs/${workLog.id}/attachments`;
-      expect((await api.post(path, file({ sizeBytes: 0 }))).status).toBe(201);
-      expect((await api.post(path, file({ sizeBytes: 2_147_483_647 }))).status).toBe(201);
     });
 
     it('answers 404 for a work log or attachment that does not exist', async () => {
       const id = unknownId();
       expect((await api.get(`/work-logs/${id}/attachments`)).status).toBe(404);
-      expect((await api.post(`/work-logs/${id}/attachments`, file())).status).toBe(404);
+      expect((await api.post(`/work-logs/${id}/attachments`, photo())).status).toBe(404);
       expect((await api.get(`/attachments/${id}`)).status).toBe(404);
+      expect((await api.post(`/attachments/${id}/complete`)).status).toBe(404);
+      expect((await api.post(`/attachments/${id}/upload-url`)).status).toBe(404);
       expect((await api.post(`/attachments/${id}/archive`)).status).toBe(404);
     });
 
@@ -1074,50 +1269,8 @@ describe('work logs', () => {
       const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id, {
         archivedAt: at(),
       });
-      const response = await api.post(`/work-logs/${workLog.id}/attachments`, file());
+      const response = await api.post(`/work-logs/${workLog.id}/attachments`, photo());
       expect(response.status).toBe(409);
-      expect(await ctx.prisma.attachment.count()).toBe(0);
-    });
-
-    // Storage keys are unique per organization, so a 409 never reveals another tenant's keys.
-    it('accepts a storage key that another organization already uses (201), and still refuses it twice in one organization (409)', async () => {
-      const mine = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
-      const theirs = await createWorkLog(ctx.prisma, other.organization.id, other.admin.id);
-      const metadata = file({ storageKey: 'shared/photo.jpg' });
-      expect(
-        (await ctx.as(other.admin.id).post(`/work-logs/${theirs.id}/attachments`, metadata)).status,
-      ).toBe(201);
-
-      const response = await api.post(`/work-logs/${mine.id}/attachments`, metadata);
-
-      expect(response.status).toBe(201);
-      expect(response.body).toMatchObject({
-        organizationId: orgId(),
-        storageKey: 'shared/photo.jpg',
-      });
-      expect(await ctx.prisma.attachment.count({ where: { storageKey: 'shared/photo.jpg' } })).toBe(
-        2,
-      );
-
-      const again = await api.post(`/work-logs/${mine.id}/attachments`, metadata);
-      const theirsAgain = await ctx
-        .as(other.admin.id)
-        .post(`/work-logs/${theirs.id}/attachments`, metadata);
-      expect([again.status, theirsAgain.status]).toEqual([409, 409]);
-      expect(await ctx.prisma.attachment.count()).toBe(2);
-    });
-
-    it('rejects an unknown key in the attachment body (400)', async () => {
-      const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
-      const response = await api.post(
-        `/work-logs/${workLog.id}/attachments`,
-        file({ uploadedById: other.admin.id }),
-      );
-      expect(response.status).toBe(400);
-      expect(response.body.details).toContainEqual({
-        path: 'uploadedById',
-        message: 'is not a recognised field',
-      });
       expect(await ctx.prisma.attachment.count()).toBe(0);
     });
   });

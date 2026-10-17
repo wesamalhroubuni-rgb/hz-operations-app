@@ -46,6 +46,33 @@ export function weakSecretReason(secret: string): string | null {
   return null;
 }
 
+/** A required http(s) URL, without a trailing slash. */
+function httpUrlSetting() {
+  return requiredString
+    .refine(
+      (value) => {
+        try {
+          return ['http:', 'https:'].includes(new URL(value).protocol);
+        } catch {
+          return false;
+        }
+      },
+      { error: 'must be an http(s) URL' },
+    )
+    .transform((value) => value.replace(/\/+$/, ''));
+}
+
+/** An optional true/false setting. An empty value counts as not set. */
+function booleanSetting(defaultValue: boolean) {
+  return z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value === undefined || value === '' ? String(defaultValue) : value))
+    .pipe(z.enum(['true', 'false'], { error: 'must be true or false' }))
+    .transform((value) => value === 'true');
+}
+
 export const envSchema = z
   .object({
     /**
@@ -132,6 +159,40 @@ export const envSchema = z
         { error: 'must be an http(s) URL' },
       )
       .transform((value) => value.replace(/\/+$/, '')),
+
+    // --- File storage (S3-compatible: MinIO in development) ---
+    /** Where the API itself reaches the storage (server to server). */
+    STORAGE_ENDPOINT: httpUrlSetting(),
+    /**
+     * The address put into signed upload and download URLs: it must be reachable by the phones and
+     * browsers that use them (in a phone test, the PC's hotspot address).
+     */
+    STORAGE_PUBLIC_ENDPOINT: httpUrlSetting(),
+    STORAGE_REGION: requiredString,
+    STORAGE_BUCKET: requiredString.regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, {
+      error: 'must be a valid bucket name (lower-case letters, digits, dots, dashes)',
+    }),
+    STORAGE_ACCESS_KEY_ID: requiredString,
+    STORAGE_SECRET_ACCESS_KEY: requiredString,
+    /** true for MinIO and most S3-compatible services; false for AWS S3 virtual-host style. */
+    STORAGE_FORCE_PATH_STYLE: booleanSetting(true),
+    /** Largest photo accepted, in bytes (default 10 MiB). */
+    UPLOAD_MAX_BYTES: integerSetting(10 * 1024 * 1024, 1024, 25 * 1024 * 1024),
+    UPLOAD_URL_TTL_SECONDS: integerSetting(300, 30, 3600),
+    DOWNLOAD_URL_TTL_SECONDS: integerSetting(300, 30, 3600),
+
+    // --- Notifications ---
+    /** Optional Expo access token (required only if "enhanced push security" is on in Expo). */
+    EXPO_ACCESS_TOKEN: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => (value ? value : undefined)),
+    /** Sends push notifications through Expo. The in-app list works either way. */
+    PUSH_ENABLED: booleanSetting(true),
+    /** Runs the outbox consumer that turns domain events into notifications. */
+    OUTBOX_CONSUMER_ENABLED: booleanSetting(true),
+    OUTBOX_POLL_INTERVAL_MS: integerSetting(2000, 200, 60_000),
   })
   .superRefine((env, ctx) => {
     if (env.AUTH_SESSION_ABSOLUTE_TTL_DAYS < env.AUTH_REFRESH_TOKEN_TTL_DAYS) {
@@ -149,6 +210,17 @@ export const envSchema = z
     const weak = weakSecretReason(env.AUTH_ACCESS_TOKEN_SECRET);
     if (weak) {
       ctx.addIssue({ code: 'custom', path: ['AUTH_ACCESS_TOKEN_SECRET'], message: weak });
+    }
+    if (!env.STORAGE_PUBLIC_ENDPOINT.startsWith('https://')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['STORAGE_PUBLIC_ENDPOINT'],
+        message: 'must be an https:// URL in production',
+      });
+    }
+    const storageSecret = weakSecretReason(env.STORAGE_SECRET_ACCESS_KEY);
+    if (storageSecret) {
+      ctx.addIssue({ code: 'custom', path: ['STORAGE_SECRET_ACCESS_KEY'], message: storageSecret });
     }
     if (!env.WEB_APP_URL.startsWith('https://')) {
       ctx.addIssue({

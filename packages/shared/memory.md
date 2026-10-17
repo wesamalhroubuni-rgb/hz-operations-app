@@ -1,6 +1,6 @@
 # packages/shared memory
 
-Package `@ops/shared`. Last updated: 2026-10-16.
+Package `@ops/shared`. Last updated: 2026-10-17.
 
 ## Purpose
 
@@ -10,20 +10,49 @@ and wording that must behave the same on the server and in both apps, and the de
 
 ## Current state
 
-Five areas plus the health schema, all re-exported from `src/index.ts`.
+Six areas plus the health schema, all re-exported from `src/index.ts`.
 
-| Area              | Contents                                                                                                                                                                                                                                                                                     |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/health.ts`   | `healthResponseSchema` / `HealthResponse`.                                                                                                                                                                                                                                                   |
-| `src/common/`     | `apiErrorSchema` and `API_ERROR_CODES` (now including `rate_limited`); pagination, sort, id, date, and query-boolean schemas.                                                                                                                                                                |
-| `src/domain/`     | One file per resource (`organization`, `users`, `memberships`, `sites`, `teams`, `log-types`, `tasks`, `work-logs`, `attachments`, `scope`), plus `enums.ts` (with `roleRank`, `rolesHighestFirst`), `custom-fields.ts`, and `shared.ts`.                                                    |
-| `src/platform/`   | `auth.ts` (the sign-in wire contract), `audit.ts`, `outbox.ts`. `AUDIT_REDACTED`.                                                                                                                                                                                                            |
-| `src/theme/`      | `tokens.ts`, `contrast.ts`, `css.ts`.                                                                                                                                                                                                                                                        |
-| `src/api-client/` | `client.ts` (transport with auth hooks and refresh-once, `ApiResult`, `CSRF_HEADER`, `REQUEST_ID_HEADER`), `create-api-client.ts` (`createApiClient`), `auth-session.ts` (`createAuthSessionManager`), `auth-text.ts`, `auth-forms.ts`, `health-monitor.ts`, `health-status.ts`, `index.ts`. |
+| Area              | Contents                                                                                                                                                                                                                                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/health.ts`   | `healthResponseSchema` / `HealthResponse`.                                                                                                                                                                                                                                                                                     |
+| `src/common/`     | `apiErrorSchema` and `API_ERROR_CODES` (now including `rate_limited`); pagination, sort, id, date, and query-boolean schemas.                                                                                                                                                                                                  |
+| `src/domain/`     | One file per resource (`organization`, `users`, `memberships`, `sites`, `teams`, `log-types`, `tasks`, `work-logs`, `attachments`, `scope`), plus `enums.ts` (with `roleRank`, `rolesHighestFirst`), `custom-fields.ts`, and `shared.ts`.                                                                                      |
+| `src/platform/`   | `auth.ts` (the sign-in wire contract), `notifications.ts` (Phase 4), `audit.ts`, `outbox.ts`. `AUDIT_REDACTED`.                                                                                                                                                                                                                |
+| `src/forms/`      | `custom-field-form.ts` (Phase 4): form descriptors, initial values, reconciling with a changed log type, number parsing, conversion to wire values through `validateCustomFieldValues`, mapping API error details back to fields.                                                                                              |
+| `src/theme/`      | `tokens.ts`, `contrast.ts`, `css.ts`.                                                                                                                                                                                                                                                                                          |
+| `src/api-client/` | `client.ts` (transport with auth hooks and refresh-once, `ApiResult`, `CSRF_HEADER`, `REQUEST_ID_HEADER`), `create-api-client.ts` (`createApiClient`), `auth-session.ts` (`createAuthSessionManager`), `auth-text.ts`, `auth-forms.ts`, `attachment-upload.ts` (Phase 4), `health-monitor.ts`, `health-status.ts`, `index.ts`. |
 
-546 unit tests in 11 files, confirmed on 2026-10-16. `DEV_USER_HEADER` was removed in Phase 3.
+650 unit tests in 13 files, confirmed on 2026-10-17.
 
-## Phase 3 contract changes
+## Phase 4 contract changes
+
+- **Attachments** (`domain/attachments.ts`): `ATTACHMENT_MIME_TYPES` (`image/jpeg`, `image/png`),
+  `MAX_ATTACHMENT_SIZE_BYTES` (25 MiB, the schema's ceiling; the API's own limit is
+  `UPLOAD_MAX_BYTES`), `ATTACHMENT_STATUSES` (`pending`, `ready`; must match the Prisma enum).
+  `attachmentSchema` has **no storage key**; it has `status`, `width`, `height`, `completedAt`,
+  and signed `url`, `thumbnailUrl`, `urlsExpireAt` (null unless ready). Request body
+  `startAttachmentUploadSchema` `{ fileName, mimeType, sizeBytes }`; response
+  `attachmentUploadSchema` `{ attachment, upload: { url, method: 'PUT', headers, expiresAt } }`.
+  Endpoints: `startUpload(workLogId, body)`, `renewUpload(id)`, `complete(id)`, plus list, get,
+  archive.
+- **Notifications** (`platform/notifications.ts`): `notificationSchema` (`AppNotification`),
+  `listNotificationsQuerySchema` (`unread`), `notificationListSchema` (adds `unreadCount`),
+  `PUSH_PLATFORMS` (`ios`, `android`; must match the Prisma enum), `registerPushTokenSchema`
+  `{ token, platform }`, `notificationsEndpoints` (`list`, `markRead`, `markAllRead`,
+  `registerPushToken`, `unregisterPushToken`), wired into `createApiClient` as `notifications`.
+- **Tasks**: `taskSchema.statusReason`; `changeTaskStatusSchema` `{ status, reason? }`, reason
+  required for `blocked` (at most `TASK_STATUS_REASON_MAX_LENGTH`, 1000).
+- **Work logs**: `workLogSchema.review` `{ reviewedById, reviewedAt, note } | null`;
+  `changeWorkLogStatusSchema` `{ status, note? }`, note required for `rejected` and accepted only
+  for `approved` / `rejected` (at most `WORK_LOG_REVIEW_NOTE_MAX_LENGTH`, 2000).
+- **Upload helper** (`api-client/attachment-upload.ts`): `uploadAttachment(api, { workLogId, file,
+put, onProgress, checkpoint })` runs start, PUT, and complete and returns an
+  `AttachmentUploadResult` with an `UploadCheckpoint`, so a retry renews the same pending
+  attachment and skips the PUT when only `complete` failed. The platform supplies the PUT
+  (`UploadPut`). `isRetryableApiFailure`, `isRetryablePutStatus`, `uploadRetryDelayMs` (2, 4, 8 s,
+  up to 20% jitter, 3 attempts).
+
+## Phase 3 contract changes (still current)
 
 - **Users** (`domain/users.ts`): `email` is optional and `username` new; a user needs at least one
   of email, phone, username (`hasLoginIdentifier`). Responses are a discriminated union on
@@ -61,6 +90,9 @@ Five areas plus the health schema, all re-exported from `src/index.ts`.
 | `src/api-client/auth-session.ts`      | `createAuthSessionManager` (web and mobile modes), `TokenStorage`, `AuthState`, `signInFailureReason`, `setPasswordFailure`.                                        |
 | `src/api-client/auth-text.ts`         | Every sign-in, activation, and sign-out sentence (`AUTH_TEXT`, `AUTH_FAILURE_MESSAGES`, `AUTH_NOTICE_MESSAGES`) and `roleLabel`.                                    |
 | `src/api-client/auth-forms.ts`        | `validateSignInForm`, `validateSetPasswordForm`, `newPasswordProblem`, `isFormValid`.                                                                               |
+| `src/api-client/attachment-upload.ts` | `uploadAttachment` (resumable start, PUT, complete) and the retry helpers.                                                                                          |
+| `src/forms/custom-field-form.ts`      | The custom-field form logic the mobile app (and later the web) generates forms from.                                                                                |
+| `src/platform/notifications.ts`       | Notification and push-token schemas and endpoints.                                                                                                                  |
 | `src/api-client/health-monitor.ts`    | `createHealthMonitor` with retries after 2, 4, 8, 16 seconds.                                                                                                       |
 | `src/theme/tokens.ts`                 | `darkTheme`, `colors`, `spacing`, `radii`, `fontSizes`, `fontWeights`, `CONTRAST_REQUIREMENTS`.                                                                     |
 | `tsconfig.json`                       | Extends `@ops/config/tsconfig/library.json`. Adds the `DOM` lib, only for `fetch`, `AbortController`, and timers.                                                   |
@@ -131,12 +163,14 @@ const logs = await session.client.workLogs.list({ sort: 'occurredAt:desc' });
 - 64-bit integers travel as decimal strings.
 - Logic belongs here only when the API and a client must behave identically (validation,
   identifier normalisation, wording) or when both clients need it (the API client, the session
-  manager, the health monitor). Authorization rules stay in the API.
+  manager, the health monitor, the upload helper, the custom-field form logic). Authorization
+  rules stay in the API.
+- `ATTACHMENT_STATUSES` and `PUSH_PLATFORMS` must match the Prisma enums, like `enums.ts`.
 - No runtime dependency other than Zod. Only `fetch`, `AbortController`, and timers; no other DOM
   API, no Node API, no React, no React Native.
-- `src/common/`, `src/platform/`, `src/theme/`, the transport, and the session manager are
-  product-neutral; `src/domain/` and the resource list in `createApiClient` are the Operations
-  domain.
+- `src/common/`, `src/platform/`, `src/theme/`, the transport, the session manager, and the upload
+  helper are product-neutral; `src/domain/`, `src/forms/`, and the resource list in
+  `createApiClient` are the Operations domain.
 - Tests are `*.test.ts` next to the code, run with Vitest.
 - Changing a schema changes the contract for the API and both clients at once. Run the root
   `pnpm typecheck`, `pnpm test`, and `pnpm test:integration` after any change.

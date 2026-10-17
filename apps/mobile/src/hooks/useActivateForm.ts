@@ -8,6 +8,7 @@ import { useRef, useState } from 'react';
 import type { TextInput } from 'react-native';
 
 import { useAuth } from '../auth/AuthProvider';
+import { translateAuthErrors } from '../i18n/authText';
 
 /** State of the activation (and password reset) form. `onDone` runs once the password is set. */
 export function useActivateForm(onDone: () => void) {
@@ -27,7 +28,7 @@ export function useActivateForm(onDone: () => void) {
       return;
     }
     const found = validateSetPasswordForm({ code, password, confirmation });
-    setErrors(found);
+    setErrors(translateAuthErrors(found));
     setFailure(null);
     if (!isFormValid(found)) {
       const first = found.code ? codeRef : found.password ? passwordRef : confirmationRef;

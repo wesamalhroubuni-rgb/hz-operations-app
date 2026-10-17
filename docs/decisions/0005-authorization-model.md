@@ -1,6 +1,8 @@
 # ADR-0005: Authorization model and the 404-versus-403 rule
 
-- **Status**: Accepted
+- **Status**: Accepted; amended in part by [ADR-0006](0006-file-storage-and-upload-flow.md)
+  (2026-10-17: a `pending` attachment is visible only to its uploader; the API generates
+  attachment storage keys, which resolves F5 below)
 - **Date**: 2026-10-14
 - **Phase**: 3 (Authentication & permissions)
 - **Amends**: [ADR-0002](0002-flexible-organization-and-scope-model.md) in part (manager and

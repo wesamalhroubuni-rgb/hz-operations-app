@@ -59,6 +59,14 @@ export const workLogSchema = z.object({
     })
     .nullable(),
   status: workLogStatusSchema,
+  /** The last approval or rejection: who, when, and the note (the rejection reason). */
+  review: z
+    .object({
+      reviewedById: idSchema,
+      reviewedAt: isoDateTimeSchema,
+      note: z.string().nullable(),
+    })
+    .nullable(),
   source: workLogSourceSchema,
   /** Reserved for AI-derived data. Always null today. */
   aiMetadata: z.record(z.string(), z.unknown()).nullable(),
@@ -118,7 +126,25 @@ export type UpdateWorkLog = z.infer<typeof updateWorkLogSchema>;
  * Who may make which move is decided by the API: the author moves a log between `draft` and
  * `submitted` and resubmits a rejected one; a reviewer approves, rejects and reopens.
  */
-export const changeWorkLogStatusSchema = z.strictObject({ status: workLogStatusSchema });
+export const WORK_LOG_REVIEW_NOTE_MAX_LENGTH = 2000;
+
+/**
+ * A status change. `note` is the reviewer's note: required when rejecting (it is the rejection
+ * reason the author sees), optional when approving, not accepted otherwise.
+ */
+export const changeWorkLogStatusSchema = z
+  .strictObject({
+    status: workLogStatusSchema,
+    note: z.string().trim().min(1).max(WORK_LOG_REVIEW_NOTE_MAX_LENGTH).optional(),
+  })
+  .refine((body) => body.status !== 'rejected' || body.note !== undefined, {
+    path: ['note'],
+    error: 'is required when rejecting a log',
+  })
+  .refine(
+    (body) => body.note === undefined || body.status === 'approved' || body.status === 'rejected',
+    { path: ['note'], error: 'is only accepted when approving or rejecting' },
+  );
 export type ChangeWorkLogStatus = z.infer<typeof changeWorkLogStatusSchema>;
 
 export const WORK_LOG_SORT_FIELDS = ['occurredAt', 'createdAt'] as const;

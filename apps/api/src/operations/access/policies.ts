@@ -117,7 +117,9 @@ export const POLICIES = {
   },
   'attachment.create': {
     roles: EVERYONE,
-    description: 'Attach a file to a work log, under the same rule as archiving the log.',
+    description:
+      'Upload a photo to a work log (start, renew the upload URL, complete), under the same ' +
+      'rule as archiving the log.',
   },
   'attachment.archive': {
     roles: EVERYONE,

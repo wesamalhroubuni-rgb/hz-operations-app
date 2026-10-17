@@ -33,8 +33,10 @@ import {
 } from '../../src/platform/notifications/notification-sender';
 import { PlatformModule } from '../../src/platform/platform.module';
 import { createRequestContextMiddleware } from '../../src/platform/request-context/request-context.middleware';
+import { FILE_STORAGE, type FileStorage } from '../../src/platform/storage/file-storage';
 import { PrismaModule } from '../../src/prisma/prisma.module';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { FakeFileStorage } from './fake-file-storage';
 import { redirectDatabaseUrl, truncateAll, type TestDatabaseTarget } from './test-database';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- response bodies are JSON of many shapes; each test asserts the fields it reads
@@ -213,11 +215,17 @@ export interface TestApp {
   clock: TestClock;
   /** What the notification sender was asked to send; `lastCode(userId)` gives the code. */
   notifications: FakeNotificationSender;
+  /**
+   * The in-memory file storage bound to `FILE_STORAGE` (unless `options.storage` replaced it):
+   * `storage.uploadTo(upload.url, bytes)` plays the client's PUT; `storage.fail = true` makes
+   * the storage unreachable.
+   */
+  storage: FakeFileStorage;
   /** The rate limiter of the app. `reset()` empties it; it is also emptied by `reset()` below. */
   rateLimiter: InMemoryRateLimiter;
   /** The settings the auth module runs with (TTL values, limits, allowed origins). */
   authSettings: AuthSettings;
-  /** Empties every table of the test database, and the harness's sessions, clock and fakes. */
+  /** Empties every table of the test database, and the harness's sessions, clock and fakes (storage included). */
   reset(): Promise<void>;
   close(): Promise<void>;
 }
@@ -230,8 +238,13 @@ export interface TestAppOptions {
    * `NODE_ENV: 'production'`, ...). Numbers, not strings: nothing parses them.
    */
   config?: Record<string, unknown>;
-  /** Hook to override providers before the module compiles. */
+  /**
+   * Hook to override providers before the module compiles. It runs after the harness's own
+   * overrides, so it may replace any of them (`builder.overrideProvider(FILE_STORAGE)...`).
+   */
   configure?: (builder: TestingModuleBuilder) => TestingModuleBuilder;
+  /** File storage to bind instead of the in-memory fake (for example a real `S3FileStorage`). */
+  storage?: FileStorage;
   /** Logger of the application (default: none). To capture what the API logs. */
   logger?: LoggerService;
 }
@@ -444,6 +457,21 @@ export async function startTestApp(options: TestAppOptions = {}): Promise<TestAp
     AUTH_RESET_CODE_TTL_MINUTES: 60,
     AUTH_MAX_FAILED_LOGINS: 5,
     AUTH_LOCKOUT_MINUTES: 15,
+    // File storage: the fake below ignores the connection settings; the limits are real.
+    STORAGE_ENDPOINT: 'http://127.0.0.1:9',
+    STORAGE_PUBLIC_ENDPOINT: 'http://127.0.0.1:9',
+    STORAGE_REGION: 'us-east-1',
+    STORAGE_BUCKET: 'hz-attachments-test',
+    STORAGE_ACCESS_KEY_ID: 'integration-tests',
+    STORAGE_SECRET_ACCESS_KEY: 'integration-tests-only-not-a-secret',
+    STORAGE_FORCE_PATH_STYLE: true,
+    UPLOAD_MAX_BYTES: 10 * 1024 * 1024,
+    UPLOAD_URL_TTL_SECONDS: 300,
+    DOWNLOAD_URL_TTL_SECONDS: 300,
+    // Background work stays off unless a test turns it on.
+    OUTBOX_CONSUMER_ENABLED: false,
+    OUTBOX_POLL_INTERVAL_MS: 200,
+    PUSH_ENABLED: false,
     ...options.config,
   };
   if (config.DATABASE_URL !== target.url) {
@@ -460,6 +488,7 @@ export async function startTestApp(options: TestAppOptions = {}): Promise<TestAp
   const clock = new TestClock();
   const notifications = new FakeNotificationSender();
   const rateLimiter = new InMemoryRateLimiter(clock);
+  const storage = new FakeFileStorage();
 
   const builder = Test.createTestingModule({
     imports: [TestConfigModule, PrismaModule, PlatformModule, HealthModule, OperationsModule],
@@ -476,7 +505,9 @@ export async function startTestApp(options: TestAppOptions = {}): Promise<TestAp
     .useValue(new PasswordHasher({ memoryCost: 1024, timeCost: 1 }))
     // The access rules (the work-log edit window) run on the same test clock.
     .overrideProvider(AccessClock)
-    .useValue(clock);
+    .useValue(clock)
+    .overrideProvider(FILE_STORAGE)
+    .useValue(options.storage ?? storage);
   const moduleRef = await (options.configure ? options.configure(builder) : builder).compile();
 
   const app: INestApplication = moduleRef.createNestApplication({
@@ -578,12 +609,14 @@ export async function startTestApp(options: TestAppOptions = {}): Promise<TestAp
     },
     clock,
     notifications,
+    storage,
     rateLimiter,
     authSettings,
     reset: async () => {
       harnessSessions.clear();
       clock.reset();
       notifications.clear();
+      storage.clear();
       await rateLimiter.reset();
       await truncateAll(prisma, target);
     },

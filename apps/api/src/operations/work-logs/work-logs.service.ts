@@ -3,6 +3,7 @@ import {
   customFieldValuesSchema,
   validateCustomFieldValues,
   WORK_LOG_MAX_FUTURE_MS,
+  type ChangeWorkLogStatus,
   workLogEditWindowHoursOf,
   type CreateWorkLog,
   type CustomFieldValues,
@@ -11,7 +12,6 @@ import {
   type UpdateWorkLog,
   type WorkLog,
   type WorkLogLocationInput,
-  type WorkLogStatus,
 } from '@ops/shared';
 import type { Prisma, WorkLog as WorkLogRow } from '../../generated/prisma/client';
 import { ApiException, orderByArgs, pageArgs, paginated } from '../../platform/http';
@@ -56,6 +56,10 @@ export function toWorkLog(row: WorkLogRow): WorkLog {
         ? { latitude: row.latitude, longitude: row.longitude, accuracy: row.locationAccuracy }
         : null,
     status: row.status,
+    review:
+      row.reviewedById !== null && row.reviewedAt !== null
+        ? { reviewedById: row.reviewedById, reviewedAt: iso(row.reviewedAt), note: row.reviewNote }
+        : null,
     source: row.source,
     aiMetadata: (row.aiMetadata ?? null) as WorkLog['aiMetadata'],
     createdAt: iso(row.createdAt),
@@ -283,15 +287,28 @@ export class WorkLogsService {
    * Moves a log to another status, per the transition table (`WORK_LOG_TRANSITIONS`): the
    * author between draft and submitted, a reviewer to approved or rejected and back, never
    * their own log. Setting the status the log already has changes and records nothing.
+   *
+   * Approving or rejecting records the reviewer, the time and the note (`review`; the schema
+   * requires a note for `rejected` and accepts one only for approved/rejected). Going back to
+   * submitted (or draft) clears them.
+   *
+   * Outbox payload of `work_log.status_changed`: `{ from, to, note, changedById, authorId,
+   * reviewedById, workLog }` (`reviewedById` and `note` are null unless the new status is
+   * approved or rejected).
    */
-  async changeStatus(id: string, status: WorkLogStatus): Promise<WorkLog> {
+  async changeStatus(id: string, input: ChangeWorkLogStatus): Promise<WorkLog> {
     const context = await this.access.context();
     const { organizationId } = context;
+    const { status } = input;
     const now = this.clock.now();
     return this.prisma.$transaction(async (tx) => {
       const row = await this.find(tx, context, id);
       const before = toWorkLog(row);
-      if (before.status === status) {
+      const reviewed = status === 'approved' || status === 'rejected';
+      const note = reviewed ? (input.note ?? null) : null;
+      // The same status is a no-op, unless a reviewer gives a different note for the same
+      // decision (a corrected rejection reason): that updates the review, as a task's reason does.
+      if (before.status === status && (!reviewed || note === (before.review?.note ?? null))) {
         return before;
       }
       const editWindowHours = await loadWorkLogEditWindowHours(tx, organizationId);
@@ -301,7 +318,18 @@ export class WorkLogsService {
         id,
       );
       assertNotArchived(row);
-      const workLog = toWorkLog(await tx.workLog.update({ where: { id }, data: { status } }));
+      const changedById = authorOf(context);
+      const workLog = toWorkLog(
+        await tx.workLog.update({
+          where: { id },
+          data: {
+            status,
+            reviewedById: reviewed ? changedById : null,
+            reviewedAt: reviewed ? now : null,
+            reviewNote: note,
+          },
+        }),
+      );
       await this.changes.record(tx, {
         organizationId,
         entityType: 'work_log',
@@ -309,7 +337,14 @@ export class WorkLogsService {
         entityId: id,
         before,
         after: workLog,
-        extra: { from: before.status, to: status },
+        extra: {
+          from: before.status,
+          to: status,
+          note,
+          changedById,
+          authorId: workLog.authorId,
+          reviewedById: reviewed ? changedById : null,
+        },
       });
       return workLog;
     });

@@ -9,9 +9,6 @@ import { Platform } from 'react-native';
 import { createSecureTokenStorage } from '../auth/token-storage';
 import { env } from '../config/env';
 
-/** How long the status card waits for GET /health before calling it a timeout. */
-export const HEALTH_TIMEOUT_MS = 5000;
-
 /**
  * The label of this device in the user's list of sessions. A constant per platform: the real
  * model name would need another native module (expo-device) for very little gain.

@@ -541,9 +541,15 @@ describe('audit and outbox in the transaction of the change', () => {
     });
 
     it('setting the status a task already has records nothing and changes nothing', async () => {
-      const task = await createTask(ctx.prisma, orgId(), tenant.admin.id, { status: 'blocked' });
+      const task = await createTask(ctx.prisma, orgId(), tenant.admin.id, {
+        status: 'blocked',
+        statusReason: 'Waiting for parts',
+      });
 
-      const response = await api.patch(`/tasks/${task.id}/status`, { status: 'blocked' });
+      const response = await api.patch(`/tasks/${task.id}/status`, {
+        status: 'blocked',
+        reason: 'Waiting for parts',
+      });
 
       expect(response.status).toBe(200);
       expect(response.body.updatedAt).toBe(task.updatedAt.toISOString());

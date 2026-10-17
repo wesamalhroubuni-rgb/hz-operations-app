@@ -39,6 +39,11 @@ export const env = {
    * soon as more than one organization exists; null when not configured.
    */
   organizationSlug: process.env.EXPO_PUBLIC_ORGANIZATION_SLUG?.trim() || null,
+  /**
+   * EAS project id, needed for an Expo push token (`eas init` prints it). Null when not set: the
+   * app then runs without push, and the in-app notification list still works.
+   */
+  easProjectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID?.trim() || null,
 } as const;
 
 export const MISSING_API_URL_MESSAGE =

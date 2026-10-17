@@ -3,6 +3,7 @@ import { logLevelsFrom, validateEnv, weakSecretReason } from './env';
 // Example values only: none of these is a real credential or secret.
 const STRONG_SECRET = 'kT9vB2xQ7mLr4ZpW8nYc3HdF6sJg1AeU5oXi0NqVbM';
 const PLACEHOLDER_SECRET = 'dev_only_placeholder_change_me_before_any_real_use';
+const STORAGE_SECRET = 'Qw7Zr2Lp9Xv4Tn8Bk3Hs6Jd1Fm5Gc0Ya';
 
 // A complete, valid environment without NODE_ENV.
 const BASE = {
@@ -14,6 +15,12 @@ const BASE = {
   LOG_LEVEL: 'log',
   AUTH_ACCESS_TOKEN_SECRET: STRONG_SECRET,
   WEB_APP_URL: 'https://app.example.com/',
+  STORAGE_ENDPOINT: 'http://127.0.0.1:9000',
+  STORAGE_PUBLIC_ENDPOINT: 'https://files.example.com',
+  STORAGE_REGION: 'us-east-1',
+  STORAGE_BUCKET: 'hz-attachments',
+  STORAGE_ACCESS_KEY_ID: 'example-access-key',
+  STORAGE_SECRET_ACCESS_KEY: STORAGE_SECRET,
 };
 
 const REQUIRED = Object.keys(BASE);
@@ -124,6 +131,33 @@ describe('validateEnv', () => {
     );
   });
 
+  describe('the file storage settings', () => {
+    it('requires an https STORAGE_PUBLIC_ENDPOINT in production, and allows http in development', () => {
+      const http = { ...BASE, STORAGE_PUBLIC_ENDPOINT: 'http://192.168.1.20:9000' };
+      expect(messageOf({ ...http, NODE_ENV: 'production' })).toContain(
+        '- STORAGE_PUBLIC_ENDPOINT: must be an https:// URL in production',
+      );
+      expect(validateEnv({ ...http, NODE_ENV: 'development' }).STORAGE_PUBLIC_ENDPOINT).toBe(
+        'http://192.168.1.20:9000',
+      );
+    });
+
+    it('refuses a placeholder STORAGE_SECRET_ACCESS_KEY in production only', () => {
+      const placeholder = { ...BASE, STORAGE_SECRET_ACCESS_KEY: PLACEHOLDER_SECRET };
+      expect(messageOf({ ...placeholder, NODE_ENV: 'production' })).toContain(
+        '- STORAGE_SECRET_ACCESS_KEY:',
+      );
+      expect(messageOf({ ...placeholder, NODE_ENV: 'development' })).toBe('');
+    });
+
+    it('refuses a bucket name S3 would not accept and an upload limit above 25 MiB', () => {
+      expect(messageOf({ ...BASE, STORAGE_BUCKET: 'Bad_Bucket' })).toContain('- STORAGE_BUCKET:');
+      expect(messageOf({ ...BASE, UPLOAD_MAX_BYTES: String(26 * 1024 * 1024) })).toContain(
+        '- UPLOAD_MAX_BYTES:',
+      );
+    });
+  });
+
   describe('the optional auth settings', () => {
     it.each([
       ['7', 7],
@@ -158,6 +192,20 @@ describe('validateEnv', () => {
         AUTH_LOCKOUT_MINUTES: 15,
         AUTH_COOKIE_DOMAIN: undefined,
         WEB_APP_URL: 'https://app.example.com',
+        STORAGE_ENDPOINT: 'http://127.0.0.1:9000',
+        STORAGE_PUBLIC_ENDPOINT: 'https://files.example.com',
+        STORAGE_REGION: 'us-east-1',
+        STORAGE_BUCKET: 'hz-attachments',
+        STORAGE_ACCESS_KEY_ID: 'example-access-key',
+        STORAGE_SECRET_ACCESS_KEY: STORAGE_SECRET,
+        STORAGE_FORCE_PATH_STYLE: true,
+        UPLOAD_MAX_BYTES: 10 * 1024 * 1024,
+        UPLOAD_URL_TTL_SECONDS: 300,
+        DOWNLOAD_URL_TTL_SECONDS: 300,
+        EXPO_ACCESS_TOKEN: undefined,
+        PUSH_ENABLED: true,
+        OUTBOX_CONSUMER_ENABLED: true,
+        OUTBOX_POLL_INTERVAL_MS: 2000,
       });
     });
 

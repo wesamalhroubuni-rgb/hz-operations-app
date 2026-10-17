@@ -1,3 +1,4 @@
+export * from './attachment-upload.js';
 export * from './auth-forms.js';
 export * from './auth-session.js';
 export * from './auth-text.js';

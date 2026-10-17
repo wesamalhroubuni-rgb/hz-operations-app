@@ -42,7 +42,6 @@ describe('permissions: the cases that matter most', () => {
             fileName: 'x.jpg',
             mimeType: 'image/jpeg',
             sizeBytes: 1,
-            storageKey: `x/${randomUUID()}`,
           })
         ).status,
       };
@@ -161,6 +160,7 @@ describe('permissions: the cases that matter most', () => {
         });
         const reject = await api(viewer).patch(`/work-logs/${own.id}/status`, {
           status: 'rejected',
+          note: 'Not acceptable',
         });
         expect([approve.status, reject.status]).toEqual([403, 403]);
         expect(approve.body.message).toBe('You cannot review your own work log');
@@ -360,7 +360,6 @@ describe('permissions: the cases that matter most', () => {
           fileName: 'a.jpg',
           mimeType: 'image/jpeg',
           sizeBytes: 1,
-          storageKey: `a/${randomUUID()}`,
           uploadedById: someone,
         }),
       ]);
@@ -384,7 +383,6 @@ describe('permissions: the cases that matter most', () => {
         fileName: 'a.jpg',
         mimeType: 'image/jpeg',
         sizeBytes: 1,
-        storageKey: `a/${randomUUID()}`,
       });
       expect([log.status, task.status, attachment.status]).toEqual([201, 201, 201]);
       expect(
@@ -394,8 +392,11 @@ describe('permissions: the cases that matter most', () => {
         (await ctx.prisma.task.findUniqueOrThrow({ where: { id: task.body.id } })).createdById,
       ).toBe(w.users.supS1);
       expect(
-        (await ctx.prisma.attachment.findUniqueOrThrow({ where: { id: attachment.body.id } }))
-          .uploadedById,
+        (
+          await ctx.prisma.attachment.findUniqueOrThrow({
+            where: { id: attachment.body.attachment.id },
+          })
+        ).uploadedById,
       ).toBe(w.users.supS1);
     });
 
@@ -559,7 +560,6 @@ describe('permissions: the cases that matter most', () => {
           fileName: 'a.jpg',
           mimeType: 'image/jpeg',
           sizeBytes: 1,
-          storageKey: `w/${randomUUID()}`,
         })
       ).status,
     });
@@ -611,7 +611,6 @@ describe('permissions: the cases that matter most', () => {
             fileName: 'a.jpg',
             mimeType: 'image/jpeg',
             sizeBytes: 1,
-            storageKey: `w/${randomUUID()}`,
           })
         ).status,
       };
@@ -665,7 +664,8 @@ describe('permissions: the cases that matter most', () => {
     it('cannot cancel, nor bring a cancelled task back (403); can move it otherwise', async () => {
       const id = await w.freshTask('task1');
       for (const status of ['in_progress', 'blocked', 'done', 'todo']) {
-        expect((await api('wA').patch(`/tasks/${id}/status`, { status })).status).toBe(200);
+        const body = status === 'blocked' ? { status, reason: 'Waiting for parts' } : { status };
+        expect((await api('wA').patch(`/tasks/${id}/status`, body)).status).toBe(200);
       }
       expect((await api('wA').patch(`/tasks/${id}/status`, { status: 'cancelled' })).status).toBe(
         403,

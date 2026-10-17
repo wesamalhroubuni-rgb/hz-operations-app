@@ -35,6 +35,8 @@ export const taskSchema = z.object({
   assigneeIds: z.array(idSchema),
   dueAt: nullableIsoDateTimeSchema,
   completedAt: nullableIsoDateTimeSchema,
+  /** Why the task has its current status (always set for `blocked`), or null. */
+  statusReason: z.string().nullable(),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
   archivedAt: nullableIsoDateTimeSchema,
@@ -73,7 +75,21 @@ export const updateTaskSchema = z
   .refine(atLeastOneField, AT_LEAST_ONE_FIELD);
 export type UpdateTask = z.infer<typeof updateTaskSchema>;
 
-export const changeTaskStatusSchema = z.strictObject({ status: taskStatusSchema });
+export const TASK_STATUS_REASON_MAX_LENGTH = 1000;
+
+/**
+ * A status change. `reason` says why; it is required when moving to `blocked` and stored as the
+ * task's `statusReason` (a change without a reason clears it).
+ */
+export const changeTaskStatusSchema = z
+  .strictObject({
+    status: taskStatusSchema,
+    reason: z.string().trim().min(1).max(TASK_STATUS_REASON_MAX_LENGTH).optional(),
+  })
+  .refine((body) => body.status !== 'blocked' || body.reason !== undefined, {
+    path: ['reason'],
+    error: 'is required when the task is blocked',
+  });
 export type ChangeTaskStatus = z.infer<typeof changeTaskStatusSchema>;
 
 /** Replaces the whole assignee list. */

@@ -4,6 +4,7 @@ import { AttachmentsModule } from './attachments/attachments.module';
 import { OperationsCommonModule } from './common/operations-common.module';
 import { LogTypesModule } from './log-types/log-types.module';
 import { MembershipsModule } from './memberships/memberships.module';
+import { OperationsNotificationsModule } from './notifications/operations-notifications.module';
 import { OrganizationModule } from './organization/organization.module';
 import { ScopeModule } from './scope/scope.module';
 import { SitesModule } from './sites/sites.module';
@@ -27,6 +28,7 @@ import { WorkLogsModule } from './work-logs/work-logs.module';
     WorkLogsModule,
     AttachmentsModule,
     ScopeModule,
+    OperationsNotificationsModule,
   ],
 })
 export class OperationsModule {}

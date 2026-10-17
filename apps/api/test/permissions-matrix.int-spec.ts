@@ -448,8 +448,12 @@ describe('permissions matrix: who may change what', () => {
       async (viewer) => {
         const actual = await row(LOGS, async (name) => {
           const id = await w.freshLog(name);
-          return (await api(viewer).patch(`/work-logs/${id}/status`, { status: 'rejected' }))
-            .status;
+          return (
+            await api(viewer).patch(`/work-logs/${id}/status`, {
+              status: 'rejected',
+              note: 'Not acceptable',
+            })
+          ).status;
         });
         expect(actual).toEqual(
           expected(LOGS, (name) =>
@@ -555,7 +559,6 @@ describe('permissions matrix: who may change what', () => {
             fileName: 'photo.jpg',
             mimeType: 'image/jpeg',
             sizeBytes: 10,
-            storageKey: `matrix/${randomUUID()}`,
           })
         ).status;
       });
@@ -579,6 +582,8 @@ describe('permissions matrix: who may change what', () => {
               mimeType: 'image/jpeg',
               sizeBytes: 10,
               storageKey: `matrix/${randomUUID()}`,
+              status: 'ready',
+              thumbnailKey: `matrix/${randomUUID()}.thumb.jpg`,
             },
           });
           reads[name] = (await api(viewer).get(`/attachments/${attachment.id}`)).status;

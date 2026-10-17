@@ -1,4 +1,5 @@
 import logo from '../../assets/brand/logo-512.png';
+import { t } from '../i18n';
 import { env } from './env';
 
 /**
@@ -14,11 +15,11 @@ export const brand = {
   /** The client's product name. */
   name: env.brandName,
   /** What this app is, shown next to the name. */
-  appLabel: 'Worker app',
+  appLabel: t('common.appLabel'),
   logo: {
     source: logo,
-    accessibilityLabel: `${env.brandName} logo`,
+    accessibilityLabel: t('common.logoLabel', { brand: env.brandName }),
   },
   /** The only mention of the company that builds the product. Keep it small. */
-  poweredBy: 'Powered by Kaneri.ai',
+  poweredBy: t('common.poweredBy'),
 } as const;

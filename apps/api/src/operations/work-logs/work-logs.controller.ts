@@ -130,7 +130,10 @@ export class WorkLogsController {
       'The author moves their log between `draft` and `submitted` and resubmits a rejected ' +
       'one, inside the edit window. A supervisor (for logs they can see), manager or admin ' +
       'approves or rejects a submitted log and reopens an approved or rejected one to ' +
-      '`submitted`; never their own log (403). A move that does not exist answers 409.',
+      '`submitted`; never their own log (403). A move that does not exist answers 409. `note` ' +
+      'is required when rejecting (the reason the author sees), optional when approving, and ' +
+      'refused otherwise; approving or rejecting records the reviewer, the time and the note ' +
+      'in `review`, which is cleared when the log goes back to submitted or draft.',
     body: changeWorkLogStatusSchema,
     response: workLogSchema,
     errors: [HttpStatus.FORBIDDEN, HttpStatus.NOT_FOUND, HttpStatus.CONFLICT],
@@ -139,7 +142,7 @@ export class WorkLogsController {
     @Param('id', new ZodPipe(idSchema)) id: string,
     @Body(new ZodPipe(changeWorkLogStatusSchema)) body: ChangeWorkLogStatus,
   ): Promise<WorkLog> {
-    return this.workLogs.changeStatus(id, body.status);
+    return this.workLogs.changeStatus(id, body);
   }
 
   @Post(':id/archive')

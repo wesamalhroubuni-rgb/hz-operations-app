@@ -3,6 +3,7 @@ import { useRef, useState } from 'react';
 import type { TextInput } from 'react-native';
 
 import { useAuth } from '../auth/AuthProvider';
+import { authFailureText, translateAuthErrors } from '../i18n/authText';
 
 /**
  * State of the sign-in form. Validation and the meaning of failures live in `@ops/shared`; this
@@ -23,7 +24,7 @@ export function useLoginForm() {
       return;
     }
     const found = validateSignInForm({ identifier, password });
-    setErrors(found);
+    setErrors(translateAuthErrors(found));
     setFailure(null);
     if (!isFormValid(found)) {
       (found.identifier ? identifierRef : passwordRef).current?.focus();
@@ -37,7 +38,7 @@ export function useLoginForm() {
       return;
     }
     setSubmitting(false);
-    setFailure(result.failure.message);
+    setFailure(authFailureText(result.failure));
   }
 
   return {

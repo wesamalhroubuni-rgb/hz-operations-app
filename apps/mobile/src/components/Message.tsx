@@ -26,7 +26,7 @@ export function Message({
       accessible={children === undefined}
       accessibilityRole={tone === 'error' ? 'alert' : undefined}
       accessibilityLiveRegion={tone === 'error' ? 'assertive' : 'polite'}
-      style={[styles.box, { borderLeftColor: color }]}
+      style={[styles.box, { borderStartColor: color }]}
     >
       <Text style={[styles.text, { color }]}>{text}</Text>
       {details.map((detail) => (
@@ -45,7 +45,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
     borderWidth: 1,
-    borderLeftWidth: 3,
+    borderStartWidth: 3,
     borderColor: colors.border,
     borderRadius: radii.md,
     backgroundColor: colors.surfaceRaised,

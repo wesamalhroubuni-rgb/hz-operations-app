@@ -76,12 +76,11 @@ describe('tenant isolation', () => {
         customFields: { area: 'Roof' },
       }),
     );
-    const attachment = await ok(
+    const { attachment } = await ok(
       api.post(`/work-logs/${workLog.id}/attachments`, {
         fileName: 'photo.jpg',
         mimeType: 'image/jpeg',
         sizeBytes: 1024,
-        storageKey: `${tenant.organization.id}/photo.jpg`,
       }),
     );
     const audit = await ctx.prisma.auditEvent.findFirstOrThrow({
@@ -392,7 +391,7 @@ describe('tenant isolation', () => {
         (w) => ({
           method: 'PATCH',
           path: `/work-logs/${w.workLog.id}/status`,
-          body: { status: 'rejected' },
+          body: { status: 'rejected', note: 'Not acceptable' },
         }),
       ],
       [
@@ -408,7 +407,6 @@ describe('tenant isolation', () => {
             fileName: 'x.jpg',
             mimeType: 'image/jpeg',
             sizeBytes: 1,
-            storageKey: `intruder/${randomUUID()}`,
           },
         }),
       ],

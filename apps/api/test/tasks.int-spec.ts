@@ -314,9 +314,39 @@ describe('tasks', () => {
       ['cancelled', 'todo'],
     ] as const)('moves %s to %s without touching completedAt', async (from, to) => {
       const task = await createTask(ctx.prisma, orgId(), tenant.admin.id, { status: from });
-      const response = await api.patch(`/tasks/${task.id}/status`, { status: to });
+      const response = await api.patch(`/tasks/${task.id}/status`, {
+        status: to,
+        ...(to === 'blocked' ? { reason: 'Waiting for parts' } : {}),
+      });
       expect(response.status).toBe(200);
       expect(response.body).toMatchObject({ status: to, completedAt: null });
+    });
+
+    it('stores the reason of a blocked task (required) and clears it on a change without one', async () => {
+      const assignee = await createUser(ctx.prisma, orgId());
+      await createMembership(ctx.prisma, orgId(), assignee.id, 'worker');
+      const task = await createTask(ctx.prisma, orgId(), tenant.admin.id, {
+        assigneeIds: [assignee.id],
+      });
+      const path = `/tasks/${task.id}/status`;
+
+      expect((await api.patch(path, { status: 'blocked' })).status).toBe(400);
+      const blocked = await api.patch(path, { status: 'blocked', reason: 'No access key' });
+      expect(blocked.status).toBe(200);
+      expect(taskSchema.safeParse(blocked.body).success).toBe(true);
+      expect(blocked.body.statusReason).toBe('No access key');
+      const events = await api.get('/outbox-events', { eventType: 'task.status_changed' });
+      expect(events.body.items[0].payload).toMatchObject({
+        from: 'todo',
+        to: 'blocked',
+        reason: 'No access key',
+        changedById: tenant.admin.id,
+        createdById: tenant.admin.id,
+        assigneeIds: [assignee.id],
+      });
+
+      const resumed = await api.patch(path, { status: 'in_progress' });
+      expect(resumed.body.statusReason).toBeNull();
     });
 
     it('walks a task through its life with one event per real change', async () => {

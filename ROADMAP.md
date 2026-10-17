@@ -4,16 +4,16 @@ Eight phases for HZ. A phase is done only when every "done when" item is verifie
 written. Tick an item when it has been checked and note the date in [MEMORY.md](MEMORY.md).
 Criteria for Phases 3 to 8 are the current plan and should be refined at the start of each phase.
 
-| Phase | Name                         | Status                                                        |
-| ----- | ---------------------------- | ------------------------------------------------------------- |
-| 1     | Setup & architecture         | Done except two checks: one pending, one deferred to Phase 4  |
-| 2     | Backend core                 | Accepted and committed (`1fd2988`); three checks still open   |
-| 3     | Authentication & permissions | Code complete; owner's manual checks, `db:reset`, commit open |
-| 4     | Mobile worker app            | Next                                                          |
-| 5     | Offline mode & sync          | Planned                                                       |
-| 6     | Web manager dashboard        | Planned                                                       |
-| 7     | Intelligent layer v1         | Planned                                                       |
-| 8     | Hardening & release          | Planned                                                       |
+| Phase | Name                         | Status                                                                    |
+| ----- | ---------------------------- | ------------------------------------------------------------------------- |
+| 1     | Setup & architecture         | Done except two checks: one pending, one waiting for the phone test       |
+| 2     | Backend core                 | Accepted and committed (`1fd2988`); one check waits for a phone build     |
+| 3     | Authentication & permissions | Accepted and committed (`8c8283a`); device checks wait for the phone test |
+| 4     | Mobile worker app            | Code complete; phone test, development build, and commit open             |
+| 5     | Offline mode & sync          | Next                                                                      |
+| 6     | Web manager dashboard        | Planned                                                                   |
+| 7     | Intelligent layer v1         | Planned                                                                   |
+| 8     | Hardening & release          | Planned                                                                   |
 
 ## Phase 1: Setup & architecture
 
@@ -42,8 +42,9 @@ are documented well enough for a new developer or AI session to continue.
       saw "API unreachable" on first load while the API was still compiling. Phase 2 added
       automatic retries (2, 4, 8, 16 seconds) and a "Check again" button; that recovery is unit
       tested but has not been watched in a real browser.
-- [ ] The mobile app opens on a real phone in Expo Go and shows "API reachable". **Deferred to
-      Phase 4**: the campus Wi-Fi blocks phone-to-PC traffic.
+- [ ] The mobile app opens on a real phone in Expo Go and reaches the API. Part of the Phase 4
+      phone test (the campus Wi-Fi blocks phone-to-PC traffic; the owner will use the phone's
+      hotspot). The Phase 1 "API reachable" card was replaced by the worker screens in Phase 4.
 - [x] Independent `reviewer` pass completed and its should-fix findings resolved (2026-10-12).
 - [x] Git identity configured and the first commit made (commit `d03c843` on `main`, verified by
       the owner, 2026-10-13).
@@ -84,6 +85,7 @@ Data and decisions
       select, date; required; options), and work log values are validated against the definition
       by one function in `@ops/shared`.
 - [x] Attachments are metadata only, and a `FileStorage` interface exists with no provider.
+      (Superseded in Phase 4: a provider is bound, ADR-0006.)
 
 Scope
 
@@ -121,10 +123,8 @@ Seed
 - [x] `pnpm db:seed` creates the demo organization "HZ Demo" with 2 sites, 3 teams, 10 users
       across all roles (including a worker in two teams and a supervisor scoped to a site), 3 log
       types, 8 tasks, and 25 work logs over 14 days (run once on 2026-10-13).
-- [ ] `pnpm db:reset` drops, migrates, and seeds. The script exists but **has never been
-      executed** (still true on 2026-10-16). It must be run by the owner: Prisma refuses
-      `migrate reset` in an AI agent environment, and the agent permission system blocks it.
-      Carried into the Phase 3 owner checks, where it is needed anyway.
+- [x] `pnpm db:reset` drops, migrates, and seeds. Run by the owner before the Phase 4 session
+      (reported 2026-10-17). Agents must never run it.
 
 Branding
 
@@ -133,11 +133,10 @@ Branding
       are shared by both apps, and the contrast pairings are unit tested against WCAG AA. Verified
       on 2026-10-13 as far as a build can show: the production web build has the title
       "HZ · Manager dashboard"; `expo export` succeeds for Android and iOS; `expo-doctor` 21/21.
-- [ ] The branding is seen in a real browser after `pnpm dev` is restarted. Not recorded as done
-      by the owner. (During the Phase 3 session the clients agent ran automated browser checks of
-      the web app; the owner's own look is part of the Phase 3 manual checks.)
-- [ ] The app icon and splash screen are seen in a real build on a phone. **Deferred to Phase 4**
-      (Expo Go shows its own icon and splash).
+- [x] The branding is seen in a real browser after `pnpm dev` is restarted: the owner signed in on
+      the branded web pages as three roles (reported 2026-10-17).
+- [ ] The app icon and splash screen are seen in a real build on a phone. Needs the Phase 4
+      development build (Expo Go shows its own icon and splash).
 
 Quality
 
@@ -205,13 +204,12 @@ Authentication
 - [x] All secrets come from environment variables validated at boot; the API refuses to start in
       production with a missing, placeholder, or weak signing secret, or a non-https `WEB_APP_URL`
       (boot refusal checked by the auth agent).
-- [ ] Seed users get development passwords defined only in the seed file (`DEV_PASSWORDS`), and
-      README explains how to sign in as each seeded role. The code and the README section exist;
-      **the new seed has not run against the development database** (it needs `pnpm db:reset`,
-      below). Until then the demo users there have no usernames and no known passwords.
+- [x] Seed users get development passwords defined only in the seed file (`DEV_PASSWORDS`), and
+      README explains how to sign in as each seeded role. The owner's `pnpm db:reset` loaded the
+      seed and sign-in works as `aylin`, `selin`, and `deniz` (reported 2026-10-17).
 - [ ] Mobile: tokens in Expo SecureStore, sent as a bearer header. Code complete and unit tested;
       the session logic was run in mobile mode against the real API, and `expo export` and
-      `expo-doctor` pass. **Not run on a device**: that is the Phase 4 phone test.
+      `expo-doctor` pass. **Not run on a device**: part of the Phase 4 phone test.
 
 Permissions
 
@@ -246,8 +244,8 @@ Clients
       (signed-out users go to `/login`), and the signed-in user's name and role (24/24 automated
       browser checks by the clients agent).
 - [ ] Mobile: branded login and activation screens, secure token storage, sign-out, and a
-      placeholder home screen with the user's name and role. Bundles and passes `expo-doctor`;
-      **not yet seen on a device** (Phase 4 phone test).
+      placeholder home screen with the user's name and role (replaced by the Phase 4 screens).
+      Bundles and passes `expo-doctor`; **not yet seen on a device** (Phase 4 phone test).
 
 Tests, review, verification
 
@@ -263,46 +261,134 @@ Tests, review, verification
       `format:check` pass (2026-10-16). Unit: 367 api, 546 shared, 46 web, 20 mobile (re-run by
       the docs-keeper). Integration: 1,208 tests in 14 suites.
 - [x] The auth migration `20261014090000_auth` is applied to the development database.
-- [ ] `pnpm build` passes. Not run in the final pass, because the owner's `pnpm dev` was running
-      and `nest build` deletes `apps/api/dist` under it.
-- [ ] `pnpm db:reset` run by the owner, so the development database gets the Phase 3 seed.
-- [ ] `pnpm dev` starts everything and the owner signs in in a real browser as an admin, a
-      supervisor, and a worker, and runs the manual checks in README section 4 (what each role
-      sees in Swagger, the activation flow, lockout, sign-out everywhere).
-- [ ] The Phase 3 work is reviewed and committed by the owner.
+- [x] `pnpm build` passes. Not run in the Phase 3 final pass; reported passing with the Phase 4
+      root checks (2026-10-17).
+- [x] `pnpm db:reset` run by the owner, so the development database gets the Phase 3 seed
+      (reported 2026-10-17).
+- [x] `pnpm dev` starts everything and the owner signs in in a real browser as an admin, a
+      supervisor, and a worker (`aylin`, `selin`, `deniz`; reported 2026-10-17). The other manual
+      checks in README section 4 (Swagger per role, activation, lockout, sign-out everywhere) are
+      not recorded as run.
+- [x] The Phase 3 work is reviewed and committed by the owner (commit `8c8283a` on `main`).
 
 ## Phase 4: Mobile worker app
 
-**Goals**: a worker can sign in on a phone and log work with text, photos, and location. Online
-only in this phase.
+**Goals**: a field worker can use HZ on their phone for real work: sign in, see and update their
+tasks, and create work logs with text, photos, location, and the custom fields of each log type.
+Speed and simplicity of input come before feature count. Online only in this phase.
+
+The criteria below were rewritten on 2026-10-17 to match the owner's Phase 4 prompt
+(`docs/prompts/phase-4.md`). "Verified" means by the root checks, the unit and integration suites,
+and the agents' checks against the real API and MinIO during the session (2026-10-16 to
+2026-10-17). **Nothing has run on a phone yet**, so every item that needs a device stays open even
+where the code is complete. Two items of the earlier Phase 4 plan are not in the prompt and were
+not built: activation deep links into the app (not placed in a phase yet) and the signed-in state
+when the server is unreachable at start (moved to Phase 5).
 
 **Done when**
 
-- [ ] **Phone test** (carried over from Phases 1 and 2): the app opens on a real phone and reaches
-      the API over Wi-Fi, on a network that allows phone-to-PC traffic, with `API_HOST=0.0.0.0`.
-- [ ] Sign-in, activation, sign-out, and sign-out everywhere work on iOS and Android, with the
-      tokens in SecureStore (built in Phase 3, never run on a device).
-- [ ] Activation and reset links open the mobile app's activation screen (deep links; deferred
-      from Phase 3, where the link points at the web app's `/activate`).
-- [ ] The app opens signed in from the stored session when the network is down, and does not sign
-      the user out because the server is unreachable (deferred from Phase 3).
-- [ ] The API generates attachment storage keys itself, prefixed with the organization id, and
-      `storageKey` is removed from the create body, **before** any storage provider is bound.
-      This also removes the 409 a duplicate key gives today for an attachment the caller cannot
-      see (security review finding F5, ADR-0005).
-- [ ] A `FileStorage` provider is bound, including a local development implementation (moved here
-      from Phase 2), and photos can be uploaded and downloaded.
-- [ ] A worker can create a work log with text, one or more photos, and the current location.
-- [ ] A worker can see the list and detail of their own work logs, and nothing else.
-- [ ] Camera and location permissions are requested with a clear explanation and handled when
-      denied.
-- [ ] Network and server errors are shown clearly and can be retried.
-- [ ] The mobile bundle identifiers (`ai.kaneri.operations` today, hard-coded in `app.config.ts`)
-      come from configuration and are decided before the first store or development build.
-- [ ] App icon and splash screen are seen in a real build (the assets and configuration exist
-      since Phase 2).
-- [ ] Logic outside components is unit tested; the flows are verified on a real Android phone and a
-      real iPhone.
+Decisions and documentation
+
+- [x] [ADR-0006](docs/decisions/0006-file-storage-and-upload-flow.md) records the storage provider
+      and why uploads go straight to storage through pre-signed URLs rather than through the API.
+- [x] [ADR-0007](docs/decisions/0007-push-notifications-and-notification-channels.md) records push
+      notifications, the notification-channel interface, and the outbox consumer.
+- [x] README has a "Test on my phone" section: hotspot, `API_HOST`, `EXPO_PUBLIC_API_URL`, the
+      storage address for signed URLs, Windows Firewall, Expo Go, the development build, and how
+      to switch back.
+- [x] MEMORY.md, ARCHITECTURE.md, ROADMAP.md, README.md, AGENTS.md, and the folder `memory.md`
+      files describe Phase 4 (docs-keeper, 2026-10-17).
+
+Worker app (code complete; every item needs the phone test)
+
+- [ ] Login and activation work on a phone (Phase 3 screens, restyled).
+- [ ] Home: tasks assigned to me (due today and overdue first), my recent logs, a big "New log"
+      button.
+- [ ] My tasks: filters (open, today, overdue, done), task detail, the status moves a worker may
+      make (`in_progress`, `blocked` with a reason, `done`), and "Log work for this task".
+- [ ] New work log: log types most-used first; a form generated from the custom fields (text,
+      number, boolean, select, date) with required-field validation from the shared schemas; text,
+      optional task, site, and team (pre-filled when obvious); photos from camera or gallery,
+      several per log, resized on the phone, with upload progress and retry; location captured
+      when permitted, with accuracy, never blocking the save; `occurredAt` defaulting to now; a
+      `clientId` generated on the phone so a retried submit never duplicates. (The data path was
+      run end to end against the real API: a log with custom fields, a duplicate `clientId`, a
+      photo upload.)
+- [ ] My logs: list and detail, edit within the window while not approved, approval status, and
+      the rejection reason.
+- [ ] Notifications: the in-app list (new task assigned, log approved or rejected) works on the
+      phone.
+- [ ] Profile: name, role, sign out, sign out everywhere, app version, "Powered by Kaneri.ai".
+- [ ] Supervisors and managers get the same worker screens for their own work; no approval screens
+      on mobile (built that way; check on the phone).
+
+Design and usability
+
+- [x] All user-facing text goes through an i18n layer (`apps/mobile/src/i18n/`), English now; a new
+      language is a new catalogue file with no screen changes, and the layout is ready for right
+      to left (`start` / `end`, `applyLayoutDirection`).
+- [x] The form keeps what the worker typed until it is saved: the new-log form is drafted on the
+      phone per user, a failed save keeps the form, and photos wait in a persisted upload queue.
+      (Edit forms are not drafted; Phase 5.)
+- [ ] Large touch targets, readable in sunlight, one-handed and glove use, clear empty, loading,
+      and error states, screen-reader labels, and dynamic text size, checked on a real phone.
+
+Backend
+
+- [x] File storage: the `FileStorage` interface has an S3-compatible implementation; MinIO runs in
+      Docker Compose next to PostgreSQL, bound to `127.0.0.1` (verified against the real MinIO).
+- [x] The API generates storage keys; clients never choose them (`storageKey` is gone from every
+      request and response). This resolves finding F5.
+- [x] Only JPEG and PNG are accepted, checked by content (magic bytes and a full decode), and the
+      size limit is configurable (`UPLOAD_MAX_BYTES`, 10 MiB). HEIC and HEIF are converted to
+      JPEG on the phone.
+- [x] Downloads use short-lived signed URLs, issued only to users who may see the parent work log;
+      nobody else can reach another worker's photos (`uploads` and `storage-minio` suites).
+- [x] Thumbnails (320 px JPEG) are generated by the API on completion.
+- [x] Push notifications sit behind a notification-channel interface in `src/platform` (reusable;
+      Phase 7 can add channels), using Expo push.
+- [x] Device push tokens are stored per user and session, removed on sign-out (seen live) and on
+      every other session end, and when Expo reports them invalid (tests with a fake Expo client).
+- [x] Notifications are triggered from outbox events: a task assigned to me, my log approved or
+      rejected (`notifications` suite; seen live: the in-app notification within about one
+      second).
+- [x] Remote push in Expo Go was checked: Android Expo Go has none since SDK 53, iOS Expo Go works
+      with an EAS project id. A development build is set up (`expo-dev-client`,
+      `apps/mobile/eas.json`, `dev:client`) and README section 5 documents how to build and install
+      it.
+- [ ] A development build is built and installed on the owner's phone, and a push notification
+      arrives on it through Expo.
+- [x] New endpoints follow the Phase 3 rules: a declared policy on every route
+      (`route-policies.spec.ts`), scope-filtered queries, role-shaped responses, audit and outbox
+      on every business write (the matrix suite covers starting an upload and reading a ready
+      attachment; `uploads`, `worker-app`, and `notifications` cover the rest).
+- [x] The phone's data layer sends every write through one repository module
+      (`apps/mobile/src/data/repositories.ts`), so Phase 5 can add a local queue without changing
+      screens.
+
+Tests, review, verification
+
+- [x] The `test-writer` covered: form generation and validation for every custom field type,
+      duplicate submit with the same `clientId`, upload validation (type, size, server-generated
+      keys, no access to another worker's photos), the push token lifecycle, notifications only to
+      the right users, worker task-status rules, and edit-window rules from the phone's calls.
+- [x] The `reviewer` returned "pass with fixes" against the prompt, AGENTS.md, and the Phase 3
+      security rules; M1, M2, and L1 to L6 fixed; rebinding, orphan bytes, per-process limits, and
+      English-only server text accepted and documented.
+- [x] Root install, build, lint, typecheck, test, `test:integration`, and `format:check` pass
+      (2026-10-17). Unit: 477 api, 650 shared, 154 mobile, 46 web (re-run by the docs-keeper).
+      Integration: 1,339 tests in 18 suites. `expo export` and `expo-doctor` 21/21.
+- [x] The migration `20261017090000_phase4_mobile` is applied to the development database.
+- [ ] `pnpm dev` starts everything, including MinIO, and the web app still works in a browser
+      (the coordinator's final check).
+- [ ] **The owner's phone test** (README section 5): as `deniz`, see tasks, change a task status,
+      create a log with a photo, location, and custom fields, see it in My logs, edit it, sign out;
+      as `selin`, approve that log through Swagger; `deniz` gets the notification. Carries the
+      Phase 1 to 3 device checks (Expo Go reaches the API, SecureStore, sign-in on a device).
+- [ ] App icon and splash screen seen in a development build.
+- [ ] The final mobile bundle identifiers are decided (they come from `EXPO_IOS_BUNDLE_IDENTIFIER`
+      and `EXPO_ANDROID_PACKAGE`; the default `ai.kaneri.operations` is a placeholder).
+- [ ] The Phase 4 work is reviewed and committed by the owner.
 
 ## Phase 5: Offline mode & sync
 
@@ -313,8 +399,14 @@ only in this phase.
 - [ ] An ADR records the local database and the conflict rule, including whether the server needs
       a row version (there is no optimistic locking today; concurrent updates are
       last-write-wins).
-- [ ] Work logs and attachments are written to a local store first.
-- [ ] An outbox queue sends pending changes when the network returns, with retry and backoff.
+- [ ] Work logs and attachments are written to a local store first, behind the existing
+      repositories in `apps/mobile/src/data/repositories.ts` (screens already handle a `pending`
+      `SavedWorkLog`; photo uploads already have a persisted queue since Phase 4).
+- [ ] A queue sends pending changes when the network returns, with retry and backoff.
+- [ ] The edit form keeps a draft like the new-log form does.
+- [ ] The app opens signed in from the stored session when the server is unreachable, and does not
+      sign the user out because of it (moved from Phase 4; today it shows the sign-in screen with
+      an "unreachable" notice and keeps the tokens).
 - [ ] Sync is idempotent: resending the same change does not create a duplicate. (The server side
       for work log creation exists since Phase 2: `clientId`.)
 - [ ] Conflicts are detected and resolved by the documented rule.
@@ -334,6 +426,12 @@ only in this phase.
 - [ ] A list of work logs with filters for date, team, site, and worker, limited to the user's
       scope.
 - [ ] A detail view with text, photos, and location.
+- [ ] Supervisors approve and reject work logs with a note (the API and the notifications exist
+      since Phase 4; there are no approval screens on mobile by design).
+- [ ] Photos can be uploaded from the browser if needed, reusing `uploadAttachment` from
+      `@ops/shared`; this needs a CORS rule on the bucket.
+- [ ] Notification text is localised: each user's language is stored and the server renders the
+      in-app and push text in it (English only since Phase 4).
 - [ ] Admin screens manage users, roles, teams, and sites.
 - [ ] A user cannot reach data outside their scope by editing a URL or request.
 - [ ] Loading, empty, and error states exist for every view.
@@ -346,9 +444,11 @@ only in this phase.
 **Done when**
 
 - [ ] An ADR records the AI provider, the provider abstraction, and data-handling constraints.
-- [ ] An outbox consumer exists and cannot miss events. Sequence numbers are assigned at insert,
-      not at commit, so a cursor-only reader can skip an event from a late-committing transaction;
-      the consumer must re-read a window or use `processedAt`.
+- [ ] The AI layer reads events through the outbox consumer (built in Phase 4, ADR-0007: it
+      re-reads a 60-second window so a late-committing event is not missed) by registering its own
+      handlers, and tests show it misses no event.
+- [ ] AI alerts reach users through `NotificationService` and the notification channels (the
+      in-app list and Expo push exist since Phase 4).
 - [ ] The core runs normally with the AI layer disabled.
 - [ ] Smart capture: the AI layer helps turn a worker's raw input into a structured work log, and
       the worker confirms before it is saved.
@@ -379,9 +479,17 @@ only in this phase.
 - [ ] Mobile release builds for iOS and Android submitted for store review or internal
       distribution.
 - [ ] Performance checked against agreed targets on low-end phones and slow networks.
-- [ ] Rate limiting and input size limits on the API. The `/auth/*` limits exist since Phase 3 but
-      are in memory per process: bind a shared store (Redis or PostgreSQL) under `RATE_LIMITER`
-      before running more than one API instance.
+- [ ] Rate limiting and input size limits on the API. The `/auth/*` limits (Phase 3) and the
+      upload limits (Phase 4) are in memory per process: bind a shared store (Redis or PostgreSQL)
+      under `RATE_LIMITER` before running more than one API instance.
+- [ ] Photo storage in production: a real S3-compatible provider, a private bucket with a bucket
+      policy and a scoped key, HTTPS for `STORAGE_PUBLIC_ENDPOINT`; the community MinIO image
+      replaced or built from source; a purge marker column so orphan upload bytes on ready
+      attachments are removed (ADR-0006).
+- [ ] Retention and erasure of stored photos are decided and implemented.
+- [ ] Durable push receipts (a `PushTicket` table) instead of the in-memory tracking (ADR-0007).
+- [ ] Activation and reset links open the mobile app's activation screen (deep links). Not in the
+      Phase 4 prompt; listed here until the owner places it.
 - [ ] `TRUST_PROXY_HOPS` is set to the exact number of reverse proxies in every deployment, so the
       per-IP limits see the client address.
 - [ ] A real `NotificationSender` (email and/or SMS) delivers activation and reset codes; today

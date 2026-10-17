@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import type {
+  ChangeTaskStatus,
   CreateTask,
   ListTasksQuery,
   Paginated,
   Task,
-  TaskStatus,
   UpdateTask,
 } from '@ops/shared';
 import type { Prisma } from '../../generated/prisma/client';
@@ -54,6 +54,7 @@ export function toTask(row: TaskRow): Task {
     assigneeIds: row.assignees.map((assignee) => assignee.userId),
     dueAt: isoOrNull(row.dueAt),
     completedAt: isoOrNull(row.completedAt),
+    statusReason: row.statusReason,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
     archivedAt: isoOrNull(row.archivedAt),
@@ -222,22 +223,31 @@ export class TasksService {
   /**
    * Moves the task to another status (`canChangeTaskStatus`: whoever manages it to any status,
    * an assignee to todo, in_progress, blocked or done). `completedAt` is set when the task
-   * becomes `done` and cleared when it leaves `done`. Setting the status it already has changes
-   * and records nothing.
+   * becomes `done` and cleared when it leaves `done`. `reason` becomes the task's
+   * `statusReason` (required for `blocked` by the schema); a change without one clears it.
+   * Sending the status and reason the task already has changes and records nothing; the same
+   * status with another reason updates the reason (an event with `from === to`).
+   *
+   * Outbox payload of `task.status_changed`: `{ from, to, reason, changedById, createdById,
+   * assigneeIds, task }`.
    */
-  async changeStatus(id: string, status: TaskStatus): Promise<Task> {
+  async changeStatus(id: string, input: ChangeTaskStatus): Promise<Task> {
     const context = await this.access.context();
+    const { status } = input;
+    const reason = input.reason ?? null;
     return this.prisma.$transaction(async (tx) => {
       const before = toTask(await this.find(tx, context, id));
       enforce(canChangeTaskStatus(context, factsOf(before), status), 'Task', id);
       assertNotArchived(before);
-      if (before.status === status) {
+      if (before.status === status && before.statusReason === reason) {
         return before;
       }
+      const completedAt =
+        status === 'done' ? (before.status === 'done' ? undefined : new Date()) : null;
       const task = toTask(
         await tx.task.update({
           where: { id },
-          data: { status, completedAt: status === 'done' ? new Date() : null },
+          data: { status, statusReason: reason, completedAt },
           include: TASK_INCLUDE,
         }),
       );
@@ -248,7 +258,14 @@ export class TasksService {
         entityId: id,
         before,
         after: task,
-        extra: { from: before.status, to: status },
+        extra: {
+          from: before.status,
+          to: status,
+          reason,
+          changedById: context.system ? null : context.userId,
+          createdById: task.createdById,
+          assigneeIds: task.assigneeIds,
+        },
       });
       return task;
     });

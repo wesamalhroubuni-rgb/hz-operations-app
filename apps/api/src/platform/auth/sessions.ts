@@ -43,6 +43,24 @@ export type RevocationReason =
   | 'admin_revoked'
   | 'expired';
 
+/** Which sessions just ended: one, or every live one of a user (optionally sparing one). */
+export type EndedSessions =
+  | { kind: 'session'; sessionId: string; reason: RevocationReason }
+  | {
+      kind: 'user';
+      userId: string;
+      organizationId?: string;
+      exceptSessionId?: string | null;
+      reason: RevocationReason;
+    };
+
+/**
+ * Called INSIDE the transaction that ends sessions, after the sessions are marked revoked, so
+ * whatever belongs to those sessions (device push tokens) goes with the same commit. A listener
+ * that throws rolls the revocation back: listeners must only do database work on `tx`.
+ */
+export type SessionEndListener = (tx: AuthTx, ended: EndedSessions) => Promise<void>;
+
 export interface CreateSessionArgs {
   userId: string;
   organizationId: string;
@@ -82,6 +100,8 @@ function truncate(value: string | null | undefined, max: number): string | null 
 }
 
 export class SessionService {
+  private readonly endListeners: SessionEndListener[] = [];
+
   constructor(
     private readonly clock: Clock,
     private readonly random: RandomSource,
@@ -91,6 +111,26 @@ export class SessionService {
     >,
     private readonly accessTokens: AccessTokenService,
   ) {}
+
+  /**
+   * Registers a hook that runs whenever sessions end (see `SessionEndListener`). Returns a
+   * function that removes it. The notifications module uses it to drop device push tokens.
+   */
+  onSessionsEnded(listener: SessionEndListener): () => void {
+    this.endListeners.push(listener);
+    return () => {
+      const index = this.endListeners.indexOf(listener);
+      if (index !== -1) {
+        this.endListeners.splice(index, 1);
+      }
+    };
+  }
+
+  private async notifyEnded(tx: AuthTx, ended: EndedSessions): Promise<void> {
+    for (const listener of this.endListeners) {
+      await listener(tx, ended);
+    }
+  }
 
   /** Starts a session and issues its first tokens. */
   async create(tx: AuthTx, args: CreateSessionArgs): Promise<SessionGrant> {
@@ -212,6 +252,9 @@ export class SessionService {
       where: { id: sessionId, revokedAt: null },
       data: { revokedAt: this.clock.now(), revokedReason: reason },
     });
+    if (count === 1) {
+      await this.notifyEnded(tx, { kind: 'session', sessionId, reason });
+    }
     return count === 1;
   }
 
@@ -234,6 +277,15 @@ export class SessionService {
       },
       data: { revokedAt: this.clock.now(), revokedReason: args.reason },
     });
+    if (count > 0) {
+      await this.notifyEnded(tx, {
+        kind: 'user',
+        userId: args.userId,
+        organizationId: args.organizationId,
+        exceptSessionId: args.exceptSessionId ?? null,
+        reason: args.reason,
+      });
+    }
     return count;
   }
 

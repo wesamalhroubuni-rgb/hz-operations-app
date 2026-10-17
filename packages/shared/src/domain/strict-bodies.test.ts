@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 
-import { createAttachmentSchema } from './attachments.js';
+import { startAttachmentUploadSchema } from './attachments.js';
 import { createLogTypeSchema, updateLogTypeSchema } from './log-types.js';
 import {
   createMembershipSchema,
@@ -61,9 +61,9 @@ const BODIES: Array<[string, z.ZodType, Record<string, unknown>]> = [
   ['updateWorkLogSchema', updateWorkLogSchema, { text: 'Checked' }],
   ['changeWorkLogStatusSchema', changeWorkLogStatusSchema, { status: 'approved' }],
   [
-    'createAttachmentSchema',
-    createAttachmentSchema,
-    { fileName: 'a.jpg', mimeType: 'image/jpeg', sizeBytes: 1, storageKey: 'k/a.jpg' },
+    'startAttachmentUploadSchema',
+    startAttachmentUploadSchema,
+    { fileName: 'a.jpg', mimeType: 'image/jpeg', sizeBytes: 1 },
   ],
 ];
 
@@ -120,12 +120,20 @@ describe('strict request bodies', () => {
     expect(createTaskSchema.safeParse({ title: 'T', createdById: ID }).success).toBe(false);
     expect(updateTaskSchema.safeParse({ title: 'T', createdById: ID }).success).toBe(false);
     expect(
-      createAttachmentSchema.safeParse({
+      startAttachmentUploadSchema.safeParse({
         fileName: 'a.jpg',
         mimeType: 'image/jpeg',
         sizeBytes: 1,
-        storageKey: 'k/a.jpg',
         uploadedById: ID,
+      }).success,
+    ).toBe(false);
+    // The storage key is chosen by the API: a client cannot send one.
+    expect(
+      startAttachmentUploadSchema.safeParse({
+        fileName: 'a.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 1,
+        storageKey: 'org/x/a.jpg',
       }).success,
     ).toBe(false);
   });

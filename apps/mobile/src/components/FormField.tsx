@@ -1,6 +1,10 @@
-import { AUTH_TEXT, colors, fontSizes, fontWeights, radii, spacing } from '@ops/shared';
-import { useState, type ReactNode, type Ref } from 'react';
+import { colors, fontSizes, radii, spacing } from '@ops/shared';
+import { useState, type Ref } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
+
+import { t } from '../i18n';
+import { FieldShell } from './FieldShell';
+import { touch } from './sizes';
 
 interface FieldProps extends Omit<TextInputProps, 'onChangeText' | 'value' | 'style'> {
   label: string;
@@ -10,30 +14,8 @@ interface FieldProps extends Omit<TextInputProps, 'onChangeText' | 'value' | 'st
   error?: string;
   /** A standing hint, such as the password policy. */
   hint?: string;
+  required?: boolean;
   inputRef?: Ref<TextInput>;
-}
-
-function FieldFrame({
-  label,
-  error,
-  hint,
-  children,
-}: Readonly<Pick<FieldProps, 'label' | 'error' | 'hint'> & { children: ReactNode }>) {
-  return (
-    <View style={styles.field}>
-      {/* The input carries the label for screen readers, so this text is not read twice. */}
-      <Text style={styles.label} importantForAccessibility="no" accessibilityElementsHidden>
-        {label}
-      </Text>
-      {children}
-      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
-      {error ? (
-        <Text style={styles.error} accessibilityRole="alert" accessibilityLiveRegion="polite">
-          {error}
-        </Text>
-      ) : null}
-    </View>
-  );
 }
 
 /** A labelled text input with its hint and its error. */
@@ -43,16 +25,19 @@ export function TextField({
   onValueChange,
   error,
   hint,
+  required,
   inputRef,
+  multiline,
   ...input
 }: Readonly<FieldProps>) {
   return (
-    <FieldFrame label={label} error={error} hint={hint}>
+    <FieldShell label={label} error={error} hint={hint} required={required}>
       <TextInput
         autoCapitalize="none"
         autoCorrect={false}
         spellCheck={false}
         {...input}
+        multiline={multiline}
         ref={inputRef}
         value={value}
         onChangeText={onValueChange}
@@ -62,9 +47,10 @@ export function TextField({
         placeholderTextColor={colors.textMuted}
         selectionColor={colors.primary}
         cursorColor={colors.primary}
-        style={[styles.input, error ? styles.inputInvalid : null]}
+        textAlignVertical={multiline ? 'top' : 'center'}
+        style={[styles.input, multiline && styles.multiline, error ? styles.inputInvalid : null]}
       />
-    </FieldFrame>
+    </FieldShell>
   );
 }
 
@@ -80,7 +66,7 @@ export function PasswordField({
 }: Readonly<FieldProps>) {
   const [visible, setVisible] = useState(false);
   return (
-    <FieldFrame label={label} error={error} hint={hint}>
+    <FieldShell label={label} error={error} hint={hint}>
       <View style={styles.passwordRow}>
         <TextInput
           {...input}
@@ -101,32 +87,22 @@ export function PasswordField({
         />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${
-            visible ? AUTH_TEXT.hidePasswordLabel : AUTH_TEXT.showPasswordLabel
-          }: ${label}`}
+          accessibilityLabel={`${visible ? t('auth.hidePasswordLabel') : t('auth.showPasswordLabel')}: ${label}`}
           onPress={() => setVisible((current) => !current)}
           style={({ pressed }) => [styles.toggle, pressed && styles.togglePressed]}
         >
           <Text style={styles.toggleText}>
-            {visible ? AUTH_TEXT.hidePassword : AUTH_TEXT.showPassword}
+            {visible ? t('auth.hidePassword') : t('auth.showPassword')}
           </Text>
         </Pressable>
       </View>
-    </FieldFrame>
+    </FieldShell>
   );
 }
 
 const styles = StyleSheet.create({
-  field: {
-    gap: spacing.xs,
-  },
-  label: {
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semibold,
-    color: colors.textPrimary,
-  },
   input: {
-    minHeight: 48,
+    minHeight: touch.comfortable,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     borderWidth: 1,
@@ -135,6 +111,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceRaised,
     color: colors.textPrimary,
     fontSize: fontSizes.md,
+    textAlign: 'auto',
+  },
+  multiline: {
+    minHeight: touch.primary * 2,
+    paddingTop: spacing.md,
   },
   inputInvalid: {
     borderColor: colors.danger,
@@ -147,8 +128,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   toggle: {
-    minWidth: 64,
-    minHeight: 48,
+    minWidth: touch.primary,
+    minHeight: touch.comfortable,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
@@ -162,13 +143,5 @@ const styles = StyleSheet.create({
   toggleText: {
     fontSize: fontSizes.sm,
     color: colors.textPrimary,
-  },
-  hint: {
-    fontSize: fontSizes.sm,
-    color: colors.textMuted,
-  },
-  error: {
-    fontSize: fontSizes.sm,
-    color: colors.danger,
   },
 });

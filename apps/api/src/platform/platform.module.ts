@@ -28,7 +28,9 @@ import {
 import { OutboxEventsController } from './outbox/outbox-events.controller';
 import { OutboxQueryService } from './outbox/outbox-query.service';
 import { OutboxService } from './outbox/outbox.service';
+import { NotificationsModule } from './notifications/notifications.module';
 import { createRequestContextMiddleware } from './request-context/request-context.middleware';
+import { StorageModule } from './storage/storage.module';
 
 interface NoStoreResponse {
   setHeader(name: string, value: string): unknown;
@@ -67,6 +69,7 @@ function noStore(_request: unknown, response: NoStoreResponse, next: () => void)
  */
 @Global()
 @Module({
+  imports: [StorageModule, NotificationsModule],
   controllers: [AuthController, AuditEventsController, OutboxEventsController],
   providers: [
     AuditService,

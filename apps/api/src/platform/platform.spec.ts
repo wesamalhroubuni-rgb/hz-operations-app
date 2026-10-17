@@ -47,7 +47,23 @@ describe('request log', () => {
   it('drops the query string from the path', () => {
     expect(pathOf('/users?email=someone@example.com')).toBe('/users');
     expect(pathOf('/users/1#x')).toBe('/users/1');
+    // A push token in the path never reaches the log.
+    expect(pathOf('/notifications/push-tokens/ExponentPushToken%5Babc123%5D')).toBe(
+      '/notifications/push-tokens/:token',
+    );
+    expect(pathOf('/notifications/push-tokens/ExponentPushToken[abc]?x=1')).toBe(
+      '/notifications/push-tokens/:token',
+    );
+    expect(pathOf('/notifications/read-all')).toBe('/notifications/read-all');
     expect(pathOf(undefined)).toBe('/');
+  });
+
+  // BUG (reported): Express routes are case-insensitive, so a differently cased path reaches the
+  // push-token route, but the redaction pattern is case-sensitive and the token is logged.
+  it('redacts a push token whatever the casing of the path', () => {
+    expect(pathOf('/Notifications/Push-Tokens/ExponentPushToken%5Babc123%5D')).not.toContain(
+      'abc123',
+    );
   });
 
   it('recognises quiet paths and what lies below them', () => {

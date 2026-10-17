@@ -20,5 +20,32 @@ services:
       timeout: 5s
       retries: 10
 
+  # MinIO stopped publishing official container images in 2025; this is a community build of the
+  # last MinIO release (see docs/decisions/0006). Development only, bound to this PC by default.
+  # The bucket is created by the API at start-up in development (no separate init container).
+  # Pinned by digest as well as by tag: a tag can be moved to other content, a digest cannot.
+  minio:
+    image: alpine/minio:RELEASE.2025-10-15T17-29-55Z@sha256:cf23643a6cf9ce159c57643ceb88279e431262282428c9e0bf3a7ef1a97e84b4
+    restart: unless-stopped
+    # The image runs as the unprivileged user "minio"; its home directory is the volume, so the
+    # files belong to that user.
+    command: server /home/minio/data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+    ports:
+      # A phone test sets MINIO_BIND_HOST=0.0.0.0 so the phone can use the signed URLs; switch it
+      # back afterwards (see README).
+      - '${MINIO_BIND_HOST:-127.0.0.1}:${MINIO_PORT:-9000}:9000'
+      - '127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001'
+    volumes:
+      - minio_data:/home/minio
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O /dev/null http://127.0.0.1:9000/minio/health/live || exit 1']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   postgres_data:
+  minio_data:

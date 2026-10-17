@@ -613,6 +613,7 @@ describe('createApiClient', () => {
       'health',
       'logTypes',
       'memberships',
+      'notifications',
       'organization',
       'outboxEvents',
       'scope',

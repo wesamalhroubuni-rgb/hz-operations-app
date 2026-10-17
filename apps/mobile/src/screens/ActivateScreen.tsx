@@ -1,43 +1,28 @@
-import { AUTH_TEXT } from '@ops/shared';
-import { useEffect } from 'react';
-import { BackHandler } from 'react-native';
-
 import { AuthScreenLayout } from '../components/AuthScreenLayout';
 import { Button } from '../components/Button';
 import { PasswordField, TextField } from '../components/FormField';
 import { Message } from '../components/Message';
 import { useActivateForm } from '../hooks/useActivateForm';
-
-interface ActivateScreenProps {
-  /** The password was set: go to the sign-in form and say so. */
-  onDone: () => void;
-  onBack: () => void;
-}
+import { t } from '../i18n';
+import { authFailureText } from '../i18n/authText';
+import type { SignedOutScreenProps } from '../navigation/types';
 
 /**
  * Activation and password reset: the one-time code from the administrator, and a new password
  * typed twice. The code is typed in; opening the app from an activation link is a later phase.
+ * The stack's back gesture and Android's back button return to sign-in.
  */
-export function ActivateScreen({ onDone, onBack }: Readonly<ActivateScreenProps>) {
-  const form = useActivateForm(onDone);
-
-  useEffect(() => {
-    // Android's back button returns to the sign-in form instead of closing the app.
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      onBack();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [onBack]);
+export function ActivateScreen({ navigation }: Readonly<SignedOutScreenProps<'Activate'>>) {
+  const form = useActivateForm(() => navigation.popTo('Login', { passwordSet: true }));
 
   return (
-    <AuthScreenLayout title={AUTH_TEXT.activateTitle} intro={AUTH_TEXT.activateIntro}>
+    <AuthScreenLayout title={t('auth.activateTitle')} intro={t('auth.activateIntro')}>
       {form.failure !== null ? (
-        <Message tone="error" text={form.failure.message} details={form.failure.details} />
+        <Message tone="error" text={authFailureText(form.failure)} details={form.failure.details} />
       ) : null}
 
       <TextField
-        label={AUTH_TEXT.codeLabel}
+        label={t('auth.codeLabel')}
         value={form.code}
         onValueChange={form.setCode}
         error={form.errors.code}
@@ -52,8 +37,8 @@ export function ActivateScreen({ onDone, onBack }: Readonly<ActivateScreenProps>
         editable={!form.submitting}
       />
       <PasswordField
-        label={AUTH_TEXT.newPasswordLabel}
-        hint={AUTH_TEXT.passwordPolicy}
+        label={t('auth.newPasswordLabel')}
+        hint={t('auth.passwordPolicy')}
         value={form.password}
         onValueChange={form.setPassword}
         error={form.errors.password}
@@ -66,7 +51,7 @@ export function ActivateScreen({ onDone, onBack }: Readonly<ActivateScreenProps>
         editable={!form.submitting}
       />
       <PasswordField
-        label={AUTH_TEXT.confirmPasswordLabel}
+        label={t('auth.confirmPasswordLabel')}
         value={form.confirmation}
         onValueChange={form.setConfirmation}
         error={form.errors.confirmation}
@@ -78,11 +63,12 @@ export function ActivateScreen({ onDone, onBack }: Readonly<ActivateScreenProps>
         editable={!form.submitting}
       />
       <Button
-        label={form.submitting ? AUTH_TEXT.settingPassword : AUTH_TEXT.setPassword}
+        size="large"
+        label={form.submitting ? t('auth.settingPassword') : t('auth.setPassword')}
         onPress={() => void form.submit()}
         busy={form.submitting}
       />
-      <Button variant="link" label={AUTH_TEXT.backToSignIn} onPress={onBack} />
+      <Button variant="link" label={t('auth.backToSignIn')} onPress={() => navigation.goBack()} />
     </AuthScreenLayout>
   );
 }

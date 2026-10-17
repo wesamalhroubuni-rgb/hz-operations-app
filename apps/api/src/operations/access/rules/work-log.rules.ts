@@ -152,6 +152,10 @@ export const WORK_LOG_TRANSITIONS: readonly WorkLogTransition[] = [
   { from: 'submitted', to: 'rejected', by: 'reviewer' },
   { from: 'approved', to: 'submitted', by: 'reviewer' },
   { from: 'rejected', to: 'submitted', by: 'reviewer' },
+  // Same decision again, to correct the reviewer's note (the service treats an unchanged note
+  // as a no-op before these rules are consulted).
+  { from: 'approved', to: 'approved', by: 'reviewer' },
+  { from: 'rejected', to: 'rejected', by: 'reviewer' },
 ];
 
 /**
