@@ -1,14 +1,18 @@
 # MEMORY.md
 
 Current state of the HZ project (repository folder `Operations_App`, packages `@ops/*`). Update this
-file at the end of every session. Newest session log entry goes first. Last updated: 2026-10-17.
+file at the end of every session. Newest session log entry goes first. Last updated: 2026-10-27.
 
 ## Current phase
 
-**Phase 4 (Mobile worker app): code complete, pending the owner's phone test, a final `pnpm dev`
-check, and commit.** Nothing from Phase 4 is committed. `main` has Phase 1 (`d03c843`), Phase 2
-(`1fd2988`), and Phase 3 (`8c8283a`). **Phase 5 (Offline mode & sync) is next.** Phases are
+**Phase 4 (Mobile worker app) is committed and pushed (`280c50a`, 2026-10-17); the owner's phone
+test is still pending.** `main` has Phase 1 (`d03c843`), Phase 2 (`1fd2988`), Phase 3
+(`8c8283a`), and Phase 4 (`280c50a`). **Phase 5 (Offline mode & sync) is next.** Phases are
 defined in [ROADMAP.md](ROADMAP.md).
+
+**The owner's local copy was lost and restored from GitHub on 2026-10-27** (folder
+`Operations_App_restored`). Phase 5 work done after 2026-10-17 was never pushed and is gone; it is
+being redone. `.env` was recreated from `.env.example`.
 
 **Phase 3 is accepted**: at the start of the Phase 4 session (2026-10-17) the owner reported that
 `pnpm db:reset` ran, that sign-in works in the browser for `aylin` (admin), `selin` (supervisor),
@@ -95,12 +99,20 @@ agents unless a line says otherwise:
 - Node 24.20.0, pnpm 12.11.2, Git 2.55, Docker Desktop with the WSL 2 backend. Windows long paths
   enabled.
 - Containers `operations-app-postgres-1` and `operations-app-minio-1` run (both healthy on
-  2026-10-17). Docker Desktop stopped on its own once on 2026-10-13 (cause unknown).
-- Branch `main`, three commits. All Phase 4 work is uncommitted in the working tree, including the
-  untracked `docs/prompts/phase-4.md`, the new migration, and the new ADRs.
-- The local `.env` (git-ignored) has every key of `.env.example`, including the Phase 4 storage,
-  notification, MinIO, and mobile variables (checked by key name only on 2026-10-17).
-  `EXPO_PUBLIC_EAS_PROJECT_ID` is empty until the owner runs `eas init`.
+  2026-10-27). Docker Desktop stopped on its own once on 2026-10-13 (cause unknown).
+- **Port 5432 on this PC is taken** by a portable PostgreSQL of another project (Kaneri Tender
+  Intelligence Platform). Since 2026-10-27 the local `.env` uses `POSTGRES_PORT=5433` and port
+  5433 in `DATABASE_URL` and `DATABASE_URL_TEST`; the container was recreated with that mapping
+  (data volume kept). `.env.example` still shows 5432, the default.
+- The `ops` database user's password in the container volume was set to the new `.env` value on
+  2026-10-27 (the old `.env` was lost with the local copy).
+- **The development database `operations_app` still holds a migration from the lost Phase 5 work
+  (`20261018090000_phase5_offline_sync`) that is not in the repo.** It needs the owner's
+  `pnpm db:reset` (agents may not run it). The test database is rebuilt by the integration tests.
+- Branch `main`, four commits, in sync with `origin/main` (private GitHub repository
+  `wesamalhroubuni-rgb/hz-operations-app`).
+- The local `.env` (git-ignored) was recreated from `.env.example` on 2026-10-27 (development
+  placeholders). `EXPO_PUBLIC_EAS_PROJECT_ID` is empty until the owner runs `eas init`.
 - User ids are generated, so they change on every reset. Sign in with identifiers instead.
 
 ## Known limitations
@@ -202,6 +214,19 @@ how the outbox consumer avoids missing late-committing events (the 60-second set
 the mobile bundle identifiers come from (environment variables).
 
 ## Session log
+
+### 2026-10-27: Restore after local data loss
+
+- The owner's local copy was lost. The repository was cloned again from GitHub (`main` at
+  `280c50a`, Phase 4) into `Operations_App_restored`. Any Phase 5 work after 2026-10-17 was never
+  pushed and is lost.
+- Recreated `.env` from `.env.example`. Moved the local database to port 5433 (5432 is taken by
+  another project's PostgreSQL on this PC) and set the container's `ops` password to the new
+  `.env` value.
+- Verified on 2026-10-27: `pnpm install`, `build`, `lint`, `typecheck`, `test` (477 api unit tests
+  and the other packages), and `test:integration` (1,339 tests in 18 suites) pass.
+- Open: the owner's `pnpm db:reset` (the development database holds the lost Phase 5 migration);
+  the Phase 4 phone test.
 
 ### 2026-10-16 to 2026-10-17: Phase 4 mobile worker app, file storage, notifications
 
