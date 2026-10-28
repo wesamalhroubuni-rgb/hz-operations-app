@@ -317,6 +317,7 @@ describe('permissions matrix: who sees what', () => {
               'createdAt',
               'id',
               'name',
+              'offlineMaxBackdateDays',
               'settings',
               'slug',
               'updatedAt',
@@ -331,6 +332,7 @@ describe('permissions matrix: who sees what', () => {
             name: 'Alpha Works',
             slug: w.alpha.slug,
             workLogEditWindowHours: 24,
+            offlineMaxBackdateDays: 7,
           });
         }
       },
@@ -364,6 +366,51 @@ describe('permissions matrix: who sees what', () => {
         'GET /audit-events/:id': ok,
         'GET /outbox-events': ok,
       });
+    });
+
+    // Policy sync.pull (ADR-0008): every role; the content is the caller's own slice, through
+    // the visibility filters. Beta's records never appear.
+    it.each(VIEWERS)('GET /sync/pull as %s: own slice only', async (viewer) => {
+      const response = await api(viewer).get('/sync/pull');
+      if (viewer === 'noMember') {
+        expect(response.status).toBe(403);
+        return;
+      }
+      expect(response.status).toBe(200);
+      const names = (ids: string[]) => ids.map((id) => w.nameOf(id)).sort();
+      const body = response.body;
+      const assigned = TASKS.filter(
+        (task) =>
+          TASK_TEMPLATES[task].org === 'alpha' &&
+          TASK_TEMPLATES[task].assignees.includes(viewer) &&
+          VISIBLE_TASKS[viewer].includes(task),
+      );
+      const own = (Object.keys(LOG_TEMPLATES) as LogName[]).filter(
+        (log) => LOG_TEMPLATES[log].author === viewer && LOG_TEMPLATES[log].org === 'alpha',
+      );
+      expect({
+        full: body.full,
+        organization: body.organization.id,
+        tasks: names(body.tasks.ids),
+        sites: names(body.sites.ids),
+        teams: names(body.teams.ids),
+        workLogs: names(body.workLogs.ids),
+        logTypes: body.logTypes.ids,
+      }).toEqual({
+        full: true,
+        organization: w.alpha.id,
+        tasks: [...assigned].sort(),
+        sites: [...VISIBLE_SITES[viewer]].sort(),
+        teams: [...VISIBLE_TEAMS[viewer]].sort(),
+        workLogs: own.sort(),
+        logTypes: [w.logTypeId],
+      });
+      // A full pull sends every record of the sets, and nothing else.
+      for (const resource of ['tasks', 'sites', 'teams', 'workLogs', 'logTypes'] as const) {
+        expect((body[resource].upserts as Json[]).map((item) => item.id).sort()).toEqual(
+          [...body[resource].ids].sort(),
+        );
+      }
     });
 
     it.each(VIEWERS)('GET /log-types as %s: every member reads them', async (viewer) => {

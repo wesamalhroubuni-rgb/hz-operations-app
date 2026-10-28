@@ -4,8 +4,10 @@ import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 
 import { FilterChips } from '../components/FilterChips';
 import { TaskRow } from '../components/rows';
-import { EmptyState, ErrorState, LoadingState } from '../components/StateViews';
-import { useMyTasks } from '../data/queries';
+import { EmptyState, LoadingState } from '../components/StateViews';
+import { SyncReadErrorState } from '../components/SyncNotices';
+import { SyncBanner } from '../components/SyncBanner';
+import { readErrorKind, useMyTasks } from '../data/queries';
 import { useNow } from '../hooks/useNow';
 import { t } from '../i18n';
 import { countTasksByFilter, filterTasks, TASK_FILTERS, type TaskFilter } from '../logic/tasks';
@@ -33,11 +35,15 @@ export function TasksScreen({ navigation }: Readonly<TabScreenProps<'Tasks'>>) {
 
   return (
     <View style={styles.screen}>
+      <SyncBanner padded />
       <FilterChips options={options} value={filter} onChange={setFilter} />
       {tasks.isPending ? (
         <LoadingState />
       ) : tasks.isError ? (
-        <ErrorState onRetry={() => void tasks.refetch()} />
+        <SyncReadErrorState
+          kind={readErrorKind(tasks.error)}
+          onRetry={() => void tasks.refetch()}
+        />
       ) : (
         <FlatList
           data={shown}

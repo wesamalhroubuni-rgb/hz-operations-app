@@ -1,18 +1,23 @@
 # MEMORY.md
 
 Current state of the HZ project (repository folder `Operations_App`, packages `@ops/*`). Update this
-file at the end of every session. Newest session log entry goes first. Last updated: 2026-10-27.
+file at the end of every session. Newest session log entry goes first. Last updated: 2026-10-28.
 
 ## Current phase
 
-**Phase 4 (Mobile worker app) is committed and pushed (`280c50a`, 2026-10-17); the owner's phone
-test is still pending.** `main` has Phase 1 (`d03c843`), Phase 2 (`1fd2988`), Phase 3
-(`8c8283a`), and Phase 4 (`280c50a`). **Phase 5 (Offline mode & sync) is next.** Phases are
-defined in [ROADMAP.md](ROADMAP.md).
+**Phase 5 (Offline mode & sync) is code complete, tested, and reviewed (2026-10-27), and is about
+to be committed by the coordinator as "Phase 5: ..." and pushed.** The owner's emulator or phone
+test is pending (README section 6). `main` has Phase 1 (`d03c843`), Phase 2 (`1fd2988`), Phase 3
+(`8c8283a`), Phase 4 (`280c50a`), and the restore note (`924446e`). **Phase 6 (Web manager
+dashboard) is next.** Phases are defined in [ROADMAP.md](ROADMAP.md).
+
+**Before using the app the owner must run `pnpm db:reset` once**: the development database
+`operations_app` holds a stray migration `20261018090000_phase5_offline_sync` from the lost work;
+the repository's migration is `20261027090000_phase5_offline_sync`. Agents may not run it.
 
 **The owner's local copy was lost and restored from GitHub on 2026-10-27** (folder
-`Operations_App_restored`). Phase 5 work done after 2026-10-17 was never pushed and is gone; it is
-being redone. `.env` was recreated from `.env.example`.
+`Operations_App_restored`). The first Phase 5 attempt (after 2026-10-17) was never pushed and is
+gone; Phase 5 was rebuilt on 2026-10-27. `.env` was recreated from `.env.example`.
 
 **Phase 3 is accepted**: at the start of the Phase 4 session (2026-10-17) the owner reported that
 `pnpm db:reset` ran, that sign-in works in the browser for `aylin` (admin), `selin` (supervisor),
@@ -23,22 +28,22 @@ technical name of the folder, the packages, the API domain folder, and the datab
 
 ## What exists
 
-| Area              | State                                                                                                                                                                                                                                                                                                                                     |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Monorepo          | pnpm 12 workspaces + Turborepo 2. Root scripts: `dev`, `build`, `lint`, `typecheck`, `test`, `test:integration`, `format`, `format:check`, `db:up`, `db:down`, `db:logs`, `db:migrate`, `db:seed`, `db:reset`.                                                                                                                            |
-| Docker Compose    | PostgreSQL 17 and, since Phase 4, MinIO (`alpine/minio`, pinned by digest) for photos. `pnpm db:up` starts both; both bind to `127.0.0.1` by default.                                                                                                                                                                                     |
-| `packages/config` | Shared ESLint 10 flat config, Prettier config, three tsconfig presets. Unchanged since Phase 1.                                                                                                                                                                                                                                           |
-| `packages/shared` | Zod schemas and endpoint functions for every resource, `/auth/*`, and `/notifications`; the transport (refresh once on a 401); `createAuthSessionManager`; the attachment upload helper (`uploadAttachment`, resumable); custom-field form logic; custom-field validation; design tokens.                                                 |
-| `apps/api`        | NestJS 12 API, 56 paths. Platform: sign-in and sessions, the policy seam, S3-compatible file storage with image verification, notifications (in-app list, channels, Expo push, push tokens), the outbox consumer, audit log, outbox. Domain: the access layer on every route, the attachment upload flow and cleanup, notification rules. |
-| `apps/web`        | Next.js 16.4: `/login`, `/activate`, and a protected `/` (name, role, organization, sign-out, API status card). Unchanged in Phase 4.                                                                                                                                                                                                     |
-| `apps/mobile`     | Expo SDK 57 worker app: React Navigation, Home, Tasks, Task detail, New/Edit log (custom fields, photos, location), Logs, Log detail, Notifications, Profile; TanStack Query reads, one repository layer for writes, a persisted photo upload queue, drafts, i18n, push. Development build configured (`eas.json`). Never run on a phone. |
-| Database          | PostgreSQL in Docker on `127.0.0.1`. Four migrations applied to `operations_app` (the fourth, `20261017090000_phase4_mobile`, on 2026-10-17). It holds the Phase 3 seed from the owner's `pnpm db:reset`. `operations_app_test` is created by the integration tests.                                                                      |
-| Docs              | `AGENTS.md`, this file, `ARCHITECTURE.md` (with the permissions matrix), `ROADMAP.md`, `README.md` (including "Test on my phone"), ADR-0001 to ADR-0007, a `memory.md` in each app and package, the owner's phase prompts in `docs/prompts/`, the logo files in `docs/brand/`.                                                            |
-| Subagents         | `reviewer`, `docs-keeper`, `test-writer` in `.claude/agents/`.                                                                                                                                                                                                                                                                            |
+| Area              | State                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Monorepo          | pnpm 12 workspaces + Turborepo 2. Root scripts: `dev`, `build`, `lint`, `typecheck`, `test`, `test:integration`, `format`, `format:check`, `db:up`, `db:down`, `db:logs`, `db:migrate`, `db:seed`, `db:reset`.                                                                                                                                                                      |
+| Docker Compose    | PostgreSQL 17 and, since Phase 4, MinIO (`alpine/minio`, pinned by digest) for photos. `pnpm db:up` starts both; both bind to `127.0.0.1` by default.                                                                                                                                                                                                                               |
+| `packages/config` | Shared ESLint 10 flat config, Prettier config, three tsconfig presets. Unchanged since Phase 1.                                                                                                                                                                                                                                                                                     |
+| `packages/shared` | Zod schemas and endpoint functions for every resource, `/auth/*`, `/notifications`, and `/sync/pull`; the offline headers and typed error codes; the transport (refresh once on a 401, per-call headers); `createAuthSessionManager`; the attachment upload helper; custom-field form logic and validation; design tokens.                                                          |
+| `apps/api`        | NestJS 12 API, 57 paths. Platform: sign-in and sessions, the policy seam, idempotency (`Idempotency-Key`), S3-compatible file storage, notifications, the outbox consumer, audit log (with offline metadata), outbox. Domain: the access layer on every route, row versions and typed conflict codes, the attachment upload flow and cleanup, notification rules, `GET /sync/pull`. |
+| `apps/web`        | Next.js 16.4: `/login`, `/activate`, and a protected `/` (name, role, organization, sign-out, API status card). Unchanged since Phase 3.                                                                                                                                                                                                                                            |
+| `apps/mobile`     | Expo SDK 57 worker app: Home, Tasks, Task detail, New/Edit log (custom fields, photos, location), Logs, Log detail, Notifications, Profile, Sync. Offline since Phase 5: per-user SQLite cache and write queue, photo store, sync engine (NetInfo, foreground, background task), sync indicator and screen, edit drafts. Never run on a phone or emulator.                          |
+| Database          | PostgreSQL in Docker on `127.0.0.1` (port 5433 on this PC). `operations_app` has the four committed migrations, the Phase 3 seed, and a stray `20261018090000_phase5_offline_sync` from lost work; the new `20261027090000_phase5_offline_sync` is not applied to it (needs `pnpm db:reset`). `operations_app_test` is rebuilt by the integration tests.                            |
+| Docs              | `AGENTS.md`, this file, `ARCHITECTURE.md` (with the permissions matrix), `ROADMAP.md`, `README.md` (including "Test on my phone" and "Test offline mode in the Android emulator"), ADR-0001 to ADR-0008, a `memory.md` in each app and package, the phase prompts in `docs/prompts/`, the coordinator's `docs/reports/phase-5.md`, the logo files in `docs/brand/`.                 |
+| Subagents         | `reviewer`, `docs-keeper`, `test-writer` in `.claude/agents/`.                                                                                                                                                                                                                                                                                                                      |
 
-Not built yet: offline storage and sync (Phase 5), activation deep links into the app, the
-signed-in state when the server is unreachable at start, any web feature screen (Phase 6), real
-email or SMS delivery of codes, and the AI layer. See [ARCHITECTURE.md](ARCHITECTURE.md).
+Not built yet: activation deep links into the app, any web feature screen (Phase 6), real email
+or SMS delivery of codes, encryption of the phone's local database, and the AI layer. See
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Signing in
 
@@ -50,13 +55,27 @@ email or SMS delivery of codes, and the AI layer. See [ARCHITECTURE.md](ARCHITEC
 - New users get a one-time activation code from an admin (`POST /users`); in development the code
   and link are in the response and the API log. Reset codes: `POST /users/:id/password-reset`.
 - The development database has the Phase 3 seed (the owner ran `pnpm db:reset` before
-  2026-10-17), so every demo user can sign in. The seed has no photos and no notifications.
+  2026-10-17), but its migration history diverges (see Current phase), so the Phase 5 API needs
+  the owner's `pnpm db:reset` first. The seed has no photos and no notifications.
 
 ## Verified
 
 **Phase 3 acceptance (owner, reported 2026-10-17)**: `pnpm db:reset` ran; sign-in works in a real
 browser for `aylin`, `selin`, and `deniz`; Phase 3 committed (`8c8283a`). The rest of the Phase 3
 manual list (Swagger per role, activation, lockout, sign-out everywhere) is not recorded as run.
+
+**In the Phase 5 session (2026-10-27)**, as reported by the coordinator unless a line says
+otherwise:
+
+- Unit tests: 689 `@ops/shared` (14 files), 513 `@ops/api` (24 suites), 46 `@ops/web`, 305
+  `@ops/mobile` (26 suites). The docs-keeper re-ran `pnpm test`, `pnpm lint`, and `pnpm typecheck`
+  on 2026-10-27 (all pass; mobile then had 304, the 305th test, a guard against discarding an item
+  being sent, was added afterwards).
+- Integration tests: 1,416 in 19 suites (new: `offline-sync`, 62 tests). Not re-run by the
+  docs-keeper.
+- `prisma migrate status` on 2026-10-28 (docs-keeper): the development database lacks
+  `20261027090000_phase5_offline_sync` and holds the stray `20261018090000_phase5_offline_sync`.
+- The reviewer's "pass with fixes"; the fixes are in the session log.
 
 **In the Phase 4 session (2026-10-16 to 2026-10-17)**, as reported by the coordinator and the
 agents unless a line says otherwise:
@@ -84,15 +103,19 @@ agents unless a line says otherwise:
 
 ## Not yet verified
 
-1. **Anything on a phone**: the screens, camera and gallery, location, SecureStore, the upload
-   queue, push. The owner will test over the phone's hotspot (README section 5).
-2. **A development build**: configured (`expo-dev-client`, `apps/mobile/eas.json`), never built
-   or installed. It needs the owner's Expo account and `eas init`.
-3. **Real push delivery through Expo** (only a fake Expo client in tests).
-4. **AWS S3 or any provider other than MinIO.**
-5. **The full `pnpm dev` with MinIO and the web app in a browser after Phase 4** (the coordinator's
-   final check).
-6. The web status card's automatic recovery, watched by a person (unit tested).
+1. **Anything on a phone or in the emulator**: the screens, camera and gallery, location,
+   SecureStore, push, and all of Phase 5 on a device (SQLite, the file system, NetInfo, the
+   background task, airplane mode, the conflict case). Only test fakes cover them. The owner can
+   use the emulator `hz_pixel` (README section 6) or the phone's hotspot (README section 5).
+2. **The Phase 5 migration on the development database** (after the owner's `pnpm db:reset`).
+3. **A development build**: configured (`expo-dev-client`, `apps/mobile/eas.json`), never built
+   or installed. It needs the owner's Expo account and `eas init`. Push and background sync need
+   it.
+4. **Real push delivery through Expo** (only a fake Expo client in tests).
+5. **AWS S3 or any provider other than MinIO.**
+6. **The full `pnpm dev` with MinIO and the web app in a browser** after Phase 5 (not recorded by
+   the docs-keeper).
+7. The web status card's automatic recovery, watched by a person (unit tested).
 
 ## Machine and repository state
 
@@ -107,17 +130,23 @@ agents unless a line says otherwise:
 - The `ops` database user's password in the container volume was set to the new `.env` value on
   2026-10-27 (the old `.env` was lost with the local copy).
 - **The development database `operations_app` still holds a migration from the lost Phase 5 work
-  (`20261018090000_phase5_offline_sync`) that is not in the repo.** It needs the owner's
-  `pnpm db:reset` (agents may not run it). The test database is rebuilt by the integration tests.
-- Branch `main`, four commits, in sync with `origin/main` (private GitHub repository
-  `wesamalhroubuni-rgb/hz-operations-app`).
+  (`20261018090000_phase5_offline_sync`) that is not in the repo, and lacks
+  `20261027090000_phase5_offline_sync`** (`prisma migrate status`, 2026-10-28). It needs the
+  owner's `pnpm db:reset` (agents may not run it). The test database is rebuilt by the
+  integration tests.
+- Android SDK under `%LOCALAPPDATA%\Android\Sdk` with the emulator and `adb`; the virtual device
+  `hz_pixel` (Android 35, Google APIs, x86_64) exists. `ANDROID_HOME` is not set system-wide
+  (README section 6 sets it in the Expo terminal). Never started for this project yet.
+- Branch `main`, five commits up to `924446e`, in sync with `origin/main` (private GitHub
+  repository `wesamalhroubuni-rgb/hz-operations-app`); the Phase 5 work is uncommitted at the time
+  of writing.
 - The local `.env` (git-ignored) was recreated from `.env.example` on 2026-10-27 (development
   placeholders). `EXPO_PUBLIC_EAS_PROJECT_ID` is empty until the owner runs `eas init`.
 - User ids are generated, so they change on every reset. Sign in with identifiers instead.
 
 ## Known limitations
 
-Security (accepted for now; see ADR-0004 to ADR-0007)
+Security (accepted for now; see ADR-0004 to ADR-0008)
 
 - **Rate limits are in memory, per process** (sign-in and, since Phase 4, upload steps), and so is
   the image-decode limit. Several API instances count separately; a restart forgets everything. A
@@ -130,7 +159,8 @@ Security (accepted for now; see ADR-0004 to ADR-0007)
   them (ADR-0006).
 - **Purge window**: upload bytes of attachments archived while pending are purged for 48 hours
   after their URL expired; a longer storage outage leaves them behind.
-- **A lost `startUpload` answer** can leave a second pending attachment (visible only to the
+- **A lost `startUpload` answer** of a start without an attachment `clientId` (the phone always
+  sends one since Phase 5) can leave a second pending attachment (visible only to the
   uploader) until the cleanup archives it after 24 hours.
 - **Push-token rebinding** is accepted: whoever registers a token last receives its pushes
   (audited, ADR-0007).
@@ -149,12 +179,20 @@ Security (accepted for now; see ADR-0004 to ADR-0007)
 
 Behaviour
 
-- **An author cannot complete a photo upload after the edit window closed** (the same rule as
-  starting it). Accepted.
+- **Offline (ADR-0008)**: the phone's SQLite database and photo folder are protected only by the
+  app sandbox and device encryption (no SQLCipher). An edit resent after its idempotency key
+  expired (14 days), whose log was approved meanwhile, shows as refused (`already_reviewed`)
+  although it took effect; the worker discards it. Approved logs can still receive declared
+  photos for 30 days. An offline create whose task, site, or team is no longer usable is stored
+  without that link (reported and audited). A user whose session expired and who was replaced by
+  another user on the phone keeps their queue until they sign in again (never swept
+  automatically). Background sync is best effort and needs the development build. Logs older
+  than 30 days and photos already on the server need a connection.
 - **Notification text is English only**, rendered on the server; the push shows generic text.
 - Redaction in audit and outbox events is by key name at any depth.
 - Old log type definitions are not kept; `logTypeVersion` resolves only through the audit log.
-- No optimistic locking or row version: concurrent updates are last-write-wins.
+- Row versions on tasks and work logs only; other resources are last-write-wins, and so are task
+  and log writes that send no `expectedVersion` (the web and online screens).
 - Outbox sequence numbers are assigned at insert; the consumer's 60-second settle rule covers
   late commits, and it re-reads that window on every poll.
 - Scope resolution reads every membership, site, and team of the organization once per request.
@@ -164,8 +202,10 @@ Behaviour
 
 Clients and tooling
 
-- The mobile app is online only (Phase 5). When the server is unreachable at start it shows the
-  sign-in screen with a notice and keeps the tokens.
+- The first sign-in on a phone needs the server; after that the app opens offline from the stored
+  identity and cache.
+- To test offline on this PC use the emulator with `adb reverse` (README section 6); in airplane
+  mode `adb reverse` may still reach the PC, so stop the API for a strict test.
 - Activation links open the web page, not the app (no deep links).
 - **Android Expo Go cannot receive remote push** (since SDK 53); push on Android needs the
   development build. iOS Expo Go can receive push with an EAS project id.
@@ -189,9 +229,8 @@ Clients and tooling
 
 - Before the first store build: the final mobile bundle identifiers, and which Expo account owns
   the EAS project.
-- Phase 5: which local database, and what is the conflict rule? Does the server need a row
-  version? How long may the app stay signed in offline, and what does it show when the session
-  turns out to be revoked on reconnect?
+- With the owner (ADR-0008): is the 30-day kept-queue period right, and should the phone's local
+  database be encrypted (SQLCipher) before production?
 - Which deep-link scheme or universal link should activation links use, so they open the app, and
   in which phase?
 - Phase 6: which admin screens are needed for users, memberships, codes, and sessions? Where is a
@@ -213,7 +252,66 @@ the size limit (10 MiB, configurable); the push provider (Expo push, behind a ch
 how the outbox consumer avoids missing late-committing events (the 60-second settle rule); where
 the mobile bundle identifiers come from (environment variables).
 
+Answered in Phase 5 (see [ADR-0008](docs/decisions/0008-offline-storage-sync-and-conflicts.md)):
+the local database (SQLite, one per user), the conflict rule (server is the source of truth, typed
+refusals, the supervisor's change wins), row versions on tasks and work logs, and the session
+rule (an unreachable server never signs out; a refused refresh keeps the queue and asks to sign
+in again).
+
 ## Session log
+
+### 2026-10-27: Phase 5 offline mode and sync
+
+- **What changed**
+  - Database: migration `20261027090000_phase5_offline_sync`. `Task.version`, `WorkLog.version`,
+    `submittedOffline`, `deviceCreatedAt`, `clockSkewSeconds`, `declaredAttachmentClientIds`;
+    `Attachment.clientId` (unique per organization); `AuditEvent.metadata`; platform table
+    `IdempotencyRecord`; organization setting `offlineMaxBackdateDays` (default 7).
+  - API platform: `src/platform/idempotency/` (`@Idempotent()`, global interceptor, hourly
+    expiry); the request context reads `x-client-sync` and `x-device-time`; `AuditService` writes
+    the offline metadata; CORS allows and exposes the new headers.
+  - API domain: row versions and `expectedVersion` with the no-op rule
+    (`common/concurrency.ts`, row locks); ten typed error codes; offline creates (backdating
+    limit, dropped references, clock skew); declared photos for 30 days, renew and complete for 30
+    days; `src/operations/sync/` (`GET /sync/pull`, policy `sync.pull`, cursor with a scope
+    fingerprint). 57 paths.
+  - `@ops/shared`: `domain/sync.ts`, `platform/offline-sync.ts` (headers, clock skew), the new
+    codes with `API_ERROR_STATUS` and `RETRYABLE_API_ERROR_CODES`, body and response fields,
+    per-call headers in the transport, `sync` in `createApiClient`.
+  - Mobile: `src/offline/` (per-user SQLite store, write queue, photo store, sync engine, NetInfo,
+    background task, offline identity, lifecycle and sweep, migration of the Phase 4 upload
+    queue); repositories write to the queue; reads from the cache with the queue on top; sync
+    indicator, banners, Sync screen, per-log state, sign-out dialog; edit-form drafts. New
+    packages `expo-sqlite`, `expo-background-task`, `expo-task-manager`,
+    `@react-native-community/netinfo`; `expo` ~57.0.31 and Expo patch updates.
+  - Docs: ADR-0008 (amends ADR-0005 and ADR-0006 in part), README section 6 (Android emulator),
+    every document updated; the coordinator wrote `docs/reports/phase-5.md`.
+- **Why**: Phase 5 of the roadmap (`docs/prompts/phase-5.md`): workers with weak or no signal
+  keep working, and every change reaches the server exactly once under the normal permissions.
+- **How it was built**: a contracts agent first (schema, `@ops/shared`, `src/offline/types.ts`,
+  ADR-0008), then three parallel agents (backend; mobile store and queue; sync engine and UI),
+  then the `test-writer`, the `reviewer`, and the `docs-keeper`.
+  - The test-writer found a double-save bug (fixed).
+  - The reviewer returned "pass with fixes". Blocking, fixed: the engine sent a stale copy of a
+    queued item (an edit merged meanwhile could be lost); `markSending` now returns the current
+    copy. Major, fixed: the clientId-to-server-id link was lost when the cache was cleared (now
+    kept with the queue, `linkServerId`). Minor, fixed: a photo deleted before the upload was
+    recorded done, partial photo saves, the sweep deleting users who never chose to keep their
+    queue, drafts left after sign-out, the background task not unregistered, Expo patch drift.
+    Documented: an edit replayed after its log was approved shows as refused.
+  - Coordinator decision: only a queue the user explicitly kept with "keep for later" at sign-out
+    ages out, after 30 days; a user replaced while their session had expired keeps their queue
+    until they sign in again.
+  - After the review, a guard was added so an item already being sent cannot be discarded (mobile
+    tests 304 to 305).
+- **Verified**: see "Verified" above (unit and integration counts, lint and typecheck re-run by
+  the docs-keeper, `prisma migrate status`).
+- **Left to do**
+  - Owner: `pnpm db:reset`; the emulator test (README section 6) including the conflict case;
+    the phone test; the development build for push and background sync.
+  - Coordinator: commit "Phase 5: ..." and push.
+  - Later: encryption of the local database and the 30-day kept-queue period (with the owner);
+    Phase 6 web screens to review synced logs (showing "sent offline" and the clock warning).
 
 ### 2026-10-27: Restore after local data loss
 

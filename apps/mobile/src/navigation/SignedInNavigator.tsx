@@ -9,6 +9,8 @@ import type { ComponentProps } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { touch } from '../components/sizes';
+import { SyncIndicator } from '../components/SyncIndicator';
+import { SyncProvider } from '../components/SyncProvider';
 import { useNotifications } from '../data/queries';
 import { t } from '../i18n';
 import { HomeScreen } from '../screens/HomeScreen';
@@ -18,6 +20,7 @@ import { LogsScreen } from '../screens/LogsScreen';
 import { NotificationsScreen } from '../screens/NotificationsScreen';
 import { PhotoViewerScreen } from '../screens/PhotoViewerScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
+import { SyncScreen } from '../screens/SyncScreen';
 import { TaskDetailScreen } from '../screens/TaskDetailScreen';
 import { TasksScreen } from '../screens/TasksScreen';
 import type { SignedInStackParamList, TabParamList } from './types';
@@ -63,6 +66,7 @@ function TabNavigator() {
           fontSize: fontSizes.lg,
         },
         headerShadowVisible: false,
+        headerRight: () => <SyncIndicator />,
         sceneStyle: { backgroundColor: colors.background },
         tabBarStyle: {
           height: tabBarHeight,
@@ -118,31 +122,37 @@ function TabNavigator() {
   );
 }
 
-/** The signed-in app: the tabs, with the detail screens stacked above them. */
+/**
+ * The signed-in app: the tabs, with the detail screens stacked above them, inside the sync
+ * state of the user's offline session (indicator, banners, Sync screen).
+ */
 export function SignedInNavigator() {
   return (
-    <Stack.Navigator screenOptions={headerOptions}>
-      <Stack.Screen name="Tabs" component={TabNavigator} options={{ headerShown: false }} />
-      <Stack.Screen
-        name="TaskDetail"
-        component={TaskDetailScreen}
-        options={{ title: t('tasks.detailTitle') }}
-      />
-      <Stack.Screen
-        name="LogForm"
-        component={LogFormScreen}
-        options={{ title: t('logForm.titleNew') }}
-      />
-      <Stack.Screen
-        name="LogDetail"
-        component={LogDetailScreen}
-        options={{ title: t('logs.detailTitle') }}
-      />
-      <Stack.Screen
-        name="PhotoViewer"
-        component={PhotoViewerScreen}
-        options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade' }}
-      />
-    </Stack.Navigator>
+    <SyncProvider>
+      <Stack.Navigator screenOptions={headerOptions}>
+        <Stack.Screen name="Tabs" component={TabNavigator} options={{ headerShown: false }} />
+        <Stack.Screen
+          name="TaskDetail"
+          component={TaskDetailScreen}
+          options={{ title: t('tasks.detailTitle') }}
+        />
+        <Stack.Screen
+          name="LogForm"
+          component={LogFormScreen}
+          options={{ title: t('logForm.titleNew') }}
+        />
+        <Stack.Screen
+          name="LogDetail"
+          component={LogDetailScreen}
+          options={{ title: t('logs.detailTitle') }}
+        />
+        <Stack.Screen
+          name="PhotoViewer"
+          component={PhotoViewerScreen}
+          options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade' }}
+        />
+        <Stack.Screen name="Sync" component={SyncScreen} options={{ title: t('sync.title') }} />
+      </Stack.Navigator>
+    </SyncProvider>
   );
 }

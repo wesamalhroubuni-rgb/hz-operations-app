@@ -260,6 +260,10 @@ model Task {
   /// Why the task has its current status, when that needs saying (required for `blocked`).
   /// Cleared on every status change that gives none.
   statusReason   String?
+  /// Optimistic-concurrency counter (ADR-0008): 1 on create, +1 on every change of the row,
+  /// its status or its assignees (and on archive/restore). Clients send it back as
+  /// `expectedVersion`; a mismatch is a 409 `version_conflict`.
+  version        Int          @default(1)
   createdAt      DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
   archivedAt     DateTime?    @db.Timestamptz(3)
@@ -322,6 +326,25 @@ model WorkLog {
   source           WorkLogSource @default(manual)
   /// Reserved for AI-derived data (Phase 7). Always null today.
   aiMetadata       Json?
+  /// Optimistic-concurrency counter (ADR-0008): 1 on create, +1 on every change (content,
+  /// status, review, archive). Clients send it back as `expectedVersion`.
+  version          Int           @default(1)
+  /// The create request carried `X-Client-Sync: offline`: the log was written on the phone
+  /// without a connection and sent later by the sync queue (ADR-0008).
+  submittedOffline Boolean       @default(false)
+  /// The phone's clock when the worker saved the log (body field `deviceCreatedAt`).
+  /// Informative only: never used by a rule.
+  deviceCreatedAt  DateTime?     @db.Timestamptz(3)
+  /// Phone clock minus server clock, in whole seconds, measured from the `X-Device-Time`
+  /// header of the create request. Null when the header was absent. A magnitude above
+  /// CLOCK_SKEW_FLAG_SECONDS (@ops/shared) is flagged to reviewers.
+  clockSkewSeconds Int?
+  /// The attachment clientIds declared in the create request (`attachmentClientIds`): the
+  /// photos that are "part of the original submission" and may still be uploaded by the author
+  /// after the edit window (ADR-0008). Never changed after create.
+  declaredAttachmentClientIds String[] @default([]) @db.Uuid
+  /// The server receive time. For a log created offline it is when the sync reached the
+  /// server; the edit window counts from it.
   createdAt        DateTime      @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime      @updatedAt @db.Timestamptz(3)
   archivedAt       DateTime?     @db.Timestamptz(3)
@@ -351,6 +374,10 @@ model Attachment {
   organizationId String           @db.Uuid
   workLogId      String           @db.Uuid
   uploadedById   String           @db.Uuid
+  /// Generated on the device (ADR-0008). Starting an upload again with the same clientId returns
+  /// this attachment instead of creating another; somebody else's clientId is a 409. Null for
+  /// uploads started without one (web, older clients).
+  clientId       String?          @db.Uuid
   fileName       String
   mimeType       String
   /// Declared by the client when the upload starts; replaced by the stored size on completion.
@@ -372,6 +399,7 @@ model Attachment {
   uploadedBy   User         @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
 
   @@unique([organizationId, storageKey])
+  @@unique([organizationId, clientId])
   @@index([organizationId, workLogId])
   @@index([status, createdAt])
 }
@@ -396,6 +424,10 @@ model AuditEvent {
   /// Field-level diff: { field: { from, to } }. Null on create and when nothing is comparable.
   changes        Json?
   correlationId  String?
+  /// How the change reached the API, set by the platform from the request headers (ADR-0008):
+  /// `{ via: 'offline_sync', deviceTime, serverTime, clockSkewSeconds }` for a write sent by
+  /// the phone's offline queue. Null for an ordinary request.
+  metadata       Json?
   occurredAt     DateTime       @default(now()) @db.Timestamptz(3)
 
   @@index([organizationId, occurredAt])
@@ -567,4 +599,38 @@ model OutboxConsumerCursor {
   consumer     String   @id
   lastSequence BigInt   @default(0)
   updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency (platform table; no foreign keys to business tables). ADR-0008.
+// ---------------------------------------------------------------------------
+
+/// One `Idempotency-Key` used by one user on a route marked idempotent. The first request
+/// claims the key (`statusCode` null while it runs); a repeat with the same request hash
+/// replays the stored status and body; a repeat with another hash is a 422
+/// `idempotency_key_reused`; a repeat while the first still runs is a 409
+/// `request_in_progress` until `lockedUntil`, after which it may take over. Rows are deleted
+/// after `expiresAt` (14 days). The stored body may hold personal data and is only ever
+/// returned to the same user.
+model IdempotencyRecord {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  organizationId String    @db.Uuid
+  userId         String    @db.Uuid
+  /// The client's key (a UUID).
+  key            String    @db.Uuid
+  method         String
+  /// The request path without the query string.
+  path           String
+  /// SHA-256 (hex) of the method, the path and the canonical JSON body.
+  requestHash    String
+  /// Null while the first request runs; the stored HTTP status afterwards.
+  statusCode     Int?
+  responseBody   Json?
+  lockedUntil    DateTime  @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  completedAt    DateTime? @db.Timestamptz(3)
+  expiresAt      DateTime  @db.Timestamptz(3)
+
+  @@unique([organizationId, userId, key])
+  @@index([expiresAt])
 }

@@ -1,3 +1,4 @@
+import type { ApiErrorCode } from '@ops/shared';
 import { ApiException } from '../../platform/http';
 
 /**
@@ -9,10 +10,19 @@ import { ApiException } from '../../platform/http';
  * - `forbidden`: the caller can see the record but may not do this to it. The API answers 403.
  * - `conflict`: nobody may do this to the record in its current state (for example a status
  *   move that does not exist). The API answers 409.
+ *
+ * A refusal may carry a specific error `code` (ADR-0008: `edit_window_closed`,
+ * `already_reviewed`, `task_not_assigned`, ...) that a client branches on. The code decides the
+ * status (`API_ERROR_STATUS` in @ops/shared); without one, the outcome's generic code is used.
  */
 export type Decision =
   | { allowed: true }
-  | { allowed: false; outcome: 'not_found' | 'forbidden' | 'conflict'; reason: string };
+  | {
+      allowed: false;
+      outcome: 'not_found' | 'forbidden' | 'conflict';
+      reason: string;
+      code?: ApiErrorCode;
+    };
 
 export const ALLOW: Decision = { allowed: true };
 
@@ -20,12 +30,17 @@ export function notVisible(): Decision {
   return { allowed: false, outcome: 'not_found', reason: 'The record is outside your scope' };
 }
 
-export function forbid(reason: string): Decision {
-  return { allowed: false, outcome: 'forbidden', reason };
+export function forbid(reason: string, code?: ApiErrorCode): Decision {
+  return { allowed: false, outcome: 'forbidden', reason, ...(code ? { code } : {}) };
 }
 
-export function conflict(reason: string): Decision {
-  return { allowed: false, outcome: 'conflict', reason };
+export function conflict(reason: string, code?: ApiErrorCode): Decision {
+  return { allowed: false, outcome: 'conflict', reason, ...(code ? { code } : {}) };
+}
+
+/** The specific code of a refusal, or null (allowed, or a refusal with a generic code). */
+export function codeOf(decision: Decision): ApiErrorCode | null {
+  return decision.allowed ? null : (decision.code ?? null);
 }
 
 /** The first refusal of a list of decisions, or `ALLOW` when every one allows. */
@@ -42,6 +57,9 @@ export function allOf(...decisions: Decision[]): Decision {
 export function enforce(decision: Decision, entity: string, id?: string): void {
   if (decision.allowed) {
     return;
+  }
+  if (decision.outcome !== 'not_found' && decision.code) {
+    throw ApiException.of(decision.code, decision.reason);
   }
   switch (decision.outcome) {
     case 'not_found':

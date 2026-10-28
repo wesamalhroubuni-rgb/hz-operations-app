@@ -54,7 +54,8 @@ export type SaveOutcome =
  * the upload queue after the log exists.
  */
 export function useLogForm(params: LogFormParams) {
-  const { user, repositories, uploads, drafts } = useData();
+  const { user, repositories, drafts } = useData();
+  const editLogId = params.mode === 'edit' ? params.logId : null;
   const isNew = params.mode === 'new';
   const prefillTaskId = params.mode === 'new' ? (params.taskId ?? null) : null;
 
@@ -155,6 +156,26 @@ export function useLogForm(params: LogFormParams) {
     setReady(true);
   }
 
+  // Editing: an unsaved edit of this log kept on the phone (a crash, a restart, leaving the
+  // screen) comes back once the form is filled.
+  const [editDraftChecked, setEditDraftChecked] = useState(false);
+  useEffect(() => {
+    if (isNew || !ready || editDraftChecked || editLogId === null) return;
+    let cancelled = false;
+    void drafts.loadEdit(user.id, editLogId).then((draft) => {
+      if (cancelled) return;
+      setEditDraftChecked(true);
+      if (draft && draft.values.clientId === existing.data?.clientId) {
+        setValues(draft.values);
+        setPhotos(draft.photos.filter((photo) => localFileExists(photo.uri)));
+        setRestored(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [drafts, editDraftChecked, editLogId, existing.data?.clientId, isNew, ready, user.id]);
+
   // New log: site and team from the task, or the worker's only site/team, once the data is there.
   const placementInputsReady = prefillTaskId
     ? prefillTask.data !== undefined
@@ -169,6 +190,34 @@ export function useLogForm(params: LogFormParams) {
     });
     setValues((current) => ({ ...current, ...placement }));
   }
+
+  // The edit draft: written shortly after every change, removed when nothing differs any more.
+  useEffect(() => {
+    if (isNew || !ready || !editDraftChecked || saving || saved.current) return;
+    const original = existing.data;
+    if (!original || editLogId === null) return;
+    const timer = setTimeout(() => {
+      const built = buildUpdateBody(values, original, selectedType, photos.length, new Date());
+      if (photos.length > 0 || !built.ok || built.body !== null) {
+        void drafts.saveEdit(user.id, editLogId, { values, photos });
+      } else {
+        void drafts.clearEdit(user.id, editLogId);
+      }
+    }, DRAFT_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [
+    drafts,
+    editDraftChecked,
+    editLogId,
+    existing.data,
+    isNew,
+    photos,
+    ready,
+    saving,
+    selectedType,
+    user.id,
+    values,
+  ]);
 
   // The draft: written shortly after every change, removed when the form is empty again.
   useEffect(() => {
@@ -305,7 +354,8 @@ export function useLogForm(params: LogFormParams) {
   /** Throws the unsaved new log away (after the screen asked) and starts a fresh one. */
   const startOver = useCallback(async () => {
     for (const photo of photos) await deleteLocalFile(photo.uri);
-    await drafts.clear(user.id);
+    if (editLogId === null) await drafts.clear(user.id);
+    else await drafts.clearEdit(user.id, editLogId);
     setPlacementSettled(false);
     setPlacementTouched(false);
     setPhotos([]);
@@ -316,7 +366,7 @@ export function useLogForm(params: LogFormParams) {
       ...newLogFormValues(randomUUID(), { taskId: prefillTaskId }),
       location: current.location,
     }));
-  }, [drafts, photos, prefillTaskId, user.id]);
+  }, [drafts, editLogId, photos, prefillTaskId, user.id]);
 
   const save = useCallback(async (): Promise<SaveOutcome> => {
     if (saving) return { kind: 'failed' };
@@ -332,7 +382,8 @@ export function useLogForm(params: LogFormParams) {
       }
       setErrors(emptyLogFormErrors());
       setSaving(true);
-      const result = await repositories.workLogs.create(built.body);
+      // The log and its photos go into the queue together (the photos are declared in it).
+      const result = await repositories.workLogs.create(built.body, photos);
       if (!result.ok) {
         setSaving(false);
         setSaveError(result.error);
@@ -341,13 +392,10 @@ export function useLogForm(params: LogFormParams) {
       }
       saved.current = true;
       const created = result.data;
-      if (created.log) {
-        // The photos join the upload queue (kept on the phone) before the draft goes away.
-        await uploads.enqueue(created.log.id, photos);
-      }
       await drafts.clear(user.id);
       setSaving(false);
-      return { kind: 'created', logId: created.log?.id ?? null };
+      // A queued log is shown by its clientId until the server has it.
+      return { kind: 'created', logId: created.log?.id ?? created.clientId };
     }
 
     const original = existing.data;
@@ -378,7 +426,17 @@ export function useLogForm(params: LogFormParams) {
         return { kind: 'failed' };
       }
     }
-    await uploads.enqueue(original.id, photos);
+    if (photos.length > 0) {
+      const added = await repositories.attachments.add(original.id, photos);
+      if (!added.ok) {
+        setSaving(false);
+        setSaveError(added.error);
+        return { kind: 'failed' };
+      }
+    }
+    saved.current = true;
+    await drafts.clearEdit(user.id, original.id);
+    if (original.id !== editLogId && editLogId !== null) await drafts.clearEdit(user.id, editLogId);
     setSaving(false);
     return { kind: 'updated', logId: original.id };
   }, [
@@ -390,7 +448,7 @@ export function useLogForm(params: LogFormParams) {
     repositories,
     saving,
     selectedType,
-    uploads,
+    editLogId,
     user.id,
     values,
   ]);

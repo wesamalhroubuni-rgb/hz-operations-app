@@ -304,7 +304,7 @@ describe('uploads: validation and photo privacy', () => {
       expect((await as(W).post(`/attachments/${pending}/archive`)).status).toBe(200);
       const archivedRenew = await as(W).post(`/attachments/${pending}/upload-url`);
       expect(archivedRenew.status).toBe(409);
-      expect(archivedRenew.body.code).toBe('conflict');
+      expect(archivedRenew.body.code).toBe('record_archived');
       // Completing an archived pending attachment is refused too, even with bytes in place.
       ctx.storage.upload(await storageKeyOf(pending), await makeJpeg());
       expect((await as(W).post(`/attachments/${pending}/complete`)).status).toBe(409);
@@ -377,15 +377,19 @@ describe('uploads: validation and photo privacy', () => {
       }
     });
 
-    it('not the author once the log is approved, nor after the edit window (403)', async () => {
+    it('not the author once the log is approved (409), nor after the edit window (403)', async () => {
       const approved = await logOf(W, { status: 'approved' });
       const refused = await start(W, approved.id);
-      expect(refused.status).toBe(403);
+      expect(refused.status).toBe(409);
+      expect(refused.body.code).toBe('already_reviewed');
       expect(refused.body.message).toBe('An approved work log cannot be changed by its author');
 
       const late = await logOf(W);
       ctx.clock.freeze(new Date(late.createdAt.getTime() + 24 * HOUR + 1));
-      expect((await start(W, late.id)).status).toBe(403);
+      const lateStart = await start(W, late.id);
+      expect(lateStart.status).toBe(403);
+      // Not declared in the log's create request: not part of the original submission.
+      expect(lateStart.body.code).toBe('attachment_not_declared');
       expect(await ctx.prisma.attachment.count()).toBe(0);
     });
 
@@ -407,19 +411,29 @@ describe('uploads: validation and photo privacy', () => {
 
     it('a supervisor on their own log follows the author rule (no self-review exception)', async () => {
       const own = await logOf(SUP, { status: 'approved' });
-      expect((await start(SUP, own.id)).status).toBe(403);
+      expect((await start(SUP, own.id)).status).toBe(409);
     });
 
-    // Doubtful rule (reported): an upload started inside the window cannot be completed once the
-    // window has closed (or the log was approved meanwhile): the photo is lost for the author.
-    it('the author cannot complete an upload started in the window once the window has closed (403)', async () => {
+    // ADR-0008 fixed the Phase 4 limitation: an upload started inside the window can be renewed
+    // and completed by its uploader for 30 days after its start, whatever the window.
+    it('the author completes an upload started in the window after the window has closed', async () => {
       const log = await logOf(W);
       const started = await start(W, log.id);
       ctx.storage.uploadTo(started.body.upload.url, await makeJpeg());
       ctx.clock.freeze(new Date(log.createdAt.getTime() + 24 * HOUR + 1));
-      expect((await as(W).post(`/attachments/${started.body.attachment.id}/complete`)).status).toBe(
-        403,
-      );
+      const completed = await as(W).post(`/attachments/${started.body.attachment.id}/complete`);
+      expect(completed.status).toBe(200);
+      expect(completed.body.status).toBe('ready');
+    });
+
+    it('but not more than 30 days after the upload started (403 edit_window_closed)', async () => {
+      const log = await logOf(W);
+      const started = await start(W, log.id);
+      ctx.storage.uploadTo(started.body.upload.url, await makeJpeg());
+      ctx.clock.freeze(new Date(log.createdAt.getTime() + 31 * 24 * HOUR));
+      const late = await as(W).post(`/attachments/${started.body.attachment.id}/complete`);
+      expect(late.status).toBe(403);
+      expect(late.body.code).toBe('edit_window_closed');
     });
   });
 

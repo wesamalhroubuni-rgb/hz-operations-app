@@ -36,3 +36,18 @@ export function atLeastOneField(value: Record<string, unknown>): boolean {
 }
 
 export const AT_LEAST_ONE_FIELD = { error: 'Provide at least one field to update' } as const;
+
+/**
+ * Optimistic concurrency (ADR-0008): the `version` of the record the client based its change on.
+ * Optional; when given and different from the current version the API answers 409
+ * `version_conflict` and changes nothing. Re-applying a change that is already in place is not
+ * a conflict (a retried request whose first answer was lost succeeds).
+ */
+export const expectedVersionSchema = z.number().int().min(1);
+
+/** {@link atLeastOneField}, not counting `expectedVersion` (which changes nothing by itself). */
+export function atLeastOneFieldBesidesVersion(value: Record<string, unknown>): boolean {
+  return Object.entries(value).some(
+    ([key, field]) => key !== 'expectedVersion' && field !== undefined,
+  );
+}

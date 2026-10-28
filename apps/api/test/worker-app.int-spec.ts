@@ -422,8 +422,11 @@ describe('worker app rules against the API', () => {
         if (offered && !changed) offeredButRefused.push(`${to}:${response.status}`);
         if (!offered && changed) allowedButNotOffered.push(to);
         if (to === 'cancelled' || from === 'cancelled') {
-          // Cancelling, and anything on a cancelled task, is for whoever manages it.
-          expect([to, response.status]).toEqual([to, 403]);
+          // Cancelling, and anything on a cancelled task, is for whoever manages it: 403 for
+          // cancelling, 409 `task_cancelled` on a cancelled task (ADR-0008). Asking for the
+          // status the task already has is a no-op (200).
+          const expected = from === to ? 200 : from === 'cancelled' ? 409 : 403;
+          expect([to, response.status]).toEqual([to, expected]);
         }
       }
       expect(offeredButRefused).toEqual([]);

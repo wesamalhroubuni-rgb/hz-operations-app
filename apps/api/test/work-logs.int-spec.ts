@@ -8,6 +8,7 @@ import {
 } from '@ops/shared';
 import {
   at,
+  atWithOffset,
   createLogType,
   createMembership,
   createSite,
@@ -24,6 +25,11 @@ import { MAX_ATTACHMENTS_PER_WORK_LOG } from '../src/operations/access';
 import { FakeFileStorage } from './support/fake-file-storage';
 import { makeJpeg, makePng, textBytes } from './support/test-images';
 import { startTestApp, type ApiCaller, type Json, type TestApp } from './support/test-app';
+
+/** The ISO string of a moment plus some milliseconds. */
+function plusMs(date: Date, milliseconds: number): string {
+  return new Date(date.getTime() + milliseconds).toISOString();
+}
 
 describe('work logs', () => {
   let ctx: TestApp;
@@ -65,7 +71,7 @@ describe('work logs', () => {
 
       const response = await api.post('/work-logs', {
         clientId,
-        occurredAt: '2026-09-01T11:30:00+03:00',
+        occurredAt: atWithOffset(30, 3),
         taskId: task.id,
         siteId: site.id,
         teamId: team.id,
@@ -87,7 +93,7 @@ describe('work logs', () => {
         organizationId: orgId(),
         clientId,
         authorId: tenant.admin.id,
-        occurredAt: '2026-09-01T08:30:00.000Z',
+        occurredAt: at(30).toISOString(),
         taskId: task.id,
         siteId: site.id,
         teamId: team.id,
@@ -340,19 +346,21 @@ describe('work logs', () => {
     });
 
     describe('occurredAt', () => {
-      it('rejects a time in the future (400)', async () => {
+      it('rejects a time more than the margin in the future (422 occurred_at_out_of_range)', async () => {
         const occurredAt = new Date(Date.now() + 2 * WORK_LOG_MAX_FUTURE_MS).toISOString();
         const response = await api.post('/work-logs', body({ occurredAt }));
-        expect(response.status).toBe(400);
+        expect(response.status).toBe(422);
+        expect(response.body.code).toBe('occurred_at_out_of_range');
         expect(response.body.details).toEqual([
-          { path: 'occurredAt', message: 'must not be in the future' },
+          { path: 'occurredAt', message: 'must not be more than one hour in the future' },
         ]);
         expect(await ctx.prisma.workLog.count()).toBe(0);
       });
 
-      it('rejects a far future date (400)', async () => {
+      it('rejects a far future date (422)', async () => {
         const response = await api.post('/work-logs', body({ occurredAt: '2099-01-01T00:00:00Z' }));
-        expect(response.status).toBe(400);
+        expect(response.status).toBe(422);
+        expect(response.body.code).toBe('occurred_at_out_of_range');
       });
 
       it('allows a small margin for a phone clock that runs fast', async () => {
@@ -360,10 +368,31 @@ describe('work logs', () => {
         expect((await api.post('/work-logs', body({ occurredAt }))).status).toBe(201);
       });
 
-      it('accepts work that happened long ago (offline sync)', async () => {
-        const response = await api.post('/work-logs', body({ occurredAt: '2025-01-15T07:00:00Z' }));
+      it('accepts work up to the backdating limit (7 days by default) and refuses older', async () => {
+        const day = 86_400_000;
+        const inside = new Date(Date.now() - 7 * day + 60_000).toISOString();
+        const response = await api.post('/work-logs', body({ occurredAt: inside }));
         expect(response.status).toBe(201);
-        expect(response.body.occurredAt).toBe('2025-01-15T07:00:00.000Z');
+        expect(response.body.occurredAt).toBe(inside);
+
+        const tooOld = new Date(Date.now() - 7 * day - 60_000).toISOString();
+        const refused = await api.post('/work-logs', body({ occurredAt: tooOld }));
+        expect(refused.status).toBe(422);
+        expect(refused.body).toMatchObject({
+          code: 'occurred_at_out_of_range',
+          details: [{ path: 'occurredAt', message: 'must not be more than 7 days in the past' }],
+        });
+      });
+
+      it("follows the organization's offlineMaxBackdateDays setting", async () => {
+        await ctx.prisma.organization.update({
+          where: { id: orgId() },
+          data: { settings: { offlineMaxBackdateDays: 30 } },
+        });
+        const occurredAt = new Date(Date.now() - 20 * 86_400_000).toISOString();
+        expect((await api.post('/work-logs', body({ occurredAt }))).status).toBe(201);
+        const tooOld = new Date(Date.now() - 31 * 86_400_000).toISOString();
+        expect((await api.post('/work-logs', body({ occurredAt: tooOld }))).status).toBe(422);
       });
 
       it.each([
@@ -596,7 +625,7 @@ describe('work logs', () => {
       ben: string;
     }
 
-    /** Five logs on 2026-09-01 at 08:00, 09:00, 10:00, 11:00 and 12:00 UTC, plus an archived one. */
+    /** Five logs at at(0) (08:00 UTC) and the next four hours, plus an archived one. */
     async function seed(): Promise<Fixture> {
       const [north, south, team, logType, ada, ben] = await Promise.all([
         createSite(ctx.prisma, orgId()),
@@ -695,25 +724,28 @@ describe('work logs', () => {
       const range = async (query: Record<string, string>) =>
         texts(await api.get('/work-logs', { ...query, sort: 'occurredAt:asc' }));
 
-      expect(await range({ occurredFrom: '2026-09-01T10:00:00Z' })).toEqual(['L2', 'L3', 'L4']);
-      expect(await range({ occurredFrom: '2026-09-01T10:00:00.001Z' })).toEqual(['L3', 'L4']);
-      expect(await range({ occurredTo: '2026-09-01T10:00:00Z' })).toEqual(['L0', 'L1']);
-      expect(await range({ occurredTo: '2026-09-01T10:00:00.001Z' })).toEqual(['L0', 'L1', 'L2']);
+      expect(await range({ occurredFrom: at(120).toISOString() })).toEqual(['L2', 'L3', 'L4']);
+      expect(await range({ occurredFrom: plusMs(at(120), 1) })).toEqual(['L3', 'L4']);
+      expect(await range({ occurredTo: at(120).toISOString() })).toEqual(['L0', 'L1']);
+      expect(await range({ occurredTo: plusMs(at(120), 1) })).toEqual(['L0', 'L1', 'L2']);
       expect(
-        await range({ occurredFrom: '2026-09-01T09:00:00Z', occurredTo: '2026-09-01T11:00:00Z' }),
+        await range({ occurredFrom: at(60).toISOString(), occurredTo: at(180).toISOString() }),
       ).toEqual(['L1', 'L2']);
       // A whole day, written in local time with an offset: nothing is counted twice or missed.
       expect(
         await range({
-          occurredFrom: '2026-09-01T00:00:00+03:00',
-          occurredTo: '2026-09-02T00:00:00+03:00',
+          occurredFrom: atWithOffset(-11 * 60, 3),
+          occurredTo: atWithOffset(13 * 60, 3),
         }),
       ).toEqual(['L0', 'L1', 'L2', 'L3', 'L4']);
       expect(
-        await range({ occurredFrom: '2026-09-01T11:00:00Z', occurredTo: '2026-09-01T11:00:00Z' }),
+        await range({ occurredFrom: at(180).toISOString(), occurredTo: at(180).toISOString() }),
       ).toEqual([]);
       expect(
-        await range({ occurredFrom: '2026-09-02T00:00:00Z', occurredTo: '2026-09-01T00:00:00Z' }),
+        await range({
+          occurredFrom: at(16 * 60).toISOString(),
+          occurredTo: at(-8 * 60).toISOString(),
+        }),
       ).toEqual([]);
     });
 
@@ -732,7 +764,7 @@ describe('work logs', () => {
         authorId: f.ada,
         siteId: f.north,
         status: 'approved',
-        occurredFrom: '2026-09-01T00:00:00Z',
+        occurredFrom: at(-8 * 60).toISOString(),
       });
       expect(texts(response)).toEqual(['L1']);
       expect(response.body.total).toBe(1);
@@ -845,7 +877,9 @@ describe('work logs', () => {
       const workLog = await createWorkLog(ctx.prisma, orgId(), tenant.admin.id);
       const path = `/work-logs/${workLog.id}`;
 
-      expect((await api.patch(path, { occurredAt: '2099-01-01T00:00:00Z' })).status).toBe(400);
+      const future = await api.patch(path, { occurredAt: '2099-01-01T00:00:00Z' });
+      expect(future.status).toBe(422);
+      expect(future.body.code).toBe('occurred_at_out_of_range');
       expect((await api.patch(path, { location: { latitude: 41 } })).status).toBe(400);
       expect((await api.patch(path, { siteId: foreignSite.id })).status).toBe(422);
       expect((await api.patch(path, {})).status).toBe(400);

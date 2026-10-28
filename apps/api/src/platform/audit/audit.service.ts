@@ -6,7 +6,7 @@
  * the service has no injected dependencies and can be constructed with `new AuditService()`.
  */
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { RequestContext } from '../request-context/request-context';
+import { RequestContext, type OfflineSyncInfo } from '../request-context/request-context';
 import {
   DEFAULT_REDACTED_KEY_PATTERN,
   diffSnapshots,
@@ -32,6 +32,11 @@ export interface AuditRecordInput {
    * (passwords, tokens, secrets, ...). Compared case-insensitively, at any depth.
    */
   redact?: readonly string[];
+  /**
+   * Facts about how the change was made, merged over the platform's own (the offline-sync facts
+   * of the request, ADR-0008), for example `droppedReferences`. Stored in `metadata`.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 /** The slice of a database client (or transaction) the audit log writes through. */
@@ -52,8 +57,32 @@ export interface AuditWriter {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- JSON column
         changes?: any;
         correlationId: string | null;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- JSON column
+        metadata?: any;
       };
     }): PromiseLike<unknown>;
+  };
+}
+
+/**
+ * The `metadata` of an audit event: for a request from an offline queue
+ * `{ via: 'offline_sync', deviceTime, serverTime, clockSkewSeconds }` (`auditMetadataSchema` in
+ * @ops/shared) with the caller's own facts merged over it; the caller's facts alone otherwise;
+ * null when there is nothing to say.
+ */
+export function auditMetadataOf(
+  offline: OfflineSyncInfo | null,
+  extra: Record<string, unknown> | undefined,
+): Record<string, unknown> | null {
+  if (!offline) {
+    return extra && Object.keys(extra).length > 0 ? { ...extra } : null;
+  }
+  return {
+    via: 'offline_sync',
+    deviceTime: offline.deviceTime,
+    serverTime: offline.serverTime.toISOString(),
+    clockSkewSeconds: offline.clockSkewSeconds,
+    ...extra,
   };
 }
 
@@ -100,6 +129,7 @@ export class AuditService {
     const before = redactSnapshot(rawBefore, rules);
     const after = redactSnapshot(rawAfter, rules);
     const changes = rawChanges === null ? null : redactChanges(rawChanges, rules);
+    const metadata = auditMetadataOf(RequestContext.offlineSync(), input.metadata);
 
     await tx.auditEvent.create({
       data: {
@@ -113,6 +143,7 @@ export class AuditService {
         ...(after === undefined ? {} : { after }),
         ...(changes === null ? {} : { changes }),
         correlationId: RequestContext.correlationId(),
+        ...(metadata === null ? {} : { metadata }),
       },
     });
   }

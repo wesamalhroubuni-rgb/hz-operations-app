@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ApiErrorCode } from '../common/errors.js';
 import type { Attachment, AttachmentUpload } from '../domain/attachments.js';
 import {
   isRetryableApiFailure,
@@ -21,6 +22,7 @@ function attachment(status: 'pending' | 'ready'): Attachment {
     organizationId: '33333333-3333-4333-8333-333333333333',
     workLogId: LOG_ID,
     uploadedById: '44444444-4444-4444-8444-444444444444',
+    clientId: null,
     fileName: FILE.fileName,
     mimeType: FILE.mimeType,
     sizeBytes: FILE.sizeBytes,
@@ -51,7 +53,7 @@ function upload(expiresInMs = 600_000, url = 'https://storage.test/put-1'): Atta
 const ok = <T>(data: T, status = 200): ApiResult<T> => ({ ok: true, status, data });
 const fail = (failure: ApiFailure): ApiResult<never> => ({ ok: false, failure });
 const network: ApiFailure = { kind: 'network', message: 'Network request failed' };
-function http(status: number, code: 'conflict' | 'unprocessable' | 'internal_error'): ApiFailure {
+function http(status: number, code: ApiErrorCode): ApiFailure {
   return {
     kind: 'http',
     status,
@@ -99,12 +101,12 @@ describe('uploadAttachment', () => {
       attachment: { status: 'ready' },
       checkpoint: { attachmentId: ATTACHMENT_ID, stored: true },
     });
-    expect(api.startUpload).toHaveBeenCalledWith(LOG_ID, FILE);
+    expect(api.startUpload).toHaveBeenCalledWith(LOG_ID, FILE, {});
     expect(put.mock.calls[0]?.[0]).toMatchObject({
       url: 'https://storage.test/put-1',
       headers: { 'Content-Type': 'image/jpeg' },
     });
-    expect(api.complete).toHaveBeenCalledWith(ATTACHMENT_ID);
+    expect(api.complete).toHaveBeenCalledWith(ATTACHMENT_ID, {});
     expect(progress[0]).toBe(0);
     expect(progress.at(-1)).toBe(1);
     expect([...progress].sort((a, b) => a - b)).toEqual(progress);
@@ -157,7 +159,7 @@ describe('uploadAttachment', () => {
     );
     expect(second.ok).toBe(true);
     expect(api.startUpload).toHaveBeenCalledTimes(1);
-    expect(api.renewUpload).toHaveBeenCalledWith(ATTACHMENT_ID);
+    expect(api.renewUpload).toHaveBeenCalledWith(ATTACHMENT_ID, {});
     expect(put.mock.calls[0]?.[0].url).toBe('https://storage.test/put-2');
   });
 
@@ -298,6 +300,49 @@ describe('uploadAttachment', () => {
   });
 });
 
+describe('uploadAttachment with a clientId (offline sync)', () => {
+  const OPTIONS = { headers: { 'x-client-sync': 'offline' } };
+
+  it('passes the request options to every API call', async () => {
+    const api = fakeApi();
+    await uploadAttachment(
+      api,
+      { workLogId: LOG_ID, file: FILE, put: putOk, requestOptions: OPTIONS },
+      clock,
+    );
+    expect(api.startUpload).toHaveBeenCalledWith(LOG_ID, FILE, OPTIONS);
+    expect(api.complete).toHaveBeenCalledWith(ATTACHMENT_ID, OPTIONS);
+  });
+
+  it('succeeds without a PUT when a repeated start finds the photo already ready', async () => {
+    const api = fakeApi({
+      startUpload: vi.fn(async () => ok({ attachment: attachment('ready'), upload: null })),
+    });
+    const put = vi.fn(putOk);
+    const result = await uploadAttachment(api, { workLogId: LOG_ID, file: FILE, put }, clock);
+    expect(result).toMatchObject({
+      ok: true,
+      checkpoint: { attachmentId: ATTACHMENT_ID, stored: true },
+    });
+    expect(put).not.toHaveBeenCalled();
+    expect(api.complete).not.toHaveBeenCalled();
+  });
+
+  it('does not resend the bytes when complete answers a final 409 code', async () => {
+    const api = fakeApi({ complete: vi.fn(async () => fail(http(409, 'record_archived'))) });
+    const result = await uploadAttachment(
+      api,
+      { workLogId: LOG_ID, file: FILE, put: putOk },
+      clock,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { step: 'complete', retryable: false },
+      checkpoint: { stored: true },
+    });
+  });
+});
+
 describe('isRetryableApiFailure', () => {
   it.each([
     [network, true],
@@ -305,6 +350,9 @@ describe('isRetryableApiFailure', () => {
     [http(500, 'internal_error'), true],
     [http(409, 'conflict'), false],
     [http(422, 'unprocessable'), false],
+    [http(409, 'request_in_progress'), true],
+    [http(409, 'version_conflict'), false],
+    [http(403, 'edit_window_closed'), false],
     [{ kind: 'invalid-response', status: 502, message: 'x' } as ApiFailure, true],
     [{ kind: 'invalid-response', status: 200, message: 'x' } as ApiFailure, false],
   ])('%#', (failure, expected) => {

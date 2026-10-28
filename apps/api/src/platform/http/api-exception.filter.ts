@@ -66,39 +66,9 @@ export class ApiExceptionFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
     };
 
-    if (exception instanceof ApiException) {
-      return {
-        statusCode: exception.getStatus(),
-        code: exception.code,
-        message: exception.message,
-        ...(exception.details ? { details: exception.details } : {}),
-        ...base,
-      };
-    }
-
-    if (exception instanceof HttpException) {
-      const statusCode = exception.getStatus();
-      return {
-        statusCode,
-        code: STATUS_CODES[statusCode] ?? (statusCode >= 500 ? 'internal_error' : 'unprocessable'),
-        message: statusCode >= 500 ? 'Internal server error' : exception.message,
-        ...base,
-      };
-    }
-
-    const databaseError = DATABASE_ERRORS[errorCodeOf(exception)];
-    if (databaseError) {
-      return {
-        statusCode: databaseError.status,
-        code: databaseError.code,
-        message: databaseError.message,
-        ...base,
-      };
-    }
-
-    const clientError = clientErrorOf(exception);
-    if (clientError) {
-      return { ...clientError, ...base };
+    const known = describeKnownError(exception);
+    if (known) {
+      return { ...known, ...base };
     }
 
     this.logger.error(
@@ -112,6 +82,46 @@ export class ApiExceptionFilter implements ExceptionFilter {
       ...base,
     };
   }
+}
+
+/** The status, code, message and details the filter answers an error with. */
+export type KnownErrorBody = Pick<ApiError, 'statusCode' | 'code' | 'message' | 'details'>;
+
+/**
+ * What the filter answers for an expected error (an `ApiException`, a framework HTTP error, a
+ * database error caused by the request, a client error from HTTP middleware), or null for an
+ * unexpected one (answered 500 and logged). Exported for the idempotency interceptor, which
+ * stores final answers before the filter writes them.
+ */
+export function describeKnownError(exception: unknown): KnownErrorBody | null {
+  if (exception instanceof ApiException) {
+    return {
+      statusCode: exception.getStatus(),
+      code: exception.code,
+      message: exception.message,
+      ...(exception.details ? { details: exception.details } : {}),
+    };
+  }
+
+  if (exception instanceof HttpException) {
+    const statusCode = exception.getStatus();
+    return {
+      statusCode,
+      code: STATUS_CODES[statusCode] ?? (statusCode >= 500 ? 'internal_error' : 'unprocessable'),
+      message: statusCode >= 500 ? 'Internal server error' : exception.message,
+    };
+  }
+
+  const databaseError = DATABASE_ERRORS[errorCodeOf(exception)];
+  if (databaseError) {
+    return {
+      statusCode: databaseError.status,
+      code: databaseError.code,
+      message: databaseError.message,
+    };
+  }
+
+  return clientErrorOf(exception);
 }
 
 function errorCodeOf(exception: unknown): string {

@@ -1,10 +1,12 @@
+import { isRetryableApiErrorCode } from '../common/errors.js';
 import type {
   Attachment,
   AttachmentUpload,
   StartAttachmentUpload,
+  StartedAttachmentUpload,
   UploadTargetInfo,
 } from '../domain/attachments.js';
-import type { ApiFailure, ApiResult } from './client.js';
+import type { ApiCallOptions, ApiFailure, ApiResult } from './client.js';
 
 // The client side of the attachment upload flow, shared by the mobile app and the web dashboard:
 //
@@ -20,9 +22,13 @@ import type { ApiFailure, ApiResult } from './client.js';
 
 /** The part of the API client this module uses (`client.attachments`). */
 export interface AttachmentUploadApi {
-  startUpload(workLogId: string, body: StartAttachmentUpload): Promise<ApiResult<AttachmentUpload>>;
-  renewUpload(id: string): Promise<ApiResult<AttachmentUpload>>;
-  complete(id: string): Promise<ApiResult<Attachment>>;
+  startUpload(
+    workLogId: string,
+    body: StartAttachmentUpload,
+    options?: ApiCallOptions,
+  ): Promise<ApiResult<StartedAttachmentUpload>>;
+  renewUpload(id: string, options?: ApiCallOptions): Promise<ApiResult<AttachmentUpload>>;
+  complete(id: string, options?: ApiCallOptions): Promise<ApiResult<Attachment>>;
   get(id: string): Promise<ApiResult<Attachment>>;
 }
 
@@ -75,11 +81,22 @@ export interface UploadAttachmentInput {
   onProgress?: (fraction: number) => void;
   /** From an earlier failed attempt of the same photo. */
   checkpoint?: UploadCheckpoint;
+  /**
+   * Passed to every API call of the upload (the offline queue's `offlineSyncHeaders(...)`). The
+   * photo's `clientId` goes in `file`.
+   */
+  requestOptions?: ApiCallOptions;
 }
 
-/** True for an API failure that may go away by itself: no answer, 408, 429 or a 5xx. */
+/**
+ * True for an API failure that may go away by itself: no answer, 408, 429, a 5xx, or a code of
+ * `RETRYABLE_API_ERROR_CODES` (`request_in_progress`).
+ */
 export function isRetryableApiFailure(failure: ApiFailure): boolean {
   if (failure.kind === 'network' || failure.kind === 'timeout') {
+    return true;
+  }
+  if (failure.kind === 'http' && isRetryableApiErrorCode(failure.error.code)) {
     return true;
   }
   const status = failure.status;
@@ -125,11 +142,12 @@ export async function uploadAttachment(
   now: () => Date = () => new Date(),
 ): Promise<AttachmentUploadResult> {
   const report = input.onProgress ?? (() => undefined);
+  const options = input.requestOptions ?? {};
   let checkpoint: UploadCheckpoint = { ...(input.checkpoint ?? EMPTY_UPLOAD_CHECKPOINT) };
 
   // Only `complete` was left last time.
   if (checkpoint.attachmentId !== null && checkpoint.stored) {
-    const completed = await api.complete(checkpoint.attachmentId);
+    const completed = await api.complete(checkpoint.attachmentId, options);
     if (completed.ok) {
       report(1);
       return { ok: true, attachment: completed.data, checkpoint };
@@ -145,16 +163,30 @@ export async function uploadAttachment(
   let target: UploadTargetInfo;
   let attachmentId: string;
   if (checkpoint.attachmentId === null) {
-    const started = await api.startUpload(input.workLogId, input.file);
+    const started = await api.startUpload(input.workLogId, input.file, options);
     if (!started.ok) {
       return { ok: false, failure: apiFailure('start', started.failure), checkpoint };
     }
     attachmentId = started.data.attachment.id;
+    if (started.data.upload === null) {
+      // A repeated start (same clientId) of a photo an earlier attempt already finished.
+      checkpoint = { attachmentId, stored: true };
+      if (started.data.attachment.status === 'ready') {
+        report(1);
+        return { ok: true, attachment: started.data.attachment, checkpoint };
+      }
+      const completedNow = await api.complete(attachmentId, options);
+      if (completedNow.ok) {
+        report(1);
+        return { ok: true, attachment: completedNow.data, checkpoint };
+      }
+      return { ok: false, failure: apiFailure('complete', completedNow.failure), checkpoint };
+    }
     checkpoint = { attachmentId, stored: false };
     target = started.data.upload;
   } else {
     attachmentId = checkpoint.attachmentId;
-    const renewed = await renew(api, attachmentId);
+    const renewed = await renew(api, attachmentId, options);
     if (renewed.kind === 'ready') {
       report(1);
       return {
@@ -170,7 +202,7 @@ export async function uploadAttachment(
   }
 
   if (isTargetExpired(target, now())) {
-    const renewed = await renew(api, attachmentId);
+    const renewed = await renew(api, attachmentId, options);
     if (renewed.kind === 'failed') return { ok: false, failure: renewed.failure, checkpoint };
     if (renewed.kind === 'ready') {
       report(1);
@@ -189,7 +221,7 @@ export async function uploadAttachment(
   let put = await input.put(target, onPutProgress);
   if (!put.ok && isExpiredUrlStatus(put.status)) {
     // The URL expired while waiting (a slow network, a phone asleep): renew once and resend.
-    const renewed = await renew(api, attachmentId);
+    const renewed = await renew(api, attachmentId, options);
     if (renewed.kind === 'failed') return { ok: false, failure: renewed.failure, checkpoint };
     if (renewed.kind === 'ready') {
       report(1);
@@ -216,7 +248,7 @@ export async function uploadAttachment(
   }
   checkpoint = { ...checkpoint, stored: true };
 
-  const completed = await api.complete(attachmentId);
+  const completed = await api.complete(attachmentId, options);
   if (!completed.ok) {
     if (isBytesMissing(completed.failure)) {
       // 409: the storage does not have the bytes (the PUT was lost on the way). Worth sending
@@ -233,9 +265,12 @@ export async function uploadAttachment(
   return { ok: true, attachment: completed.data, checkpoint };
 }
 
-/** `complete` answers 409 when the uploaded object is not (yet) in the storage. */
+/**
+ * `complete` answers 409 `conflict` when the uploaded object is not (yet) in the storage. Other
+ * 409 codes (`record_archived`, ...) are final.
+ */
 function isBytesMissing(failure: ApiFailure): boolean {
-  return failure.kind === 'http' && failure.status === 409;
+  return failure.kind === 'http' && failure.status === 409 && failure.error.code === 'conflict';
 }
 
 type RenewOutcome =
@@ -247,8 +282,12 @@ type RenewOutcome =
  * A fresh URL for a pending attachment. When the API refuses because the attachment is no longer
  * pending (409), it may have been completed by an earlier attempt whose answer was lost: check.
  */
-async function renew(api: AttachmentUploadApi, attachmentId: string): Promise<RenewOutcome> {
-  const renewed = await api.renewUpload(attachmentId);
+async function renew(
+  api: AttachmentUploadApi,
+  attachmentId: string,
+  options: ApiCallOptions,
+): Promise<RenewOutcome> {
+  const renewed = await api.renewUpload(attachmentId, options);
   if (renewed.ok) {
     return { kind: 'target', target: renewed.data.upload };
   }

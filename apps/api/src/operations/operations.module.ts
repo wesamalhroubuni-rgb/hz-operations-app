@@ -8,6 +8,7 @@ import { OperationsNotificationsModule } from './notifications/operations-notifi
 import { OrganizationModule } from './organization/organization.module';
 import { ScopeModule } from './scope/scope.module';
 import { SitesModule } from './sites/sites.module';
+import { SyncModule } from './sync/sync.module';
 import { TasksModule } from './tasks/tasks.module';
 import { TeamsModule } from './teams/teams.module';
 import { UsersModule } from './users/users.module';
@@ -28,6 +29,7 @@ import { WorkLogsModule } from './work-logs/work-logs.module';
     WorkLogsModule,
     AttachmentsModule,
     ScopeModule,
+    SyncModule,
     OperationsNotificationsModule,
   ],
 })

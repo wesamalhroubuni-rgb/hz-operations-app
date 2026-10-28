@@ -6,7 +6,14 @@ import {
   outboxEventListSchema,
   outboxEventSchema,
 } from '@ops/shared';
-import { at, createTenant, eventCounts, unknownId, type Tenant } from './support/factories';
+import {
+  at,
+  atWithOffset,
+  createTenant,
+  eventCounts,
+  unknownId,
+  type Tenant,
+} from './support/factories';
 import { startTestApp, type ApiCaller, type Json, type TestApp } from './support/test-app';
 
 // The read-only /audit-events and /outbox-events endpoints. Events are inserted directly, with
@@ -46,7 +53,7 @@ describe('audit and outbox read endpoints', () => {
     organizationId?: string | null;
   }
 
-  /** The same six events in both logs, at 08:00 + n minutes on 2026-09-01. */
+  /** The same six events in both logs, at at(n) minutes. */
   const EVENTS: EventSeed[] = [
     { name: 'task.created', entity: 'task', id: TASK_1, minute: 0, correlationId: 'corr-1' },
     {
@@ -160,6 +167,7 @@ describe('audit and outbox read endpoints', () => {
         after: { id: TASK_1 },
         changes: null,
         correlationId: 'corr-1',
+        metadata: null,
         occurredAt: at(0).toISOString(),
       });
     });
@@ -252,9 +260,9 @@ describe('audit and outbox read endpoints', () => {
       expect(minutesOf(await api.get('/audit-events', { from: iso(20), to: iso(20) }))).toEqual([]);
       expect(minutesOf(await api.get('/audit-events', { from: iso(30), to: iso(10) }))).toEqual([]);
       // The same instant written with an offset.
-      expect(
-        minutesOf(await api.get('/audit-events', { from: '2026-09-01T11:20:00+03:00' })),
-      ).toEqual([50, 40, 30, 20]);
+      expect(minutesOf(await api.get('/audit-events', { from: atWithOffset(20, 3) }))).toEqual([
+        50, 40, 30, 20,
+      ]);
     });
 
     it('combines filters with AND, sorts both ways and pages', async () => {

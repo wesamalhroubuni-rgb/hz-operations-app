@@ -1,13 +1,14 @@
 # ARCHITECTURE.md
 
 How the system is structured, and how it is intended to grow. Every section says whether it
-describes something that **exists today** or something that is **planned**. As of 2026-10-17 the
-Phase 4 code exists: the Phase 2 backend core (data model, REST API, audit log, event outbox, scope
+describes something that **exists today** or something that is **planned**. As of 2026-10-27 the
+Phase 5 code exists: the Phase 2 backend core (data model, REST API, audit log, event outbox, scope
 resolution, typed API client, client branding), the Phase 3 sign-in and permission enforcement on
-every route, and from Phase 4 the worker app on the phone, S3-compatible photo storage with
-verified uploads and signed downloads, in-app and push notifications, and the outbox consumer that
-feeds them. The web app still has only its login pages. There is no offline storage and no AI
-layer.
+every route, the Phase 4 worker app on the phone, S3-compatible photo storage with verified
+uploads and signed downloads, in-app and push notifications, and the outbox consumer that feeds
+them, and from Phase 5 offline mode: a per-user local cache and write queue on the phone, a sync
+pull endpoint, row versions, typed conflict codes, and `Idempotency-Key` handling on the server.
+The web app still has only its login pages. There is no AI layer.
 
 ## Naming
 
@@ -31,7 +32,7 @@ anomaly flags, and proposed actions that a human must approve.
 ```mermaid
 flowchart TB
   subgraph clients [Clients]
-    mobile["apps/mobile<br/>Worker app (Expo / React Native)<br/>tasks, work logs, photos, location,<br/>notifications, profile"]
+    mobile["apps/mobile<br/>Worker app (Expo / React Native)<br/>tasks, work logs, photos, location,<br/>notifications, profile;<br/>offline cache + write queue (SQLite per user)"]
     web["apps/web<br/>Manager dashboard (Next.js)<br/>login, activation, placeholder home"]
   end
 
@@ -44,6 +45,7 @@ flowchart TB
       http["HTTP conventions<br/>errors, ZodPipe, pagination, docs"]
       auth["Auth<br/>AuthGuard (the one global guard),<br/>sessions, tokens, CSRF, rate limits"]
       authz["Authz seam<br/>@Policy, RequestAuthorizer"]
+      idem["Idempotency<br/>Idempotency-Key replay"]
       storage["File storage<br/>S3FileStorage, image verification"]
       notify["Notifications<br/>in-app list, channels (Expo push),<br/>push tokens, one-time code sender"]
       consumer["Outbox consumer"]
@@ -54,7 +56,8 @@ flowchart TB
       access["Access layer<br/>policy registry, AccessService,<br/>rules, visibility"]
       scope["Scope resolution"]
       org["Organization, users, memberships,<br/>sites, teams"]
-      work["Log types, tasks, work logs,<br/>attachments (upload flow, cleanup)"]
+      work["Log types, tasks, work logs,<br/>attachments (upload flow, cleanup),<br/>row versions"]
+      syncpull["Sync pull<br/>GET /sync/pull"]
       rules["Notification rules"]
       recorder["ChangeRecorder"]
     end
@@ -76,6 +79,8 @@ flowchart TB
   operations -->|"imports, never the reverse"| platform
   auth -->|"REQUEST_AUTHORIZER, AUTH_PROFILE_PROVIDER"| access
   access --> scope
+  syncpull --> access
+  work -->|"@Idempotent() on writes"| idem
   auth --> audit
   auth --> notify
   recorder --> audit
@@ -99,21 +104,23 @@ flowchart TB
 Solid arrows exist today. Dotted arrows to and from the AI layer and human approval are planned.
 The arrows from auth to the access layer and from the consumer to the notification rules are
 injected: the platform defines a token or a registration function, the Operations domain provides
-the implementation, so the import still points one way. Today the mobile app calls the worker
-routes (tasks, work logs, attachments, notifications, `/auth/*`); the web app calls `/health` and
-`/auth/*`; the rest is exercised by the tests, Swagger, and manual requests.
+the implementation, so the import still points one way. The idempotency interceptor is global and
+acts only on routes an Operations controller marks `@Idempotent()`. Today the mobile app calls
+`GET /sync/pull` for its reads and replays its queued writes on the worker routes (tasks, work
+logs, attachments), plus notifications and `/auth/*`; the web app calls `/health` and `/auth/*`;
+the rest is exercised by the tests, Swagger, and manual requests.
 
 ## What exists today
 
 ### Apps and packages
 
-| Path              | Package       | Responsibility                                                                                    | Today                                                                                                                           |
-| ----------------- | ------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api`        | `@ops/api`    | REST API. Owns the database, business rules, sign-in, permissions, files, notifications, audit.   | 56 paths, sign-in, a policy on every route, scoped queries, photo uploads, notifications, outbox consumer, audit, Swagger.      |
-| `apps/web`        | `@ops/web`    | Manager dashboard for supervisors, managers, and admins.                                          | `/login`, `/activate`, and a protected `/` showing the signed-in user, sign-out, and the API status card. Unchanged in Phase 4. |
-| `apps/mobile`     | `@ops/mobile` | Worker app for iOS and Android from one codebase.                                                 | The worker screens (home, tasks, work logs with photos and location, notifications, profile), push. Not yet run on a phone.     |
-| `packages/shared` | `@ops/shared` | The wire contract, defined once: schemas, the typed API client, shared validation, design tokens. | Schemas and endpoints for every resource, `/auth/*`, notifications; session manager, upload helper, custom-field forms, theme.  |
-| `packages/config` | `@ops/config` | Shared ESLint, Prettier, and TypeScript settings.                                                 | ESLint base flat config, Prettier config, `strict.json`, `base.json`, and `library.json` tsconfigs. Unchanged since Phase 1.    |
+| Path              | Package       | Responsibility                                                                                    | Today                                                                                                                                                                        |
+| ----------------- | ------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api`        | `@ops/api`    | REST API. Owns the database, business rules, sign-in, permissions, files, notifications, audit.   | 57 paths, sign-in, a policy on every route, scoped queries, photo uploads, notifications, outbox consumer, audit, sync pull, idempotency, Swagger.                           |
+| `apps/web`        | `@ops/web`    | Manager dashboard for supervisors, managers, and admins.                                          | `/login`, `/activate`, and a protected `/` showing the signed-in user, sign-out, and the API status card. Unchanged since Phase 3.                                           |
+| `apps/mobile`     | `@ops/mobile` | Worker app for iOS and Android from one codebase.                                                 | The worker screens (home, tasks, work logs with photos and location, notifications, profile, sync), push, offline cache and write queue. Not yet run on a phone or emulator. |
+| `packages/shared` | `@ops/shared` | The wire contract, defined once: schemas, the typed API client, shared validation, design tokens. | Schemas and endpoints for every resource, `/auth/*`, notifications, sync; offline headers and error codes; session manager, upload helper, custom-field forms, theme.        |
+| `packages/config` | `@ops/config` | Shared ESLint, Prettier, and TypeScript settings.                                                 | ESLint base flat config, Prettier config, `strict.json`, `base.json`, and `library.json` tsconfigs. Unchanged since Phase 1.                                                 |
 
 Each folder has a `memory.md` with its key files and conventions.
 
@@ -123,36 +130,38 @@ Each folder has a `memory.md` with its key files and conventions.
 never the reverse. ESLint enforces it (`no-restricted-imports` on `src/platform/**` in
 `apps/api/eslint.config.mjs`).
 
-| Folder                   | What it is                                                                                                      |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `config/`                | Environment schema (`env.ts`) and the global config module. Host code.                                          |
-| `prisma/`                | The single Prisma client, connected lazily. Host code.                                                          |
-| `health/`                | `GET /health` (`@Public()`).                                                                                    |
-| `platform/`              | Reusable components with no Operations imports (see the table below).                                           |
-| `operations/`            | The Operations domain: one module per resource, plus `access/`, `common/`, `scope/`, `notifications/`, `seed/`. |
-| `route-policies.spec.ts` | The "no route without a policy" test (boots the real modules with a fake database).                             |
-| `generated/`             | The generated Prisma client. Git-ignored; never edited.                                                         |
+| Folder                   | What it is                                                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `config/`                | Environment schema (`env.ts`) and the global config module. Host code.                                                   |
+| `prisma/`                | The single Prisma client, connected lazily. Host code.                                                                   |
+| `health/`                | `GET /health` (`@Public()`).                                                                                             |
+| `platform/`              | Reusable components with no Operations imports (see the table below).                                                    |
+| `operations/`            | The Operations domain: one module per resource, plus `access/`, `common/`, `scope/`, `notifications/`, `sync/`, `seed/`. |
+| `route-policies.spec.ts` | The "no route without a policy" test (boots the real modules with a fake database).                                      |
+| `generated/`             | The generated Prisma client. Git-ignored; never edited.                                                                  |
 
 `src/platform`:
 
-| Folder             | Contents                                                                                                                                                                                                                                                              |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `request-context/` | `RequestContext` (AsyncLocalStorage holding the correlation id and the actor `{ userId, organizationId, sessionId? }`), the middleware, correlation id sanitising, the one-line request log.                                                                          |
-| `http/`            | `ApiException` (including `rateLimited`, 429 with `Retry-After`), `ApiExceptionFilter`, `ZodPipe`, `ApiDocs`, pagination and filter helpers, `requireActor`, `@Public()`.                                                                                             |
-| `auth/`            | `AuthGuard`, `AuthController` (`/auth/*`), `AuthService`, `AuthAdminService` (the contract business modules call), sessions, access tokens, CSRF, one-time codes, password hashing and policy, identifiers, rate limiter, settings, `AUTH_PROFILE_PROVIDER`.          |
-| `authz/`           | `@Policy(name)`, `@Authenticated()`, `@DevelopmentOnly()`, and the `REQUEST_AUTHORIZER` / `RequestAuthorizer` seam. Names only: what a policy means is decided by the host.                                                                                           |
-| `storage/`         | `FileStorage` interface and `FILE_STORAGE` token, `S3FileStorage` (two S3 clients: internal and signer), `images.ts` (verify, re-encode, thumbnail; `ImageProcessor`), `concurrency.ts`, `storage-settings.ts`, the global `StorageModule`. ADR-0006.                 |
-| `notifications/`   | `NotificationChannel` interface, `NotificationService` (`notify`, `notifyInTransaction`, `deliver`), the in-app list and `/notifications` routes, `PushTokenService`, `ExpoPushClient`, `ExpoPushChannel`; plus the Phase 3 `NotificationSender` for codes. ADR-0007. |
-| `audit/`           | `AuditService` (the only writer), snapshot, diff and redaction helpers, `AuditQueryService`, `GET /audit-events` (`audit.read`).                                                                                                                                      |
-| `outbox/`          | `OutboxService` (`publish`, `readAfter`, `markProcessed`), `OutboxQueryService`, `GET /outbox-events` (`outbox.read`, `@DevelopmentOnly()`), and the `OutboxConsumer` with its pure bookkeeping (`outbox-consumer-state.ts`). ADR-0007.                               |
-| `docs/`            | Swagger UI and OpenAPI document setup, with a bearer scheme and the access cookie documented.                                                                                                                                                                         |
+| Folder             | Contents                                                                                                                                                                                                                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `request-context/` | `RequestContext` (AsyncLocalStorage holding the correlation id, the actor `{ userId, organizationId, sessionId? }`, and since Phase 5 the offline-sync facts from `x-client-sync` and `x-device-time`), the middleware, correlation id sanitising, the one-line request log. |
+| `idempotency/`     | `@Idempotent()`, the global `IdempotencyInterceptor`, and `IdempotencyService` (claim, replay, release, hourly deletion of expired keys) on the `IdempotencyRecord` table. ADR-0008 section 4.                                                                               |
+| `http/`            | `ApiException` (including `rateLimited`, 429 with `Retry-After`), `ApiExceptionFilter`, `ZodPipe`, `ApiDocs`, pagination and filter helpers, `requireActor`, `@Public()`.                                                                                                    |
+| `auth/`            | `AuthGuard`, `AuthController` (`/auth/*`), `AuthService`, `AuthAdminService` (the contract business modules call), sessions, access tokens, CSRF, one-time codes, password hashing and policy, identifiers, rate limiter, settings, `AUTH_PROFILE_PROVIDER`.                 |
+| `authz/`           | `@Policy(name)`, `@Authenticated()`, `@DevelopmentOnly()`, and the `REQUEST_AUTHORIZER` / `RequestAuthorizer` seam. Names only: what a policy means is decided by the host.                                                                                                  |
+| `storage/`         | `FileStorage` interface and `FILE_STORAGE` token, `S3FileStorage` (two S3 clients: internal and signer), `images.ts` (verify, re-encode, thumbnail; `ImageProcessor`), `concurrency.ts`, `storage-settings.ts`, the global `StorageModule`. ADR-0006.                        |
+| `notifications/`   | `NotificationChannel` interface, `NotificationService` (`notify`, `notifyInTransaction`, `deliver`), the in-app list and `/notifications` routes, `PushTokenService`, `ExpoPushClient`, `ExpoPushChannel`; plus the Phase 3 `NotificationSender` for codes. ADR-0007.        |
+| `audit/`           | `AuditService` (the only writer; writes `metadata` `{ via: 'offline_sync', deviceTime, serverTime, clockSkewSeconds }` for writes sent by a phone's queue), snapshot, diff and redaction helpers, `AuditQueryService`, `GET /audit-events` (`audit.read`).                   |
+| `outbox/`          | `OutboxService` (`publish`, `readAfter`, `markProcessed`), `OutboxQueryService`, `GET /outbox-events` (`outbox.read`, `@DevelopmentOnly()`), and the `OutboxConsumer` with its pure bookkeeping (`outbox-consumer-state.ts`). ADR-0007.                                      |
+| `docs/`            | Swagger UI and OpenAPI document setup, with a bearer scheme and the access cookie documented.                                                                                                                                                                                |
 
 `PlatformModule` is global. Importing it registers, for the whole application, the request context
 middleware, a `Cache-Control: no-store` middleware on `/auth/*`, the exception filter, `AuthGuard`
-as the one `APP_GUARD`, the auth, audit, and outbox controllers, and the global `StorageModule` and
-`NotificationsModule` (with the `/notifications` controller). It expects the host to provide a
-global `PrismaService` (with the auth tables, `auditEvent`, `outboxEvent`, `notification`,
-`pushToken`, and `outboxConsumerCursor`) and a `ConfigService` answering the keys listed in
+as the one `APP_GUARD`, `IdempotencyInterceptor` as an `APP_INTERCEPTOR`, the auth, audit, and
+outbox controllers, and the global `StorageModule` and `NotificationsModule` (with the
+`/notifications` controller). It expects the host to provide a global `PrismaService` (with the
+auth tables, `auditEvent`, `outboxEvent`, `idempotencyRecord`, `notification`, `pushToken`, and
+`outboxConsumerCursor`) and a `ConfigService` answering the keys listed in
 `auth/auth-settings.ts` and `storage/storage-settings.ts` plus `PUSH_ENABLED`,
 `EXPO_ACCESS_TOKEN`, `OUTBOX_CONSUMER_ENABLED`, and `OUTBOX_POLL_INTERVAL_MS`, and optionally, from
 a global module, `REQUEST_AUTHORIZER` (without it every `@Policy` route is refused) and
@@ -170,7 +179,8 @@ schema defaults both to `true`, a test configuration that omits them leaves them
 | `organization/`, `users/`, `memberships/`, `sites/`, `teams/`, `log-types/`, `tasks/`, `work-logs/`, `attachments/` | One module each: a controller (HTTP and `@Policy` only), a service (access rules, transactions), and mappers from the row to the wire shape(s).                                              |
 | `access/`                                                                                                           | The authorization layer (global `AccessModule`): `policies.ts` (the registry), `AccessService`, `access-context.ts`, `decision.ts`, `visibility.ts`, `rules/`, the two seam implementations. |
 | `scope/`                                                                                                            | `resolveScope` (pure function), `ScopeService`, `GET /scope/me` and `GET /users/:id/scope`.                                                                                                  |
-| `common/`                                                                                                           | `ChangeRecorder`, `references.ts` (`assertActiveReferences`, `assertValidParent`), `hierarchy.ts`, `db.ts` helpers.                                                                          |
+| `common/`                                                                                                           | `ChangeRecorder`, `references.ts` (`assertActiveReferences`, `assertValidParent`), `concurrency.ts` (`NEXT_VERSION`, `assertExpectedVersion`), `hierarchy.ts`, `db.ts` helpers.              |
+| `sync/`                                                                                                             | `GET /sync/pull` (`sync.service.ts`, `sync.controller.ts`) and the opaque cursor with its scope fingerprint (`sync-cursor.ts`). ADR-0008 section 6.                                          |
 | `memberships/admin-guard.ts`                                                                                        | `assertAdminRemains`: the last-admin check under a per-organization advisory lock.                                                                                                           |
 | `attachments/`                                                                                                      | The upload flow (`attachments.service.ts`: start, renew, complete, archive, signed URLs) and `attachment-cleanup.service.ts` (hourly expiry and purge). ADR-0006.                            |
 | `notifications/`                                                                                                    | Which events notify whom (`notification-rules.ts`, pure), the English text catalogue (`notification-messages.ts`), and the service that registers the outbox handlers. ADR-0007.             |
@@ -178,10 +188,10 @@ schema defaults both to `true`, a test configuration that omits them leaves them
 
 ### Data model
 
-Defined in `apps/api/prisma/schema.prisma`, applied by four migrations in
+Defined in `apps/api/prisma/schema.prisma`, applied by five migrations in
 `apps/api/prisma/migrations/` (`20261013112952_init`,
 `20261013150000_attachment_storage_key_per_org`, `20261014090000_auth`,
-`20261017090000_phase4_mobile`). Ids are UUID version 7
+`20261017090000_phase4_mobile`, `20261027090000_phase5_offline_sync`). Ids are UUID version 7
 (`@default(uuid(7))`), so they sort by creation time. Roles, statuses, priorities, sources, the
 audit actor type, and the auth enums are PostgreSQL enums. Timestamps are `timestamptz(3)`. The
 reasoning is in [ADR-0002](docs/decisions/0002-flexible-organization-and-scope-model.md),
@@ -226,7 +236,7 @@ erDiagram
     uuid id PK
     string name
     string slug UK
-    json settings "workLogEditWindowHours and free keys"
+    json settings "workLogEditWindowHours, offlineMaxBackdateDays, free keys"
     timestamptz archivedAt
   }
   User {
@@ -295,6 +305,7 @@ erDiagram
     timestamptz dueAt
     timestamptz completedAt
     string statusReason "required for blocked"
+    int version "raised by every change"
     timestamptz archivedAt
   }
   TaskAssignee {
@@ -325,6 +336,11 @@ erDiagram
     string reviewNote "rejection reason"
     WorkLogSource source
     json aiMetadata "always null today"
+    int version "raised by every change"
+    boolean submittedOffline
+    timestamptz deviceCreatedAt "phone clock at save"
+    int clockSkewSeconds
+    uuid declaredAttachmentClientIds "array, fixed at create"
     timestamptz archivedAt
   }
   Attachment {
@@ -332,6 +348,7 @@ erDiagram
     uuid organizationId FK
     uuid workLogId FK
     uuid uploadedById FK "set by the server"
+    uuid clientId "optional, unique per organization"
     string fileName
     string mimeType "image/jpeg or image/png"
     int sizeBytes "declared, then the stored size"
@@ -354,6 +371,7 @@ erDiagram
     json before
     json after
     json changes
+    json metadata "offline sync facts, else null"
     string correlationId
     timestamptz occurredAt
   }
@@ -452,6 +470,26 @@ erDiagram
   }
 ```
 
+The Phase 5 idempotency table is a platform table as well (ADR-0008 section 4):
+
+```mermaid
+erDiagram
+  IdempotencyRecord {
+    uuid id PK
+    uuid organizationId "unique with userId and key"
+    uuid userId
+    uuid key "the Idempotency-Key header"
+    string method
+    string path
+    string requestHash "SHA-256 of method, path, canonical body"
+    int statusCode "null while running"
+    json responseBody
+    timestamptz lockedUntil "claim lock, 60 s"
+    timestamptz completedAt
+    timestamptz expiresAt "14 days, deleted hourly"
+  }
+```
+
 Points the diagrams do not show:
 
 - **Enums**: `Role` (`worker`, `supervisor`, `manager`, `admin`); `TaskStatus` (`todo`,
@@ -466,8 +504,8 @@ Points the diagrams do not show:
   Identifiers are stored normalised (email and username lower-case; phone as digits with an
   optional leading `+`). A user without an `AuthCredential` row has not been activated and cannot
   sign in.
-- **`AuditEvent`, `OutboxEvent`, the `Auth*` tables, `Notification`, `PushToken`, and
-  `OutboxConsumerCursor` are platform tables.** They store entity ids as plain strings, so they can
+- **`AuditEvent`, `OutboxEvent`, the `Auth*` tables, `Notification`, `PushToken`,
+  `OutboxConsumerCursor`, and `IdempotencyRecord` are platform tables.** They store entity ids as plain strings, so they can
   move to another product unchanged.
 - **`AuditEvent` is append-only at the database level.** The first migration adds a trigger that
   raises an error on `UPDATE` or `DELETE` of a row. It does not block `TRUNCATE` (the integration
@@ -482,6 +520,13 @@ Points the diagrams do not show:
   cleared by a change without one. **`WorkLog.reviewedById`, `reviewedAt`, `reviewNote`** are set
   when a reviewer approves or rejects and cleared when the log goes back to `submitted` or
   `draft`; the API returns them as `review: { reviewedById, reviewedAt, note } | null`.
+- **Phase 5 offline facts** (ADR-0008): `Task.version` and `WorkLog.version` start at 1 and rise
+  by one with every change of the row (content, status, review, assignees, archive) in the same
+  transaction. A work log created by a phone's queue stores `submittedOffline`, `deviceCreatedAt`
+  (the phone's clock when the worker saved), `clockSkewSeconds` (device minus server time at
+  sending; flagged above 300 s), and `declaredAttachmentClientIds` (the photos of the original
+  submission). `createdAt` is the server receive time. `organization.settings.offlineMaxBackdateDays`
+  (1 to 90, default 7) limits how far back `occurredAt` may be.
 - **`source` and `aiMetadata`** are reserved for the AI phases. `source` is always `manual` in
   practice and the API accepts only `null` for `aiMetadata`.
 
@@ -491,8 +536,9 @@ Points the diagrams do not show:
    variable, values never printed; see Configuration). `x-powered-by` is disabled; when
    `TRUST_PROXY_HOPS` is above 0, Express trusts exactly that many proxies for the client address.
    The request context middleware is installed first. CORS allows only `CORS_ORIGINS`, with
-   credentials, the headers `Content-Type`, `Accept`, `Authorization`, `x-csrf-token`, and
-   `x-request-id`, and exposes `x-request-id` and `Retry-After`. Swagger is mounted only when
+   credentials, the headers `Content-Type`, `Accept`, `Authorization`, `x-csrf-token`,
+   `x-request-id`, `idempotency-key`, `x-client-sync`, and `x-device-time`, and exposes
+   `x-request-id`, `Retry-After`, and `idempotent-replayed`. Swagger is mounted only when
    `NODE_ENV` is `development`.
 2. **Request context middleware**: takes the correlation id from `x-request-id` when it is safe
    (at most 64 characters, letters, digits and `. _ : -`), otherwise generates a UUID, echoes it,
@@ -501,19 +547,23 @@ Points the diagrams do not show:
    never logged; the push token in `DELETE /notifications/push-tokens/<token>` is replaced by
    `:token` (any letter case). `/health` and `/docs*` are logged at debug level. It runs twice on purpose: on the
    HTTP adapter (so a request with a malformed body still gets an id) and from `PlatformModule`
-   after the body parser.
+   after the body parser. It also stores `x-client-sync: offline`, `x-device-time`, and the server
+   receive time for the audit metadata.
 3. **`AuthGuard`**, the one global guard (see Authentication): development-only routes answer 404
    outside development and test; `@Public()` routes pass; otherwise the request is authenticated
    against the database, CSRF is checked for cookie sessions, the actor is put in
    `RequestContext`, and the route's policy is applied through the `RequestAuthorizer`
    (see Authorization).
-4. **Controller**: `ZodPipe` validates the body, query, and path parameters against schemas from
+4. **`IdempotencyInterceptor`** (routes marked `@Idempotent()` that carry an `Idempotency-Key`
+   only): replays a stored answer, answers 409 `request_in_progress` or 422
+   `idempotency_key_reused`, or claims the key and stores the route's final answer afterwards.
+5. **Controller**: `ZodPipe` validates the body, query, and path parameters against schemas from
    `@ops/shared` (400). The controller calls one service method. It contains no rules and no role
    checks.
-5. **Service**: gets the caller with `AccessService.context()` (cached for the request), applies
+6. **Service**: gets the caller with `AccessService.context()` (cached for the request), applies
    the pure access rules and visibility filters (404, 403, 422), and runs the write inside one
    transaction (409 for state conflicts).
-6. **Errors**: `ApiExceptionFilter` (global) turns anything thrown into the standard error body
+7. **Errors**: `ApiExceptionFilter` (global) turns anything thrown into the standard error body
    and sets `Retry-After` for 429.
 
 ### Authentication
@@ -646,44 +696,53 @@ scope (`userIds`). "Colleagues" means everyone who works at a site or team the u
 creators of the user's non-archived tasks. A user with no active membership gets 403 on every
 `@Policy` route; `/auth/*` and `/scope/me` still work for them.
 
-| Resource / action                        | Worker                                                                                               | Supervisor                                                                                                                 | Manager                | Admin                                                     |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------- |
-| Organization read                        | `summary`                                                                                            | `summary`                                                                                                                  | `summary`              | `full`                                                    |
-| Organization update                      | 403                                                                                                  | 403                                                                                                                        | 403                    | yes                                                       |
-| Users list / get                         | self `full`; `basic` for colleagues and task peers; others 404                                       | self `full`; `contact` for their people; `basic` for colleagues and task peers; others 404                                 | `contact` for everyone | `full` for everyone                                       |
-| Users update                             | own `displayName` only (403 otherwise)                                                               | same                                                                                                                       | same                   | any field of anyone                                       |
-| Users create, archive, restore, codes    | 403                                                                                                  | 403                                                                                                                        | 403                    | yes (last admin: 409)                                     |
-| `GET /scope/me` / `GET /users/:id/scope` | yes / 403                                                                                            | yes / 403                                                                                                                  | yes / 403              | yes / yes                                                 |
-| Memberships read / manage                | 403                                                                                                  | 403                                                                                                                        | 403                    | yes (no escalation; last admin: 409)                      |
-| Sites and teams read                     | where they work (descendants included) and places of their assigned tasks; others 404                | their scope, where they work, and places of their tasks; others 404                                                        | all                    | all                                                       |
-| Sites and teams manage                   | 403                                                                                                  | 403                                                                                                                        | yes                    | yes                                                       |
-| Log types read / manage                  | read / 403                                                                                           | read / 403                                                                                                                 | yes / yes              | yes / yes                                                 |
-| Tasks read                               | assigned to them; others 404                                                                         | in their scope, assigned to their people, created by them, or assigned to them; others 404                                 | all                    | all                                                       |
-| Tasks create, edit, assign, archive      | 403                                                                                                  | site or team in scope (else 403); references visible (else 422); assignees among their people (else 422)                   | all                    | all                                                       |
-| Tasks change status                      | when assigned: `todo`, `in_progress`, `blocked`, `done`; not `cancelled`; not a cancelled task (403) | any status on tasks they manage; otherwise the worker rule                                                                 | any                    | any                                                       |
-| Tasks status reason                      | `blocked` needs a `reason` (400 without); the same status with a new reason updates it               | same                                                                                                                       | same                   | same                                                      |
-| Work logs read                           | own; others 404                                                                                      | own, in their scope, and their people's; others 404                                                                        | all                    | all                                                       |
-| Work logs create                         | own, `draft` or `submitted`, references visible (else 422)                                           | same                                                                                                                       | same                   | same                                                      |
-| Work logs edit content                   | author only, within the edit window (edge inclusive), not `approved`                                 | same; never someone else's (403)                                                                                           | same                   | same                                                      |
-| Work logs change status                  | author: `draft`↔`submitted`, `rejected`→`submitted`, under the edit rule                             | also review logs they can see: `submitted`→`approved`/`rejected`, `approved`/`rejected`→`submitted`; never their own (403) | same as supervisor     | same as supervisor                                        |
-| Work logs review note                    | not a reviewer: cannot approve or reject (403)                                                       | `rejected` needs a `note` (400); may repeat the decision to correct the note                                               | same as supervisor     | same as supervisor                                        |
-| Work logs archive                        | author under the edit rule                                                                           | author under the edit rule, or as reviewer (not their own)                                                                 | same as supervisor     | same as supervisor                                        |
-| Attachments read                         | `ready` ones of logs they can see; `pending` ones only if they uploaded them (others 404)            | same                                                                                                                       | same                   | same                                                      |
-| Attachments upload / renew / complete    | the parent log's archive rule (author within the edit window, not approved)                          | same, or as reviewer of a log they can see (not their own)                                                                 | same as supervisor     | same as supervisor                                        |
-| Attachments archive                      | the parent log's archive rule                                                                        | same                                                                                                                       | same                   | same                                                      |
-| Notifications and push tokens            | own only (`@Authenticated`); another user's notification or token 404                                | same                                                                                                                       | same                   | same                                                      |
-| Audit events                             | 403                                                                                                  | 403                                                                                                                        | 403                    | yes, own organization                                     |
-| Outbox events                            | 403                                                                                                  | 403                                                                                                                        | 403                    | development and test only; 404 for everyone in production |
+| Resource / action                        | Worker                                                                                                                      | Supervisor                                                                                                                 | Manager                | Admin                                                     |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------- |
+| Organization read                        | `summary`                                                                                                                   | `summary`                                                                                                                  | `summary`              | `full`                                                    |
+| Organization update                      | 403                                                                                                                         | 403                                                                                                                        | 403                    | yes                                                       |
+| Users list / get                         | self `full`; `basic` for colleagues and task peers; others 404                                                              | self `full`; `contact` for their people; `basic` for colleagues and task peers; others 404                                 | `contact` for everyone | `full` for everyone                                       |
+| Users update                             | own `displayName` only (403 otherwise)                                                                                      | same                                                                                                                       | same                   | any field of anyone                                       |
+| Users create, archive, restore, codes    | 403                                                                                                                         | 403                                                                                                                        | 403                    | yes (last admin: 409)                                     |
+| `GET /scope/me` / `GET /users/:id/scope` | yes / 403                                                                                                                   | yes / 403                                                                                                                  | yes / 403              | yes / yes                                                 |
+| Memberships read / manage                | 403                                                                                                                         | 403                                                                                                                        | 403                    | yes (no escalation; last admin: 409)                      |
+| Sites and teams read                     | where they work (descendants included) and places of their assigned tasks; others 404                                       | their scope, where they work, and places of their tasks; others 404                                                        | all                    | all                                                       |
+| Sites and teams manage                   | 403                                                                                                                         | 403                                                                                                                        | yes                    | yes                                                       |
+| Log types read / manage                  | read / 403                                                                                                                  | read / 403                                                                                                                 | yes / yes              | yes / yes                                                 |
+| Tasks read                               | assigned to them; others 404                                                                                                | in their scope, assigned to their people, created by them, or assigned to them; others 404                                 | all                    | all                                                       |
+| Tasks create, edit, assign, archive      | 403                                                                                                                         | site or team in scope (else 403); references visible (else 422); assignees among their people (else 422)                   | all                    | all                                                       |
+| Tasks change status                      | when assigned: `todo`, `in_progress`, `blocked`, `done`; not `cancelled` (403); not a cancelled task (409 `task_cancelled`) | any status on tasks they manage; otherwise the worker rule                                                                 | any                    | any                                                       |
+| Tasks status reason                      | `blocked` needs a `reason` (400 without); the same status with a new reason updates it                                      | same                                                                                                                       | same                   | same                                                      |
+| Work logs read                           | own; others 404                                                                                                             | own, in their scope, and their people's; others 404                                                                        | all                    | all                                                       |
+| Work logs create                         | own, `draft` or `submitted`, references visible (else 422)                                                                  | same                                                                                                                       | same                   | same                                                      |
+| Work logs edit content                   | author only, within the edit window (edge inclusive), not `approved`                                                        | same; never someone else's (403)                                                                                           | same                   | same                                                      |
+| Work logs change status                  | author: `draft`↔`submitted`, `rejected`→`submitted`, under the edit rule                                                    | also review logs they can see: `submitted`→`approved`/`rejected`, `approved`/`rejected`→`submitted`; never their own (403) | same as supervisor     | same as supervisor                                        |
+| Work logs review note                    | not a reviewer: cannot approve or reject (403)                                                                              | `rejected` needs a `note` (400); may repeat the decision to correct the note                                               | same as supervisor     | same as supervisor                                        |
+| Work logs archive                        | author under the edit rule                                                                                                  | author under the edit rule, or as reviewer (not their own)                                                                 | same as supervisor     | same as supervisor                                        |
+| Attachments read                         | `ready` ones of logs they can see; `pending` ones only if they uploaded them (others 404)                                   | same                                                                                                                       | same                   | same                                                      |
+| Attachments upload / renew / complete    | the parent log's archive rule (author within the edit window, not approved)                                                 | same, or as reviewer of a log they can see (not their own)                                                                 | same as supervisor     | same as supervisor                                        |
+| Attachments archive                      | the parent log's archive rule                                                                                               | same                                                                                                                       | same                   | same                                                      |
+| Notifications and push tokens            | own only (`@Authenticated`); another user's notification or token 404                                                       | same                                                                                                                       | same                   | same                                                      |
+| `GET /sync/pull` (`sync.pull`)           | own slice: assigned tasks, own logs, visible sites and teams, log types                                                     | same (assigned tasks and own logs only, not their people's)                                                                | same                   | same                                                      |
+| Audit events                             | 403                                                                                                                         | 403                                                                                                                        | 403                    | yes, own organization                                     |
+| Outbox events                            | 403                                                                                                                         | 403                                                                                                                        | 403                    | development and test only; 404 for everyone in production |
 
 The Phase 4 rows (task status reason, review note, pending attachments, upload renew and
 complete, notifications) are covered by the `tasks`, `work-logs`, `uploads`, `worker-app`, and
 `notifications` suites rather than by the matrix suite, which covers starting an upload and
-reading a ready attachment.
+reading a ready attachment. The matrix suite covers the `sync.pull` row; the Phase 5 refusal codes
+and late photos are covered by `offline-sync` and the updated `tasks`, `work-logs`, and `uploads`
+suites.
 
 The edit window is `organization.settings.workLogEditWindowHours` (default 24), counted from the
-log's `createdAt`. A move not listed for work-log status is 409. An organization-wide supervisor
-sees and manages like a manager for tasks and work logs, but still may not manage sites, teams,
-log types, users, or memberships.
+log's `createdAt`. A move not listed for work-log status is 409. Since Phase 5 (ADR-0008) the
+refusals carry specific codes: `already_reviewed` (409) for the author of an approved log,
+`edit_window_closed` (403), `record_archived` (409), `task_not_assigned` (403), `task_cancelled`
+(409), `version_conflict` (409). The author may upload photos declared in the log's create request
+for 30 days after the log's creation, whatever the window and the log's status; any other photo
+after the window is refused (`attachment_not_declared`, 403). A worker unassigned from a task no
+longer sees it, so a queued status change gets 404. An organization-wide supervisor sees and
+manages like a manager for tasks and work logs, but still may not manage sites, teams, log types,
+users, or memberships.
 
 ### The write pattern
 
@@ -695,9 +754,10 @@ context = await access.context()             // who is asking (401 if nobody)
 prisma.$transaction(tx =>
   load the row through the caller's visibility (404 if missing, other organization, or invisible)
   enforce(rule(context, facts, ...))         // 403 visible but not allowed, 409 impossible move
-  reject archived rows (409)
+  reject archived rows (409 record_archived)
+  edits and status changes: lock the row, compare expectedVersion (409 version_conflict unless no-op)
   check references with assertActiveReferences, through the caller's visibility (422)
-  write the row (author fields from the context, never from the body)
+  write the row, version + 1 for tasks and work logs (author fields from the context, never the body)
   changes.record(tx, { organizationId, entityType, verb, entityId, before, after, extra })
   revoke sessions through AuthAdminService when access was taken away
 )
@@ -722,7 +782,14 @@ The seed back-dates work log `createdAt` with a direct update, outside the patte
   payload, and the `secrets` integration suite checks logs, audit, and outbox.
 - **No-op writes record nothing**: archiving an archived record, restoring an active one, the same
   status (with the same task reason or review note), the same assignees, completing a ready
-  attachment, or a retried work log create (same `clientId`, same author).
+  attachment, a retried work log create (same `clientId`, same author), an edit whose fields
+  already hold the sent values, or a repeated upload start with the same attachment `clientId`. A
+  no-op answers 200 with the current record even with a stale `expectedVersion`, which makes a
+  resend after a lost answer succeed.
+- **Offline writes**: a request with `x-client-sync: offline` gets audit `metadata`
+  `{ via: 'offline_sync', deviceTime, serverTime, clockSkewSeconds }` (plus `droppedReferences`
+  when an offline create stored an unusable task, site, or team link as null instead of refusing
+  the log). Ordinary requests have `metadata` null. The outbox payload is unchanged.
 - **Status payloads** carry what the notification rules need: `task.status_changed` has
   `{ from, to, reason, changedById, createdById, assigneeIds, task }`; `work_log.status_changed`
   has `{ from, to, note, changedById, authorId, reviewedById, workLog }`.
@@ -754,9 +821,11 @@ keeps it from missing a late-committing event.
 
 ### API surface
 
-56 paths (49 in Phase 3, plus two attachment paths and five notification paths). Every route
-declares `@Public()`, `@Authenticated()`, or `@Policy(...)`; the policy is
-shown in brackets. The organization is always the caller's; it is never taken from the URL or the
+57 paths (49 in Phase 3, plus two attachment paths and five notification paths in Phase 4, and
+`/sync/pull` in Phase 5). Every route declares `@Public()`, `@Authenticated()`, or
+`@Policy(...)`; the policy is shown in brackets. `@Idempotent()` routes (`Idempotency-Key`
+honoured): `POST /work-logs`, `PATCH /work-logs/:id`, `PATCH /work-logs/:id/status`,
+`PATCH /tasks/:id/status`. The organization is always the caller's; it is never taken from the URL or the
 body.
 
 | Resource      | Routes                                                                                                                                                                                                                                                                                            |
@@ -774,6 +843,7 @@ body.
 | Work logs     | `GET /work-logs`, `GET /work-logs/:id` [`work_log.read`]; `POST` [`work_log.create`]; `PATCH /:id` [`work_log.update`]; `PATCH /:id/status` `{ status, note? }` [`work_log.change_status`]; `POST /:id/archive` [`work_log.archive`]                                                              |
 | Attachments   | `GET /work-logs/:workLogId/attachments`, `GET /attachments/:id` [`attachment.read`]; `POST /work-logs/:workLogId/attachments` (start), `POST /attachments/:id/upload-url` (renew), `POST /attachments/:id/complete` [`attachment.create`]; `POST /attachments/:id/archive` [`attachment.archive`] |
 | Notifications | `GET /notifications`, `POST /notifications/:id/read`, `POST /notifications/read-all`, `POST /notifications/push-tokens`, `DELETE /notifications/push-tokens/:token` (all authenticated, own data only)                                                                                            |
+| Sync          | `GET /sync/pull?cursor=` [`sync.pull`] (ADR-0008)                                                                                                                                                                                                                                                 |
 | Audit events  | `GET /audit-events`, `GET /audit-events/:id` [`audit.read`]                                                                                                                                                                                                                                       |
 | Outbox        | `GET /outbox-events`, `GET /outbox-events/:id` [`outbox.read`, development and test only]                                                                                                                                                                                                         |
 
@@ -791,21 +861,27 @@ documented. Those routes do not exist in any other environment.
 **Error body.** Every non-2xx response except `GET /health` has the shape of `apiErrorSchema` in
 `@ops/shared` (`statusCode`, `code`, `message`, `details`, `correlationId`, `timestamp`). `code` is
 one of `validation_failed`, `unauthenticated`, `forbidden`, `not_found`, `conflict`,
-`unprocessable`, `rate_limited`, `service_unavailable`, `internal_error`. Clients branch on
-`code`, never on `message`. Unexpected errors are logged with the correlation id and answered with
+`unprocessable`, `rate_limited`, `service_unavailable`, `internal_error`, and since Phase 5 the
+typed codes `version_conflict` (409), `edit_window_closed` (403), `already_reviewed` (409),
+`record_archived` (409), `task_not_assigned` (403), `task_cancelled` (409),
+`occurred_at_out_of_range` (422), `attachment_not_declared` (403), `idempotency_key_reused` (422),
+`request_in_progress` (409). Each code has exactly one status (`API_ERROR_STATUS` in
+`@ops/shared`); `RETRYABLE_API_ERROR_CODES` (`rate_limited`, `service_unavailable`,
+`internal_error`, `request_in_progress`) are worth retrying unchanged. Clients branch on `code`,
+never on `message`. Unexpected errors are logged with the correlation id and answered with
 a generic 500. (An unknown route, and the outbox in production, answer Nest's own 404.)
 
-| Status  | When                                                                                                                                                                                                                                       |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 400     | A body, query, or path parameter fails its schema (request bodies are strict: an unknown key, including `authorId`, is a 400); a weak new password; a wrong current password; a manager or admin membership that is not organization-wide. |
-| 401     | No valid session (one message), or a failed sign-in (one message).                                                                                                                                                                         |
-| 403     | The CSRF checks failed; the role may not use the route; the record is visible but the action is not allowed; sorting users by email without seeing every email.                                                                            |
-| 404     | The record does not exist, belongs to another organization, or is outside the caller's visibility. Indistinguishable on purpose.                                                                                                           |
-| 409     | The record's state forbids the change (archived, impossible status move, last admin, already activated, 20 attachments on a log, upload not received yet) or a unique value is in use.                                                     |
-| 422     | A body refers to a record that is missing, archived, in another organization, or invisible to the caller; an unknown, used, or expired one-time code; an uploaded file that is not a valid image of its type (`details[0].path` `file`).   |
-| 429     | A rate limit on `/auth/*` or on the upload steps was hit; `Retry-After` says when to try again.                                                                                                                                            |
-| 503     | The file storage is unreachable, or no image-decode slot became free within 30 seconds (`service_unavailable`).                                                                                                                            |
-| 200/201 | `POST /work-logs` answers 201 for a new log, and 200 with the stored log when its author retries the same `clientId`.                                                                                                                      |
+| Status  | When                                                                                                                                                                                                                                                                                                                        |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 400     | A body, query, or path parameter fails its schema (request bodies are strict: an unknown key, including `authorId`, is a 400); a weak new password; a wrong current password; a manager or admin membership that is not organization-wide.                                                                                  |
+| 401     | No valid session (one message), or a failed sign-in (one message).                                                                                                                                                                                                                                                          |
+| 403     | The CSRF checks failed; the role may not use the route; the record is visible but the action is not allowed; sorting users by email without seeing every email.                                                                                                                                                             |
+| 404     | The record does not exist, belongs to another organization, or is outside the caller's visibility. Indistinguishable on purpose.                                                                                                                                                                                            |
+| 409     | The record's state forbids the change (archived, impossible status move, last admin, already activated, 20 attachments on a log, upload not received yet) or a unique value is in use.                                                                                                                                      |
+| 422     | A body refers to a record that is missing, archived, in another organization, or invisible to the caller; an unknown, used, or expired one-time code; an uploaded file that is not a valid image of its type (`details[0].path` `file`).                                                                                    |
+| 429     | A rate limit on `/auth/*` or on the upload steps was hit; `Retry-After` says when to try again.                                                                                                                                                                                                                             |
+| 503     | The file storage is unreachable, or no image-decode slot became free within 30 seconds (`service_unavailable`).                                                                                                                                                                                                             |
+| 200/201 | `POST /work-logs` answers 201 for a new log, and 200 with the stored log when its author retries the same `clientId` (before any other check). Starting an upload again with one's own attachment `clientId` answers 200. A replayed `Idempotency-Key` answers the stored status and body with `idempotent-replayed: true`. |
 
 **Lists.** Every list endpoint returns `{ items, page, pageSize, total }`, filtered to what the
 caller may see before paging. `page` starts at 1; `pageSize` defaults to 25, at most 100.
@@ -915,6 +991,39 @@ business write --> outbox event --> OutboxConsumer (platform.notifications, poll
   Android Expo Go cannot receive remote push (a development build can); iOS Expo Go can, with an
   EAS project id.
 
+### Offline mode and sync
+
+The decision, the sequence diagram, the conflict table, and the phone's storage and retention
+rules are in [ADR-0008](docs/decisions/0008-offline-storage-sync-and-conflicts.md).
+
+```text
+screen --> repositories.ts --> write queue (SQLite ops-<userId>.db) --> answers at once
+sync engine (reconnect, foreground, after a write, "Sync now", background task)
+  --> each queued write, oldest first per record, to the normal endpoint
+      + x-client-sync: offline, x-device-time, Idempotency-Key (creates: clientId)
+      <-- 2xx: remove item, update cache, rebase the record's next expectedVersion
+      <-- typed refusal: failed_permanent, kept until the worker retries, copies, resubmits, discards
+      <-- network / 5xx / 429 / request_in_progress: failed_retryable, backoff
+  --> GET /sync/pull?cursor=  <-- upserts + complete id set per resource --> cache
+```
+
+- **No batch endpoint**: the queue replays the existing routes one write at a time, so policies,
+  audit, and outbox are the same for online and offline writes.
+- **`GET /sync/pull`** (`sync.pull`, every role): the caller's assigned tasks (done or cancelled
+  ones only while changed within 30 days), all non-archived log types, visible sites and teams,
+  own work logs and notifications of the last 30 days, and the organization summary. `upserts`
+  hold what changed since the cursor time minus 60 s; `ids` is always the complete id set, and the
+  phone deletes every cached row not in it (archived, reassigned, out of scope, aged out). The
+  opaque cursor carries a scope fingerprint; a changed scope or an unreadable cursor gives a full
+  pull, never an error.
+- **Conflicts**: the server is the source of truth and judges each write with the Phase 3 rules
+  when it arrives; `expectedVersion` gives `version_conflict`; the supervisor's change wins.
+  Offline creates are accepted within `offlineMaxBackdateDays`; an unusable task, site, or team
+  link of an offline create is stored as null and reported, not refused.
+- **Sessions on the phone**: an unreachable server never signs the worker out; a refused refresh
+  keeps the queue and asks the same user to sign in again; another user on the phone opens their
+  own database and never sees or sends the previous user's data.
+
 ### Typed API client
 
 `packages/shared/src/api-client/` is the one way the web and mobile apps call the API.
@@ -931,7 +1040,9 @@ business write --> outbox event --> OutboxConsumer (platform.notifications, poll
   its schemas. `createApiClient(options)` (`create-api-client.ts`) assembles them: `health`,
   `auth`, `organization`, `users`, `memberships`, `sites`, `teams`, `logTypes`, `tasks`,
   `workLogs`, `attachments` (with `startUpload`, `renewUpload`, `complete`), `scope`,
-  `notifications`, `auditEvents`, `outboxEvents`.
+  `notifications`, `sync` (`pull`), `auditEvents`, `outboxEvents`. Write endpoints take
+  `ApiCallOptions` (`headers`); the phone's queue passes `offlineSyncHeaders({ idempotencyKey,
+deviceTime })` (`platform/offline-sync.ts`).
 - **Upload helper** (`uploadAttachment`, `attachment-upload.ts`): start, PUT (supplied by the
   platform, with progress), and complete, resumable from an `UploadCheckpoint` so a retry renews
   the same pending attachment; `uploadRetryDelayMs` (2, 4, 8 s with jitter, 3 automatic attempts).
@@ -986,31 +1097,42 @@ final values; they cannot change after a store release) and that deployment's
   (`X-Frame-Options`, `frame-ancestors`, `nosniff`, referrer and permissions policies, HSTS in
   production; `no-referrer` and `no-store` on `/login` and `/activate`). There is no
   `script-src` / `style-src` policy yet: it needs per-request nonces.
-- **Mobile** (Phase 4):
+- **Mobile** (Phase 4, offline since Phase 5):
   - **Navigation** (React Navigation 7): `App.tsx` chooses between a signed-out stack (Login,
     Activate) and the signed-in navigator by sign-in state. Signed in: bottom tabs Home, Tasks,
     Logs, Alerts (the notification list, with an unread badge), Profile; above them a stack with
-    TaskDetail, LogForm (new or edit), LogDetail, PhotoViewer. The signed-in part is keyed by user,
-    so another user starts with an empty cache.
-  - **Data layer** (`src/data/`): reads through TanStack Query (`queries.ts`; notifications polled
-    every 60 s; attachments refetched before their signed URLs expire). **Every write goes through
-    `repositories.ts`** (work logs, tasks, attachments, notifications), which returns a typed
-    `WriteResult` and tells the cache what changed. A new log resolves to a `SavedWorkLog` that is
-    `settled` today; Phase 5 adds a local queue behind the same interfaces and a `pending` answer,
-    without changing screens. Work log creates are retried once on a network failure (the
-    `clientId` makes it safe).
-  - **Uploads** (`uploadQueue.ts`): photos of a saved log are uploaded one at a time from a queue
-    persisted per user in AsyncStorage; 3 automatic retries (2, 4, 8 s with jitter), then a manual
-    Retry on the log screen; a checkpoint per photo makes a retry renew the same attachment.
+    TaskDetail, LogForm (new or edit), LogDetail, PhotoViewer, Sync. The signed-in part is keyed
+    by user and wrapped in the `SyncProvider`; the header shows the sync indicator.
+  - **Data layer** (`src/data/`): reads come from the user's local store with the queued writes
+    applied on top (`src/offline/localView.ts`), through TanStack Query hooks (`queries.ts`)
+    invalidated when the store or the queue changes; only photos (signed URLs) and the scope still
+    need the server. **Every write goes through `repositories.ts`**, which puts work-log and task
+    writes into the user's write queue first, online or offline, and answers at once (a new log is
+    a `pending` `SavedWorkLog`). Marking notifications read and push registration are not queued.
+  - **Offline layer** (`src/offline/`, ADR-0008): one SQLite database per user (`ops-<userId>.db`,
+    expo-sqlite: cache tables per resource, `meta`, `queue`), a photo folder per user
+    (`offline-photos/<userId>/`, 500 MB limit, warning at 80%), the write queue (`writeQueue.ts`:
+    per-record order, coalescing, version rebasing, states `pending` / `sending` /
+    `failed_retryable` / `failed_permanent`), the sync engine (`engine.ts`: sends the queue with
+    `offlineSyncHeaders`, then `GET /sync/pull`; on start, foreground, reconnect via NetInfo, after
+    a write, "Sync now", and a best-effort `expo-background-task`; backoff 2 s doubling to 15
+    minutes with full jitter, no attempt limit), the offline identity in SecureStore (the app opens
+    signed in from it when the server is unreachable), and the per-user lifecycle (`session.ts`,
+    `lifecycle.ts`, `identity.ts`: sign-out choices, kept-user register, start-up sweep). The
+    Phase 4 AsyncStorage upload queue is migrated into the write queue on first open
+    (`legacyUploads.ts`); `src/data/uploadQueue.ts` is now a read-only view over the queue.
   - **Photos** (`src/device/`): camera or gallery, resized to 1600 px on the long edge and
-    re-encoded as JPEG at 0.7 (HEIC becomes JPEG, metadata dropped), kept in
-    `Paths.document/pending-photos/` until the upload completes, sent with `expo-file-system` and
-    progress (a `fetch` fallback). Up to 10 photos per log in the form.
+    re-encoded as JPEG at 0.7 (HEIC becomes JPEG, metadata dropped), moved into the user's offline
+    photo folder until the upload completes, sent with `expo-file-system` and progress. Up to 10
+    photos per log in the form; each is declared in the log's create (`attachmentClientIds`).
   - **Location**: foreground permission only, asked once; a last-known position under 2 minutes
     old, else a fresh high-accuracy fix within 10 seconds; never blocks saving.
-  - **Drafts and retention** (`src/storage/`): the new-log form is drafted in AsyncStorage per
-    user (`ops.drafts.newWorkLog.<userId>`; edit forms are not drafted); drafts and queued uploads
-    older than 14 days are deleted at app start. Tokens stay in SecureStore only.
+  - **Drafts and retention** (`src/storage/`): new-log and edit-log forms are drafted in
+    AsyncStorage per user (`ops.drafts.newWorkLog.<userId>`, `ops.drafts.editWorkLog.<userId>.<logId>`);
+    drafts older than 14 days are deleted at app start. Queued writes and their photos are never
+    deleted by age: only when accepted, when the worker discards them, or, for a user who chose
+    "keep for later" at sign-out, after 30 days. Tokens and the offline identity stay in
+    SecureStore only.
   - **i18n** (`src/i18n/`): every sentence through `t(key)` from a typed catalogue (`en.ts`); a new
     language is a new file added to `CATALOGUES`; the phone's language is picked with
     `expo-localization`; styles use `start` / `end` and `applyLayoutDirection()` switches React
@@ -1059,13 +1181,14 @@ Turborepo runs tasks across the workspace. Every task depends on `^build`, so `@
 compiled before the apps that import it. The reasons for each tool and version are in
 [ADR-0001](docs/decisions/0001-tech-stack.md).
 
-- **Unit tests** (`pnpm test`) need no database and no network: 477 in `@ops/api` (21 suites,
-  including the access rules, visibility, auth, storage, notifications, the outbox consumer, and
-  `route-policies.spec.ts`), 650 in `@ops/shared` (13 files), 46 in `@ops/web`, 154 in
-  `@ops/mobile` (15 suites).
+- **Unit tests** (`pnpm test`) need no database and no network: 513 in `@ops/api` (24 suites,
+  including the access rules, visibility, auth, storage, notifications, the outbox consumer,
+  idempotency, the sync cursor, and `route-policies.spec.ts`), 689 in `@ops/shared` (14 files), 46
+  in `@ops/web`, 305 in `@ops/mobile` (26 suites, including the sync engine against fakes for
+  SQLite, network, clock, and API).
 - **Integration tests** (`pnpm test:integration`) boot the real Nest application in-process and
-  call it over HTTP against a separate PostgreSQL database named by `DATABASE_URL_TEST`: 1,339
-  tests in 18 suites (as reported on 2026-10-17), about 3 minutes. They bind an in-memory
+  call it over HTTP against a separate PostgreSQL database named by `DATABASE_URL_TEST`: 1,416
+  tests in 19 suites (as reported on 2026-10-27), about 3 minutes. They bind an in-memory
   `FileStorage` fake, except `storage-minio`, which uses the real MinIO with its own bucket
   `hz-attachments-test`; the outbox consumer and push are off and tests call `processPending()`
   with a fake Expo client. They authenticate through the harness: `as(userId)` opens
@@ -1090,17 +1213,6 @@ revised by ADR when a decision changes.
 4. **AI-proposed actions need human approval.** Only an approved proposal is executed, by the core
    application, not by the AI layer.
 5. **Everything automated is audited**: proposals, approvals, rejections, executed actions.
-
-### Offline-first mobile (planned, Phase 5)
-
-Workers often have poor connectivity, so the mobile app must record work without a network: a
-local store written first, a queue sent when the network returns, idempotent sync through the
-client-generated `clientId` (the server side exists), and a documented conflict rule (not chosen;
-there is no row version today). Phase 4 prepared it: every write already goes through
-`apps/mobile/src/data/repositories.ts`, screens already handle a `pending` `SavedWorkLog`, and
-photo uploads already have a persisted queue. Phase 5 adds the local queue behind the
-repositories, drafts for the edit form, and the signed-in state when the server is unreachable at
-start (today the app shows the sign-in screen with an "unreachable" notice and keeps the tokens).
 
 ### Web dashboard (planned, Phase 6)
 
@@ -1127,13 +1239,14 @@ across Kaneri products later.
 | Configuration    | Typed, validated settings from the environment.                         | Exists in `src/config/`, mixed with this API's own variable list.                                                              |
 | Request context  | Correlation id, acting user, one structured log line per request.       | Exists: `src/platform/request-context/`.                                                                                       |
 | HTTP conventions | Error body, Zod validation pipe, pagination, filters, OpenAPI from Zod. | Exists: `src/platform/http/`, `src/platform/docs/`, schemas in `@ops/shared`.                                                  |
-| Audit log        | Append-only record of who did what, when, and through which actor.      | Exists: `src/platform/audit/`, table `AuditEvent`.                                                                             |
+| Audit log        | Append-only record of who did what, when, and through which actor.      | Exists: `src/platform/audit/`, table `AuditEvent` (with offline-sync `metadata` since Phase 5).                                |
 | Event outbox     | Domain events written in the same transaction as the change.            | Exists: `src/platform/outbox/`, table `OutboxEvent`.                                                                           |
 | Outbox consumer  | Reads the outbox in order and dispatches events to registered handlers. | Exists (Phase 4, ADR-0007): `outbox-consumer.ts`, table `OutboxConsumerCursor`. Knows no event names.                          |
 | Auth             | Identity, sign-in, sessions, tokens, CSRF, rate limits, lockout.        | Exists: `src/platform/auth/`, tables `Auth*`. In-house (ADR-0004); an external provider would plug in behind the same seams.   |
 | Permissions seam | Route policies and the authorizer interface the host implements.        | Exists: `src/platform/authz/`. The Operations rules (`src/operations/access/`) are domain code behind it.                      |
 | Notifications    | Delivering messages to users over one or more channels.                 | Exists (Phase 4, ADR-0007): in-app list, `NotificationChannel` interface, Expo push channel, push tokens. Codes: logging only. |
 | File storage     | Provider-neutral storage with signed upload and download URLs.          | Exists (Phase 4, ADR-0006): `src/platform/storage/`, S3-compatible, image verification and thumbnails.                         |
+| Idempotency      | `Idempotency-Key` claim, replay, and expiry for marked routes.          | Exists (Phase 5, ADR-0008): `src/platform/idempotency/`, table `IdempotencyRecord`, `@Idempotent()`. Knows no route names.     |
 | Design tokens    | Theme constants, contrast maths, CSS variables.                         | Exists: `packages/shared/src/theme/`.                                                                                          |
 | Typed API client | Transport with refresh-once, result type, auth session manager, health. | Exists: `packages/shared/src/api-client/` (the resource list is Operations-specific).                                          |
 | AI layer         | Event consumption, provider abstraction, proposals, approval workflow.  | Planned, Phase 7.                                                                                                              |

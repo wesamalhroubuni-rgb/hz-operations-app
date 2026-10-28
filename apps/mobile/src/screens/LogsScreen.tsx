@@ -4,11 +4,15 @@ import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 
 import { Button } from '../components/Button';
 import { LogRow } from '../components/rows';
-import { EmptyState, ErrorState, LoadingState } from '../components/StateViews';
-import { useMyLogs } from '../data/queries';
+import { EmptyState, LoadingState } from '../components/StateViews';
+import { SyncReadErrorState } from '../components/SyncNotices';
+import { SyncBanner } from '../components/SyncBanner';
+import { useSync } from '../components/SyncProvider';
+import { readErrorKind, useMyLogs } from '../data/queries';
 import { useLookups } from '../hooks/useLookups';
 import { usePendingPhotoCounts } from '../hooks/useUploads';
 import { t } from '../i18n';
+import { logSyncState } from '../logic/sync';
 import type { TabScreenProps } from '../navigation/types';
 
 /** My logs, newest first, with their review status. */
@@ -16,14 +20,16 @@ export function LogsScreen({ navigation }: Readonly<TabScreenProps<'Logs'>>) {
   const logs = useMyLogs();
   const lookups = useLookups();
   const pendingPhotos = usePendingPhotoCounts();
+  const { logStates } = useSync();
   const items = useMemo(() => logs.data?.pages.flatMap((page) => page.items) ?? [], [logs.data]);
 
   return (
     <View style={styles.screen}>
+      <SyncBanner padded />
       {logs.isPending ? (
         <LoadingState />
       ) : logs.isError ? (
-        <ErrorState onRetry={() => void logs.refetch()} />
+        <SyncReadErrorState kind={readErrorKind(logs.error)} onRetry={() => void logs.refetch()} />
       ) : (
         <FlatList
           data={items}
@@ -34,6 +40,7 @@ export function LogsScreen({ navigation }: Readonly<TabScreenProps<'Logs'>>) {
               log={item}
               typeName={lookups.logTypeName(item.logTypeId)}
               pendingPhotos={pendingPhotos.get(item.id) ?? 0}
+              syncState={logSyncState(logStates, item.clientId)}
               onPress={() => navigation.navigate('LogDetail', { logId: item.id })}
             />
           )}

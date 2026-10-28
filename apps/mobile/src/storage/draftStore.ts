@@ -43,9 +43,15 @@ export interface LogDraft {
 }
 
 export const DRAFT_KEY_PREFIX = 'ops.drafts.newWorkLog.';
+/** Drafts of the edit form, one per user and log (Phase 5). */
+export const EDIT_DRAFT_KEY_PREFIX = 'ops.drafts.editWorkLog.';
 
 export function draftKey(userId: string): string {
   return `${DRAFT_KEY_PREFIX}${userId}`;
+}
+
+export function editDraftKey(userId: string, logId: string): string {
+  return `${EDIT_DRAFT_KEY_PREFIX}${userId}.${logId}`;
 }
 
 /**
@@ -75,6 +81,15 @@ export interface DraftStore {
   load(userId: string): Promise<LogDraft | null>;
   save(userId: string, draft: Omit<LogDraft, 'savedAt'>, now?: Date): Promise<void>;
   clear(userId: string): Promise<void>;
+  /** The unsaved edit of one log (the log's server id or clientId). */
+  loadEdit(userId: string, logId: string): Promise<LogDraft | null>;
+  saveEdit(
+    userId: string,
+    logId: string,
+    draft: Omit<LogDraft, 'savedAt'>,
+    now?: Date,
+  ): Promise<void>;
+  clearEdit(userId: string, logId: string): Promise<void>;
 }
 
 /**
@@ -83,44 +98,51 @@ export interface DraftStore {
  * still there.
  */
 export function createDraftStore(store: KeyValueStore): DraftStore {
+  async function load(key: string): Promise<LogDraft | null> {
+    let raw: string | null;
+    try {
+      raw = await store.getItem(key);
+    } catch {
+      return null;
+    }
+    if (raw === null) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = null;
+    }
+    const result = draftSchema.safeParse(parsed);
+    if (!result.success) {
+      await store.removeItem(key).catch(() => undefined);
+      return null;
+    }
+    return {
+      savedAt: result.data.savedAt,
+      values: result.data.values,
+      photos: result.data.photos,
+    };
+  }
+  async function save(key: string, draft: Omit<LogDraft, 'savedAt'>, now: Date): Promise<void> {
+    const value = JSON.stringify({
+      version: DRAFT_VERSION,
+      savedAt: now.toISOString(),
+      values: draft.values,
+      photos: draft.photos,
+    });
+    await store.setItem(key, value).catch(() => undefined);
+  }
+  async function clear(key: string): Promise<void> {
+    await store.removeItem(key).catch(() => undefined);
+  }
   return {
-    async load(userId) {
-      let raw: string | null;
-      try {
-        raw = await store.getItem(draftKey(userId));
-      } catch {
-        return null;
-      }
-      if (raw === null) return null;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        parsed = null;
-      }
-      const result = draftSchema.safeParse(parsed);
-      if (!result.success) {
-        await store.removeItem(draftKey(userId)).catch(() => undefined);
-        return null;
-      }
-      return {
-        savedAt: result.data.savedAt,
-        values: result.data.values,
-        photos: result.data.photos,
-      };
-    },
-    async save(userId, draft, now = new Date()) {
-      const value = JSON.stringify({
-        version: DRAFT_VERSION,
-        savedAt: now.toISOString(),
-        values: draft.values,
-        photos: draft.photos,
-      });
-      await store.setItem(draftKey(userId), value).catch(() => undefined);
-    },
-    async clear(userId) {
-      await store.removeItem(draftKey(userId)).catch(() => undefined);
-    },
+    load: (userId) => load(draftKey(userId)),
+    save: (userId, draft, now = new Date()) => save(draftKey(userId), draft, now),
+    clear: (userId) => clear(draftKey(userId)),
+    loadEdit: (userId, logId) => load(editDraftKey(userId, logId)),
+    saveEdit: (userId, logId, draft, now = new Date()) =>
+      save(editDraftKey(userId, logId), draft, now),
+    clearEdit: (userId, logId) => clear(editDraftKey(userId, logId)),
   };
 }
 

@@ -126,6 +126,13 @@ export const POLICIES = {
     description: 'Archive an attachment, under the same rule as archiving its work log.',
   },
 
+  'sync.pull': {
+    roles: EVERYONE,
+    description:
+      "Pull the caller's offline data (assigned tasks, log types, visible sites and teams, own " +
+      'recent work logs and notifications), filtered by the same visibility rules as every read.',
+  },
+
   // Platform routes. The platform puts the decorators on them; their meaning is decided here.
   'audit.read': { roles: ADMINS, description: 'Read the audit log of the organization.' },
   'outbox.read': {

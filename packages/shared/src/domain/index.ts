@@ -11,6 +11,7 @@ export * from './organization.js';
 export * from './scope.js';
 export type { ListQueryParams } from './shared.js';
 export * from './sites.js';
+export * from './sync.js';
 export * from './tasks.js';
 export * from './teams.js';
 export * from './users.js';

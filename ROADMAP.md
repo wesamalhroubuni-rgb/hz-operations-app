@@ -9,9 +9,9 @@ Criteria for Phases 3 to 8 are the current plan and should be refined at the sta
 | 1     | Setup & architecture         | Done except two checks: one pending, one waiting for the phone test       |
 | 2     | Backend core                 | Accepted and committed (`1fd2988`); one check waits for a phone build     |
 | 3     | Authentication & permissions | Accepted and committed (`8c8283a`); device checks wait for the phone test |
-| 4     | Mobile worker app            | Code complete; phone test, development build, and commit open             |
-| 5     | Offline mode & sync          | Next                                                                      |
-| 6     | Web manager dashboard        | Planned                                                                   |
+| 4     | Mobile worker app            | Committed (`280c50a`); phone test and development build open              |
+| 5     | Offline mode & sync          | Code complete and tested; emulator and phone test open                    |
+| 6     | Web manager dashboard        | Next                                                                      |
 | 7     | Intelligent layer v1         | Planned                                                                   |
 | 8     | Hardening & release          | Planned                                                                   |
 
@@ -329,7 +329,7 @@ Design and usability
       to left (`start` / `end`, `applyLayoutDirection`).
 - [x] The form keeps what the worker typed until it is saved: the new-log form is drafted on the
       phone per user, a failed save keeps the form, and photos wait in a persisted upload queue.
-      (Edit forms are not drafted; Phase 5.)
+      (Since Phase 5 the edit form is drafted too.)
 - [ ] Large touch targets, readable in sunlight, one-handed and glove use, clear empty, loading,
       and error states, screen-reader labels, and dynamic text size, checked on a real phone.
 
@@ -388,31 +388,86 @@ Tests, review, verification
 - [ ] App icon and splash screen seen in a development build.
 - [ ] The final mobile bundle identifiers are decided (they come from `EXPO_IOS_BUNDLE_IDENTIFIER`
       and `EXPO_ANDROID_PACKAGE`; the default `ai.kaneri.operations` is a placeholder).
-- [ ] The Phase 4 work is reviewed and committed by the owner.
+- [x] The Phase 4 work is committed (`280c50a`, 2026-10-17) and pushed to the private GitHub
+      repository.
 
 ## Phase 5: Offline mode & sync
 
-**Goals**: a worker can log work with no network, and it reaches the server later exactly once.
+**Goals**: a worker can use the app fully offline for their own work (see their tasks, create and
+edit logs with photos and location, change task status), and everything syncs automatically and
+safely when the connection returns, with nothing lost and nothing duplicated.
+
+The criteria below were rewritten on 2026-10-27 to match the owner's Phase 5 prompt
+(`docs/prompts/phase-5.md`). "Verified" means by the unit and integration suites, the
+`test-writer`, and the `reviewer` during the session of 2026-10-27. **Nothing has run on a phone
+or in the emulator yet.**
 
 **Done when**
 
-- [ ] An ADR records the local database and the conflict rule, including whether the server needs
-      a row version (there is no optimistic locking today; concurrent updates are
-      last-write-wins).
-- [ ] Work logs and attachments are written to a local store first, behind the existing
-      repositories in `apps/mobile/src/data/repositories.ts` (screens already handle a `pending`
-      `SavedWorkLog`; photo uploads already have a persisted queue since Phase 4).
-- [ ] A queue sends pending changes when the network returns, with retry and backoff.
-- [ ] The edit form keeps a draft like the new-log form does.
-- [ ] The app opens signed in from the stored session when the server is unreachable, and does not
-      sign the user out because of it (moved from Phase 4; today it shows the sign-in screen with
-      an "unreachable" notice and keeps the tokens).
-- [ ] Sync is idempotent: resending the same change does not create a duplicate. (The server side
-      for work log creation exists since Phase 2: `clientId`.)
-- [ ] Conflicts are detected and resolved by the documented rule.
-- [ ] The app shows sync state (pending, synced, failed) per work log.
-- [ ] Tests cover duplicate, out-of-order, and interrupted sync.
+Decisions and documentation
+
+- [x] [ADR-0008](docs/decisions/0008-offline-storage-sync-and-conflicts.md) records the local
+      storage, the sync protocol (no batch endpoint, with reasons), the conflict rules, row
+      versions, the sequence diagram, and what is stored on the phone and for how long.
+- [x] README section 6 documents the Android emulator test (`hz_pixel`, `adb reverse`, airplane
+      mode) and an exact offline and conflict test.
+
+Phone (code complete and tested with fakes; every item needs the emulator or phone test)
+
+- [x] Reads come from a per-user local cache (SQLite) refreshed by `GET /sync/pull`, with "last
+      refreshed" shown: assigned tasks, log types, sites and teams, recent own logs,
+      notifications.
+- [x] Creating a log (photos, location, custom fields), editing own logs, and changing task status
+      go into a per-user local queue behind `apps/mobile/src/data/repositories.ts`; screens did not
+      change their write calls.
+- [x] Photos are stored on the phone, already resized, until uploaded, then deleted; a 500 MB limit
+      with a warning at 80%.
+- [x] Sync runs on reconnect, on foreground, after a write, on "Sync now", and in the background
+      where the OS allows (development build only); in order per record, with exponential backoff
+      and jitter.
+- [x] Idempotent: `clientId` for creates (logs and photos), `Idempotency-Key` for edits and status
+      changes; retries, a crash mid-send, and double taps create no duplicates (mobile and API
+      tests).
+- [x] Sync status UI: an indicator (synced, pending N, failed N, offline, sign in again), a Sync
+      screen with reasons, retry, view, copy, resubmit as new, and discard; a state per work log.
+- [x] The edit form keeps a draft like the new-log form does.
+- [x] The app opens signed in from the stored identity when the server is unreachable; an expired
+      session keeps the queue and asks to sign in again; another user on the same phone never sees
+      or sends the previous user's data; sign-out with unsent items warns and offers sync first,
+      keep for later, or discard.
+
+Server
+
+- [x] Every conflict rule of the prompt is implemented with a typed error code (`version_conflict`,
+      `already_reviewed`, `edit_window_closed`, `task_cancelled`, `record_archived`, ...);
+      optimistic concurrency with a row `version` on tasks and work logs.
+- [x] Late offline logs are accepted within `offlineMaxBackdateDays` (default 7); the device time,
+      server time, and clock skew are recorded, and large skews flagged.
+- [x] Photos declared in a log's create are accepted for 30 days whatever the edit window; other
+      photos after the window are refused (`attachment_not_declared`).
+- [x] Every synced write goes through the normal policies, audit, and outbox; audit events of
+      offline writes carry `via: offline_sync` with device and server time.
+- [x] `GET /sync/pull` (policy `sync.pull`) is scoped by the caller's visibility and removes stale
+      records through complete id sets.
+
+Tests, review, verification
+
+- [x] The `test-writer` covered retries, crashes, double taps, restarts, ordering per record, every
+      conflict rule, late logs and photos, the `occurredAt` limit, token expiry offline, user
+      switch, sign-out with pending items, the storage limit, and offline audit records (it found
+      a double-save bug, fixed).
+- [x] The `reviewer` returned "pass with fixes"; the blocking, major, and minor findings are fixed
+      (see the MEMORY.md session log of 2026-10-27).
+- [x] `pnpm lint`, `pnpm typecheck`, and `pnpm test` pass (re-run by the docs-keeper,
+      2026-10-27). Unit tests: 689 shared, 513 api, 46 web, 305 mobile (304 at the docs-keeper's
+      run; one guard test added afterwards, as reported). Integration: 1,416 tests in 19 suites
+      (as reported by the coordinator).
+- [ ] The migration `20261027090000_phase5_offline_sync` is applied to the development database
+      (needs the owner's `pnpm db:reset` first: the database holds a stray migration from lost
+      work).
+- [ ] The offline test in the Android emulator (README section 6), including the conflict case.
 - [ ] Verified on a real phone in airplane mode, then back online.
+- [ ] The Phase 5 work is committed and pushed.
 
 ## Phase 6: Web manager dashboard
 

@@ -1,4 +1,14 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Query,
+  Res,
+} from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import {
   attachmentListSchema,
@@ -7,15 +17,22 @@ import {
   idSchema,
   listAttachmentsQuerySchema,
   startAttachmentUploadSchema,
+  startedAttachmentUploadSchema,
   type Attachment,
   type AttachmentUpload,
   type ListAttachmentsQuery,
   type Paginated,
   type StartAttachmentUpload,
+  type StartedAttachmentUpload,
 } from '@ops/shared';
 import { Policy } from '../../platform/authz';
 import { ApiDocs, ZodPipe } from '../../platform/http';
 import { AttachmentsService } from './attachments.service';
+
+/** The part of the HTTP response this controller touches. */
+interface StatusSetter {
+  status(code: number): unknown;
+}
 
 const CHANGE_RULE =
   "Allowed to the work log's author while they may still change the log (inside the edit " +
@@ -62,9 +79,15 @@ export class AttachmentsController {
       'where the file is stored) and answers with a short-lived URL: PUT exactly `sizeBytes` ' +
       'bytes there with the given headers, then call `POST /attachments/{id}/complete`. JPEG ' +
       `and PNG only; larger than the server limit is a 400; at most 20 attachments per log ` +
-      `(409). ${CHANGE_RULE} Answers 503 when the file storage is unreachable.`,
+      `(409). ${CHANGE_RULE} Answers 503 when the file storage is unreachable. ` +
+      'With a `clientId` the start is idempotent: the same clientId again on the same log ' +
+      'answers 200 with the existing attachment (a fresh URL while pending, `upload: null` once ' +
+      'ready); a clientId used by somebody else or on another log is a 409. The author may ' +
+      "still upload a photo whose clientId was declared in the log's create request " +
+      '(`attachmentClientIds`) for 30 days, whatever the edit window and status; any other ' +
+      'photo after the window answers 403 `attachment_not_declared`.',
     body: startAttachmentUploadSchema,
-    response: attachmentUploadSchema,
+    response: startedAttachmentUploadSchema,
     status: HttpStatus.CREATED,
     errors: [
       HttpStatus.FORBIDDEN,
@@ -74,11 +97,14 @@ export class AttachmentsController {
       HttpStatus.SERVICE_UNAVAILABLE,
     ],
   })
-  startUpload(
+  async startUpload(
     @Param('workLogId', new ZodPipe(idSchema)) workLogId: string,
     @Body(new ZodPipe(startAttachmentUploadSchema)) body: StartAttachmentUpload,
-  ): Promise<AttachmentUpload> {
-    return this.attachments.startUpload(workLogId, body);
+    @Res({ passthrough: true }) response: StatusSetter,
+  ): Promise<StartedAttachmentUpload> {
+    const { result, created } = await this.attachments.startUpload(workLogId, body);
+    response.status(created ? HttpStatus.CREATED : HttpStatus.OK);
+    return result;
   }
 
   @Post('attachments/:id/complete')

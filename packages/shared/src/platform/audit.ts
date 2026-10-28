@@ -7,6 +7,7 @@ import {
   type Paginated,
 } from '../common/pagination.js';
 import { idSchema, isoDateTimeSchema } from '../common/primitives.js';
+import { auditMetadataSchema } from './offline-sync.js';
 
 /** Who caused an audited change: a signed-in user, or the system itself (seed, background job). */
 export const AUDIT_ACTOR_TYPES = ['user', 'system'] as const;
@@ -42,6 +43,11 @@ export const auditEventSchema = z.object({
   changes: z.record(z.string(), auditFieldChangeSchema).nullable(),
   /** The `x-request-id` of the request that caused the change. */
   correlationId: z.string().nullable(),
+  /**
+   * How the change reached the API: set for a write replayed from a phone's offline queue
+   * (`via: 'offline_sync'`, device and server time, clock skew), null otherwise (ADR-0008).
+   */
+  metadata: auditMetadataSchema.nullable(),
   occurredAt: isoDateTimeSchema,
 });
 export type AuditEvent = z.infer<typeof auditEventSchema>;

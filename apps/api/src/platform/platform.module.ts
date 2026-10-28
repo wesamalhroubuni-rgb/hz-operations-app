@@ -1,6 +1,6 @@
 import { Global, type MiddlewareConsumer, Module, type NestModule } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditEventsController } from './audit/audit-events.controller';
 import { AuditQueryService } from './audit/audit-query.service';
@@ -21,6 +21,8 @@ import { PasswordHasher } from './auth/password-hasher';
 import { InMemoryRateLimiter, RATE_LIMITER, type RateLimiter } from './auth/rate-limiter';
 import { SessionService } from './auth/sessions';
 import { ApiExceptionFilter } from './http/api-exception.filter';
+import { IdempotencyInterceptor } from './idempotency/idempotency.interceptor';
+import { IdempotencyService } from './idempotency/idempotency.service';
 import {
   LoggingNotificationSender,
   NOTIFICATION_SENDER,
@@ -53,11 +55,12 @@ function noStore(_request: unknown, response: NoStoreResponse, next: () => void)
  * - the standard error body for every thrown error (`ApiExceptionFilter`);
  * - `AuthGuard`, the one global guard: it authenticates every non-public request, checks the
  *   session in the database, enforces CSRF for cookie sessions and applies the route's policy;
+ * - `Idempotency-Key` handling on routes marked `@Idempotent()` (`IdempotencyInterceptor`);
  * - the `/auth/*` endpoints, and the read-only `/audit-events` and `/outbox-events` endpoints.
  *
  * Host requirements:
  * - a global `PrismaService` (src/prisma) whose client has the tables listed in
- *   ./auth/auth-db.ts, plus `auditEvent` and `outboxEvent`;
+ *   ./auth/auth-db.ts, plus `auditEvent`, `outboxEvent` and `idempotencyRecord`;
  * - a global `ConfigService` answering the keys listed in ./auth/auth-settings.ts;
  * - optionally, from a GLOBAL module of the host: `REQUEST_AUTHORIZER` (./authz; without it
  *   every route with a named policy is refused) and `AUTH_PROFILE_PROVIDER` (./auth; without it
@@ -78,6 +81,8 @@ function noStore(_request: unknown, response: NoStoreResponse, next: () => void)
     OutboxQueryService,
     { provide: APP_FILTER, useClass: ApiExceptionFilter },
     { provide: APP_GUARD, useClass: AuthGuard },
+    IdempotencyService,
+    { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },
 
     // The structural check that the host's database client has what the auth module needs
     // happens here, at compile time.
@@ -174,6 +179,7 @@ function noStore(_request: unknown, response: NoStoreResponse, next: () => void)
     AuthAdminService,
   ],
   exports: [
+    IdempotencyService,
     AuditService,
     AuditQueryService,
     OutboxService,

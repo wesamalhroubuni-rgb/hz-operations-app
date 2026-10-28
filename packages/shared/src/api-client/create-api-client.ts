@@ -4,6 +4,7 @@ import { membershipsEndpoints } from '../domain/memberships.js';
 import { organizationEndpoints } from '../domain/organization.js';
 import { scopeEndpoints } from '../domain/scope.js';
 import { sitesEndpoints } from '../domain/sites.js';
+import { syncEndpoints } from '../domain/sync.js';
 import { tasksEndpoints } from '../domain/tasks.js';
 import { teamsEndpoints } from '../domain/teams.js';
 import { usersEndpoints } from '../domain/users.js';
@@ -40,6 +41,7 @@ export function createApiClient(options: ApiClientOptions) {
     workLogs: workLogsEndpoints(transport),
     attachments: attachmentsEndpoints(transport),
     scope: scopeEndpoints(transport),
+    sync: syncEndpoints(transport),
     notifications: notificationsEndpoints(transport),
     auditEvents: auditEventsEndpoints(transport),
     outboxEvents: outboxEventsEndpoints(transport),

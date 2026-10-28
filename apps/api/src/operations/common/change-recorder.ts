@@ -40,6 +40,11 @@ export interface RecordedChange {
   after: unknown;
   /** Extra facts for the event payload, for example `{ from, to }` of a status change. */
   extra?: Record<string, unknown>;
+  /**
+   * Facts about how the change was made, merged into the audit event's `metadata` over the
+   * offline-sync facts the platform adds (ADR-0008), e.g. `{ droppedReferences: ['taskId'] }`.
+   */
+  auditMetadata?: Record<string, unknown>;
 }
 
 /**
@@ -66,6 +71,7 @@ export class ChangeRecorder {
       entityId: change.entityId,
       before: change.before,
       after: change.after,
+      ...(change.auditMetadata ? { metadata: change.auditMetadata } : {}),
     });
     await this.outbox.publish(tx, {
       organizationId: change.organizationId,

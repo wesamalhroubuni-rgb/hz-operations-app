@@ -16,7 +16,9 @@ import { PickerField } from '../components/PickerField';
 import { LocalPhotoGrid } from '../components/PhotoGrid';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { ErrorState, LoadingState } from '../components/StateViews';
+import { SyncPhotoStorageNotice } from '../components/SyncBanner';
 import { iconSize } from '../components/sizes';
+import { PHOTO_STORAGE_FULL } from '../data/repositories';
 import { useLogForm } from '../hooks/useLogForm';
 import { formatNumber, t } from '../i18n';
 import { errorText } from '../i18n/errorText';
@@ -67,6 +69,8 @@ export function LogFormScreen({ route, navigation }: Readonly<StackScreenProps<'
   const teamOptions = form.teams
     .filter((team) => team.archivedAt === null || team.id === form.values.teamId)
     .map((team) => ({ value: team.id, label: team.name }));
+  // The photos did not fit in the offline photo storage (the repositories' `photos` detail).
+  const photoStorageFull = form.errors.other.photos === PHOTO_STORAGE_FULL;
   const hasFieldErrors =
     Object.keys(form.errors.customFields).length > 0 || form.errors.text || form.errors.occurredAt;
 
@@ -129,7 +133,11 @@ export function LogFormScreen({ route, navigation }: Readonly<StackScreenProps<'
           <Button variant="link" label={t('logForm.startOver')} onPress={confirmStartOver} />
         </Message>
       ) : null}
-      {form.saveError ? <Message tone="error" text={errorText(form.saveError)} /> : null}
+      {photoStorageFull ? (
+        <Message tone="error" text={t('logForm.errors.photoStorageFull')} />
+      ) : form.saveError ? (
+        <Message tone="error" text={errorText(form.saveError)} />
+      ) : null}
       {form.errors.empty ? <Message tone="error" text={t('logForm.errors.empty')} /> : null}
       {hasFieldErrors && !form.saveError ? (
         <Message tone="error" text={t('logForm.errors.checkFields')} />
@@ -223,6 +231,7 @@ export function LogFormScreen({ route, navigation }: Readonly<StackScreenProps<'
         ) : form.photoNotice === 'failed' ? (
           <Message tone="error" text={t('logForm.photoFailed')} />
         ) : null}
+        <SyncPhotoStorageNotice />
         <View style={styles.photoButtons}>
           <View style={styles.flex}>
             <Button

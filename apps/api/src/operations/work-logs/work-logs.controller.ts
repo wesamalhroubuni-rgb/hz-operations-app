@@ -28,6 +28,7 @@ import {
 } from '@ops/shared';
 import { Policy } from '../../platform/authz';
 import { ApiDocs, toOpenApiSchema, ZodPipe } from '../../platform/http';
+import { Idempotent } from '../../platform/idempotency';
 import { WorkLogsService } from './work-logs.service';
 
 /** The part of the HTTP response this controller touches. */
@@ -78,6 +79,7 @@ export class WorkLogsController {
 
   @Post()
   @Policy('work_log.create')
+  @Idempotent()
   @ApiDocs({
     summary: 'Create a work log of your own (idempotent on clientId)',
     description:
@@ -106,11 +108,16 @@ export class WorkLogsController {
 
   @Patch(':id')
   @Policy('work_log.update')
+  @Idempotent()
   @ApiDocs({
     summary: 'Edit your own work log',
     description:
       "Only the author, inside the organization's edit window (counted from `createdAt`) and " +
-      'while the log is not approved. Anything else answers 403.',
+      'while the log is not approved: somebody else 403, approved 409 `already_reviewed`, ' +
+      'window passed 403 `edit_window_closed`, archived 409 `record_archived`. With ' +
+      '`expectedVersion`, a log changed meanwhile answers 409 `version_conflict` unless the ' +
+      'edit is already in place (200). `occurredAt` must stay within the backdating limit ' +
+      '(422 `occurred_at_out_of_range`).',
     body: updateWorkLogSchema,
     response: workLogSchema,
     errors: CHANGE_ERRORS,
@@ -124,6 +131,7 @@ export class WorkLogsController {
 
   @Patch(':id/status')
   @Policy('work_log.change_status')
+  @Idempotent()
   @ApiDocs({
     summary: "Change a work log's status",
     description:

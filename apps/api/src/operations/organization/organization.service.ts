@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  offlineMaxBackdateDaysOf,
   workLogEditWindowHoursOf,
   type Organization,
   type OrganizationFull,
@@ -21,6 +22,7 @@ export function toOrganizationSummary(row: OrganizationRow): OrganizationSummary
     name: row.name,
     slug: row.slug,
     workLogEditWindowHours: workLogEditWindowHoursOf(row.settings),
+    offlineMaxBackdateDays: offlineMaxBackdateDaysOf(row.settings),
   };
 }
 

@@ -614,7 +614,8 @@ describe('permissions: the cases that matter most', () => {
           })
         ).status,
       };
-      expect(result).toEqual({ edit: 403, archive: 403, attach: 403 });
+      // 409 `already_reviewed` since ADR-0008 (was a generic 403).
+      expect(result).toEqual({ edit: 409, archive: 409, attach: 409 });
     });
 
     it('lets the author resubmit a rejected log inside the window only', async () => {
@@ -661,7 +662,7 @@ describe('permissions: the cases that matter most', () => {
   });
 
   describe('task status by an assignee', () => {
-    it('cannot cancel, nor bring a cancelled task back (403); can move it otherwise', async () => {
+    it('cannot cancel (403), nor bring a cancelled task back (409 task_cancelled); can move it otherwise', async () => {
       const id = await w.freshTask('task1');
       for (const status of ['in_progress', 'blocked', 'done', 'todo']) {
         const body = status === 'blocked' ? { status, reason: 'Waiting for parts' } : { status };
@@ -672,7 +673,8 @@ describe('permissions: the cases that matter most', () => {
       );
       const cancelled = await w.freshTask('task1', { status: 'cancelled' });
       const reopen = await api('wA').patch(`/tasks/${cancelled}/status`, { status: 'todo' });
-      expect(reopen.status).toBe(403);
+      expect(reopen.status).toBe(409);
+      expect(reopen.body.code).toBe('task_cancelled');
       expect(reopen.body.message).toBe(
         'A cancelled task can only be reopened by whoever manages it',
       );

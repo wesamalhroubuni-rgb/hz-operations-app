@@ -11,6 +11,9 @@ import { AttachmentGrid } from '../components/PhotoGrid';
 import { LOG_STATUS_TONES } from '../components/rows';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { ErrorState, LoadingState } from '../components/StateViews';
+import { SyncDroppedReferencesNotice } from '../components/SyncNotices';
+import { useSync } from '../components/SyncProvider';
+import { SyncStateBadge } from '../components/SyncStateBadge';
 import { UploadList } from '../components/UploadList';
 import { useData } from '../data/DataProvider';
 import {
@@ -26,7 +29,9 @@ import { useNow } from '../hooks/useNow';
 import { useLogUploads } from '../hooks/useUploads';
 import { formatDateTime, formatNumber, t } from '../i18n';
 import { errorText } from '../i18n/errorText';
+import { syncText } from '../i18n/syncText';
 import { parseIso } from '../logic/dates';
+import { logSyncState, reasonText, refusedItemOfLog } from '../logic/sync';
 import {
   canEditWorkLog,
   canResubmitWorkLog,
@@ -57,6 +62,7 @@ export function LogDetailScreen({ route, navigation }: Readonly<StackScreenProps
   const log = query.data;
   const task = useTask(log?.taskId ?? undefined);
   const status = useLogStatusChange(log);
+  const sync = useSync();
 
   if (query.isPending) return <LoadingState />;
   if (query.isError || !log) {
@@ -76,6 +82,9 @@ export function LogDetailScreen({ route, navigation }: Readonly<StackScreenProps
   const occurred = parseIso(log.occurredAt);
   const reviewedAt = parseIso(log.review?.reviewedAt);
   const ready = attachments.data ?? [];
+  const syncState = logSyncState(sync.logStates, log.clientId);
+  const refused = refusedItemOfLog(sync.items, log.clientId);
+  const refusedReason = refused ? reasonText(refused) : null;
 
   const footer =
     editable || resubmittable || submittable ? (
@@ -111,7 +120,25 @@ export function LogDetailScreen({ route, navigation }: Readonly<StackScreenProps
       footer={footer}
     >
       <AppText variant="title">{logType?.name ?? t('logs.generalNote')}</AppText>
-      <Badge label={t(`logs.status.${log.status}`)} tone={LOG_STATUS_TONES[log.status]} />
+      <View style={styles.badges}>
+        <Badge label={t(`logs.status.${log.status}`)} tone={LOG_STATUS_TONES[log.status]} />
+        {sync.available ? <SyncStateBadge state={syncState} /> : null}
+      </View>
+      <SyncDroppedReferencesNotice clientId={log.clientId} />
+      {refused ? (
+        <Message
+          tone="error"
+          text={t('sync.logFailedNote', {
+            reason: refusedReason ? syncText(refusedReason) : t('sync.logState.failed'),
+          })}
+        >
+          <Button
+            variant="secondary"
+            label={t('sync.openSync')}
+            onPress={() => navigation.navigate('Sync')}
+          />
+        </Message>
+      ) : null}
 
       {status.done ? <Message tone="success" text={t(`logs.${status.done}`)} /> : null}
       {status.error ? <Message tone="error" text={errorText(status.error)} /> : null}
@@ -208,5 +235,10 @@ export function LogDetailScreen({ route, navigation }: Readonly<StackScreenProps
 const styles = StyleSheet.create({
   section: {
     gap: spacing.md,
+  },
+  badges: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
   },
 });

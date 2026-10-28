@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ApiResult, ApiTransport } from '../api-client/client.js';
+import type { ApiCallOptions, ApiResult, ApiTransport } from '../api-client/client.js';
 import {
   paginatedSchema,
   paginationQuerySchema,
@@ -11,6 +11,7 @@ import { taskPrioritySchema, taskStatusSchema } from './enums.js';
 import {
   AT_LEAST_ONE_FIELD,
   atLeastOneField,
+  expectedVersionSchema,
   longTextSchema,
   nameSchema,
   nullableIsoDateTimeSchema,
@@ -37,6 +38,11 @@ export const taskSchema = z.object({
   completedAt: nullableIsoDateTimeSchema,
   /** Why the task has its current status (always set for `blocked`), or null. */
   statusReason: z.string().nullable(),
+  /**
+   * Optimistic-concurrency counter (ADR-0008), raised by every change of the task, its status or
+   * its assignees. Send it back as `expectedVersion` on a status change.
+   */
+  version: z.number().int().min(1),
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
   archivedAt: nullableIsoDateTimeSchema,
@@ -80,9 +86,14 @@ export const TASK_STATUS_REASON_MAX_LENGTH = 1000;
 /**
  * A status change. `reason` says why; it is required when moving to `blocked` and stored as the
  * task's `statusReason` (a change without a reason clears it).
+ *
+ * `expectedVersion` (optional, ADR-0008): when it differs from the task's version the API
+ * answers 409 `version_conflict` (the supervisor's change wins), unless the task already has the
+ * requested status and reason (a no-op, 200).
  */
 export const changeTaskStatusSchema = z
   .strictObject({
+    expectedVersion: expectedVersionSchema.optional(),
     status: taskStatusSchema,
     reason: z.string().trim().min(1).max(TASK_STATUS_REASON_MAX_LENGTH).optional(),
   })
@@ -132,11 +143,17 @@ export function tasksEndpoints(transport: ApiTransport) {
     update(id: string, body: UpdateTask): Promise<ApiResult<Task>> {
       return transport.request({ method: 'PATCH', path: `/tasks/${id}`, body, schema: taskSchema });
     },
-    changeStatus(id: string, body: ChangeTaskStatus): Promise<ApiResult<Task>> {
+    /** `options.headers`: the offline queue's `offlineSyncHeaders(...)`. */
+    changeStatus(
+      id: string,
+      body: ChangeTaskStatus,
+      options: ApiCallOptions = {},
+    ): Promise<ApiResult<Task>> {
       return transport.request({
         method: 'PATCH',
         path: `/tasks/${id}/status`,
         body,
+        headers: options.headers,
         schema: taskSchema,
       });
     },

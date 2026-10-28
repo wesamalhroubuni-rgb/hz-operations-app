@@ -1,5 +1,5 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
-import type { ApiErrorCode, ApiErrorDetail } from '@ops/shared';
+import { API_ERROR_STATUS, type ApiErrorCode, type ApiErrorDetail } from '@ops/shared';
 
 /**
  * The one exception type services and controllers throw for an expected failure. The exception
@@ -15,6 +15,14 @@ export class ApiException extends HttpException {
     readonly retryAfterSeconds?: number,
   ) {
     super(message, status);
+  }
+
+  /**
+   * An error with one of the specific codes (`version_conflict`, `edit_window_closed`, ...),
+   * answered with the status `API_ERROR_STATUS` gives that code (ADR-0008).
+   */
+  static of(code: ApiErrorCode, message: string, details?: ApiErrorDetail[]): ApiException {
+    return new ApiException(API_ERROR_STATUS[code] as HttpStatus, code, message, details);
   }
 
   /** Too many attempts. Answers 429 with a `Retry-After` header. */

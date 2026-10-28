@@ -1,313 +1,237 @@
-import type { ApiClient, ApiFailure, ApiResult, Task, WorkLog } from '@ops/shared';
+import type { ApiFailure, ApiResult, Task, WorkLog } from '@ops/shared';
 
-import { createRemoteRepositories, type CacheSync } from './repositories';
+import {
+  createBody,
+  memoryLayer,
+  ORG,
+  photo,
+  pull,
+  T0,
+  task,
+  USER_A,
+  workLog,
+  at,
+} from '../offline/storeTestKit';
+import { createOfflineRepositories, PHOTO_STORAGE_FULL } from './repositories';
 import { isRetryableWriteError, toWriteError } from './results';
 
-const NOW = '2026-10-16T10:00:00.000Z';
-const CLIENT_ID = '11111111-1111-4111-8111-111111111111';
+const network: ApiFailure = { kind: 'network', message: 'Network request failed' };
 
-function http(status: number, details: { path: string; message: string }[] = []): ApiFailure {
-  return {
-    kind: 'http',
-    status,
-    message: `HTTP ${status}`,
-    error: {
-      statusCode: status,
-      code: 'validation_failed',
-      message: `HTTP ${status}`,
-      details,
-      correlationId: null,
-      timestamp: NOW,
-    },
-  };
-}
-
-const log = { id: 'log-1', clientId: CLIENT_ID, status: 'submitted' } as WorkLog;
-const task = { id: 'task-1', status: 'in_progress' } as Task;
-
-function fakeCache() {
-  const events: string[] = [];
-  const cache: CacheSync = {
-    workLogChanged: (changed) => events.push(`log:${changed.id}`),
-    taskChanged: (changed) => events.push(`task:${changed.id}`),
-    attachmentsChanged: (id) => events.push(`attachments:${id}`),
-    notificationsChanged: () => events.push('notifications'),
-  };
-  return { cache, events };
-}
-
-type Client = Parameters<typeof createRemoteRepositories>[0];
-
-function fakeClient(
-  overrides: { create?: jest.Mock; changeTaskStatus?: jest.Mock; markRead?: jest.Mock } = {},
-): Client {
-  return {
+function setup(options: { limitBytes?: number } = {}) {
+  const layer = memoryLayer(USER_A, options);
+  const client = {
     workLogs: {
-      create:
-        overrides.create ??
-        jest.fn(async (): Promise<ApiResult<WorkLog>> => ({ ok: true, status: 201, data: log })),
-      update: jest.fn(async (): Promise<ApiResult<WorkLog>> => ({
-        ok: true,
-        status: 200,
-        data: log,
-      })),
-      changeStatus: jest.fn(async (): Promise<ApiResult<WorkLog>> => ({
-        ok: true,
-        status: 200,
-        data: log,
-      })),
+      get: jest.fn(async (): Promise<ApiResult<WorkLog>> => ({ ok: false, failure: network })),
     },
     tasks: {
-      changeStatus:
-        overrides.changeTaskStatus ??
-        jest.fn(async (): Promise<ApiResult<Task>> => ({ ok: true, status: 200, data: task })),
+      get: jest.fn(async (): Promise<ApiResult<Task>> => ({ ok: false, failure: network })),
     },
-    attachments: {},
     notifications: {
-      markRead: overrides.markRead ?? jest.fn(async () => ({ ok: true, status: 200, data: {} })),
+      markRead: jest.fn(async () => ({
+        ok: true,
+        status: 200,
+        data: { id: 'n-1', readAt: T0.toISOString() },
+      })),
       markAllRead: jest.fn(async () => ({ ok: true, status: 204, data: undefined })),
-      registerPushToken: jest.fn(async () => ({ ok: true, status: 204, data: undefined })),
-      unregisterPushToken: jest.fn(async () => ({ ok: true, status: 204, data: undefined })),
+      registerPushToken: jest.fn(),
+      unregisterPushToken: jest.fn(),
     },
-  } as unknown as Pick<ApiClient, 'workLogs' | 'tasks' | 'attachments' | 'notifications'>;
+  };
+  let now = at(1);
+  const repositories = createOfflineRepositories({
+    user: { id: USER_A, organizationId: ORG },
+    store: layer.store,
+    queue: layer.queue,
+    photos: layer.photos,
+    client: client as never,
+    newId: layer.newId,
+    clock: () => now,
+  });
+  return { ...layer, client, repositories, setNow: (date: Date) => (now = date) };
 }
 
-const putFile = () => async () => ({ ok: true as const });
-
-describe('work logs repository', () => {
-  const body = { clientId: CLIENT_ID, occurredAt: NOW };
-
-  it('creates the log, answers it as settled, and refreshes the cache', async () => {
-    const { cache, events } = fakeCache();
-    const repositories = createRemoteRepositories(fakeClient(), cache, putFile);
-    const result = await repositories.workLogs.create(body);
-    expect(result).toEqual({ ok: true, data: { clientId: CLIENT_ID, sync: 'settled', log } });
-    expect(events).toEqual(['log:log-1']);
+describe('offline repositories: every write goes to the queue first', () => {
+  it('create queues the log and its declared photos (moved to the photo store) and answers pending', async () => {
+    const { repositories, queue, files } = setup();
+    files.seed(photo('p1').uri, 1000);
+    const result = await repositories.workLogs.create(createBody({ clientId: 'c1' }), [
+      photo('p1'),
+    ]);
+    expect(result).toEqual({ ok: true, data: { clientId: 'c1', sync: 'pending', log: null } });
+    const items = await queue.list();
+    expect(items.map((item) => item.mutation.kind)).toEqual(['createWorkLog', 'uploadAttachment']);
+    const declared = (
+      items[0]!.mutation as { body: { attachmentClientIds: string[]; deviceCreatedAt: string } }
+    ).body;
+    const upload = items[1]!.mutation as { attachmentClientId: string; photo: { uri: string } };
+    expect(declared.attachmentClientIds).toEqual([upload.attachmentClientId]);
+    expect(declared.deviceCreatedAt).toBe(at(1).toISOString());
+    expect(upload.photo.uri).toBe(`file:///documents/offline-photos/${USER_A}/p1.jpg`);
   });
 
-  it('repeats a create once with the same clientId when the answer was lost', async () => {
-    const create = jest
-      .fn()
-      .mockResolvedValueOnce({ ok: false, failure: { kind: 'timeout', message: 'slow' } })
-      .mockResolvedValueOnce({ ok: true, status: 200, data: log });
-    const repositories = createRemoteRepositories(
-      fakeClient({ create }),
-      fakeCache().cache,
-      putFile,
-    );
-    const result = await repositories.workLogs.create(body);
-    expect(result.ok).toBe(true);
-    expect(create).toHaveBeenCalledTimes(2);
-    expect(create.mock.calls[0][0]).toBe(create.mock.calls[1][0]);
-  });
+  it('a double save queues one log; a log already synced answers settled', async () => {
+    const { repositories, queue, store, files } = setup();
+    files.seed(photo('p1').uri, 1000);
+    await repositories.workLogs.create(createBody({ clientId: 'c1' }), [photo('p1')]);
+    const again = await repositories.workLogs.create(createBody({ clientId: 'c1' }), [photo('p1')]);
+    expect(again).toMatchObject({ ok: true, data: { sync: 'pending' } });
+    expect(await queue.pendingCount()).toBe(2);
 
-  it('does not repeat a refused create and returns the field details', async () => {
-    const create = jest.fn().mockResolvedValue({
-      ok: false,
-      failure: http(400, [{ path: 'customFields.count', message: 'must be a number' }]),
+    await store.upsert('workLogs', [workLog({ id: 'l2', clientId: 'c2' })]);
+    expect(await repositories.workLogs.create(createBody({ clientId: 'c2' }))).toMatchObject({
+      ok: true,
+      data: { sync: 'settled', log: { id: 'l2' } },
     });
-    const { cache, events } = fakeCache();
-    const result = await createRemoteRepositories(
-      fakeClient({ create }),
-      cache,
-      putFile,
-    ).workLogs.create(body);
-    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses at once an occurredAt outside the backdating limit (nothing queued)', async () => {
+    const { repositories, queue, store } = setup();
+    await store.applyPull(pull(), T0); // organization: 7 days
+    const old = new Date(T0.getTime() - 8 * 24 * 3600 * 1000).toISOString();
+    const result = await repositories.workLogs.create(createBody({ occurredAt: old }));
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: 'invalid', details: [{ path: 'occurredAt' }] },
+    });
+    expect(await queue.pendingCount()).toBe(0);
+  });
+
+  it('refuses photos past the storage limit with a clear code, keeping the form', async () => {
+    const { repositories, queue, files } = setup({ limitBytes: 1500 });
+    files.seed(photo('p1').uri, 1000);
+    files.seed(photo('p2').uri, 1000);
+    const result = await repositories.workLogs.create(createBody(), [photo('p1'), photo('p2')]);
     expect(result).toEqual({
       ok: false,
       error: {
         kind: 'invalid',
-        message: 'HTTP 400',
-        details: [{ path: 'customFields.count', message: 'must be a number' }],
+        message: PHOTO_STORAGE_FULL,
+        details: [{ path: 'photos', message: PHOTO_STORAGE_FULL }],
       },
     });
-    expect(events).toEqual([]);
-  });
-});
-
-/**
- * A fake API that behaves like the server on `clientId`: the first request stores the log (201),
- * a repeat returns the stored one (200). `lose` drops the answers of the next N requests AFTER the
- * server has handled them, as a dying mobile connection does.
- */
-function idempotentServer() {
-  const stored = new Map<string, WorkLog>();
-  let lose = 0;
-  let requests = 0;
-  const create = jest.fn(
-    async (body: { clientId: string; text?: string | null }): Promise<ApiResult<WorkLog>> => {
-      requests += 1;
-      const existing = stored.get(body.clientId);
-      const log =
-        existing ??
-        ({
-          id: `log-${stored.size + 1}`,
-          clientId: body.clientId,
-          text: body.text ?? null,
-        } as WorkLog);
-      stored.set(body.clientId, log);
-      if (lose > 0) {
-        lose -= 1;
-        return { ok: false, failure: { kind: 'network', message: 'connection lost' } };
-      }
-      return { ok: true, status: existing ? 200 : 201, data: log };
-    },
-  );
-  return {
-    create,
-    stored,
-    loseNext: (count: number) => {
-      lose = count;
-    },
-    requests: () => requests,
-  };
-}
-
-describe('duplicate submit with the same clientId (Phase 4 coverage)', () => {
-  const body = { clientId: CLIENT_ID, occurredAt: NOW, text: 'Replaced the filter' };
-
-  it('a retry after a lost answer returns the same log, settled; the server holds one log', async () => {
-    const server = idempotentServer();
-    server.loseNext(1);
-    const { cache, events } = fakeCache();
-    const result = await createRemoteRepositories(
-      fakeClient({ create: server.create }),
-      cache,
-      putFile,
-    ).workLogs.create(body);
-    expect(result).toEqual({
-      ok: true,
-      data: { clientId: CLIENT_ID, sync: 'settled', log: server.stored.get(CLIENT_ID) },
-    });
-    expect(server.requests()).toBe(2);
-    expect(server.stored.size).toBe(1);
-    expect(events).toEqual(['log:log-1']);
+    expect(await queue.pendingCount()).toBe(0);
+    expect(files.files.has(photo('p1').uri)).toBe(true);
+    // The log without photos can still be saved.
+    expect((await repositories.workLogs.create(createBody())).ok).toBe(true);
   });
 
-  it('when both answers are lost it reports a retryable network error (no log), and a later save with the same body gets the same log', async () => {
-    const server = idempotentServer();
-    server.loseNext(2);
-    const { cache, events } = fakeCache();
-    const repositories = createRemoteRepositories(
-      fakeClient({ create: server.create }),
-      cache,
-      putFile,
-    );
-
-    const failed = await repositories.workLogs.create(body);
-    expect(failed.ok).toBe(false);
-    expect(failed.ok === false && failed.error.kind).toBe('network');
-    expect(failed.ok === false && isRetryableWriteError(failed.error)).toBe(true);
-    expect(events).toEqual([]);
-
-    // The form keeps its clientId; the worker taps "save" again.
-    const saved = await repositories.workLogs.create(body);
-    expect(saved.ok && saved.data.log?.id).toBe('log-1');
-    expect(server.stored.size).toBe(1);
-    expect(server.requests()).toBe(3);
-  });
-
-  it('a double tap (two saves at once) gives both callers the same log', async () => {
-    const server = idempotentServer();
-    const repositories = createRemoteRepositories(
-      fakeClient({ create: server.create }),
-      fakeCache().cache,
-      putFile,
-    );
-    const [one, two] = await Promise.all([
-      repositories.workLogs.create(body),
-      repositories.workLogs.create(body),
+  it('two saves at once cannot both pass the storage check: the second is refused whole', async () => {
+    const { repositories, queue, files } = setup({ limitBytes: 1500 });
+    files.seed(photo('p1').uri, 1000);
+    files.seed(photo('p2').uri, 1000);
+    const [first, second] = await Promise.all([
+      repositories.workLogs.create(createBody({ clientId: 'c1' }), [photo('p1')]),
+      repositories.workLogs.create(createBody({ clientId: 'c2' }), [photo('p2')]),
     ]);
-    expect(one.ok && two.ok && one.data.log?.id === two.data.log?.id).toBe(true);
-    expect(server.stored.size).toBe(1);
+    expect(first.ok).toBe(true);
+    expect(second).toMatchObject({
+      ok: false,
+      error: { details: [{ path: 'photos', message: PHOTO_STORAGE_FULL }] },
+    });
+    expect((await queue.list()).map((item) => item.mutation.kind)).toEqual([
+      'createWorkLog',
+      'uploadAttachment',
+    ]);
   });
 
-  it('does not repeat on a server error (5xx) or a conflict (409: clientId of another user)', async () => {
-    for (const status of [500, 409]) {
-      const create = jest.fn().mockResolvedValue({ ok: false, failure: http(status) });
-      const result = await createRemoteRepositories(
-        fakeClient({ create }),
-        fakeCache().cache,
-        putFile,
-      ).workLogs.create(body);
-      expect(create).toHaveBeenCalledTimes(1);
-      expect(result.ok === false && result.error.kind).toBe(status === 500 ? 'server' : 'conflict');
-    }
+  it('a photo refused after the check fails the whole save (never a partial one)', async () => {
+    const { repositories, queue, files, photos } = setup();
+    files.seed(photo('p1').uri, 1000);
+    files.seed(photo('p2').uri, 1000);
+    const save = photos.save.bind(photos);
+    let calls = 0;
+    photos.save = async (input) => {
+      calls += 1;
+      return calls === 2 ? { ok: false, reason: 'full' } : save(input);
+    };
+    const result = await repositories.workLogs.create(createBody(), [photo('p1'), photo('p2')]);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { details: [{ path: 'photos', message: PHOTO_STORAGE_FULL }] },
+    });
+    expect(await queue.pendingCount()).toBe(0);
   });
 
-  it('answers a settled save with the clientId it was given and the server log', async () => {
-    const created = { ...log, clientId: CLIENT_ID };
-    const create = jest.fn(async () => ({ ok: true, status: 200, data: created }));
-    const result = await createRemoteRepositories(
-      fakeClient({ create }),
-      fakeCache().cache,
-      putFile,
-    ).workLogs.create(body);
-    expect(result.ok && result.data).toEqual({
-      clientId: CLIENT_ID,
-      sync: 'settled',
-      log: created,
+  it('an edit of a synced log is queued with the cached version and shown at once', async () => {
+    const { repositories, queue, store } = setup();
+    await store.upsert('workLogs', [workLog({ id: 'l1', clientId: 'c1', version: 4 })]);
+    const result = await repositories.workLogs.update('l1', { text: 'changed' });
+    expect(result).toMatchObject({ ok: true, data: { id: 'l1', text: 'changed' } });
+    expect((await queue.list())[0]?.mutation).toEqual({
+      kind: 'updateWorkLog',
+      workLogClientId: 'c1',
+      body: { text: 'changed', expectedVersion: 4 },
     });
   });
-});
 
-describe('tasks repository', () => {
-  it('changes the status and refreshes the task', async () => {
-    const changeTaskStatus = jest.fn(async () => ({ ok: true, status: 200, data: task }));
-    const { cache, events } = fakeCache();
-    const result = await createRemoteRepositories(
-      fakeClient({ changeTaskStatus }),
-      cache,
-      putFile,
-    ).tasks.changeStatus('task-1', { status: 'blocked', reason: 'No ladder' });
-    expect(result.ok).toBe(true);
-    expect(changeTaskStatus).toHaveBeenCalledWith('task-1', {
-      status: 'blocked',
-      reason: 'No ladder',
+  it('an edit or submit of a log not sent yet works by clientId and merges into its create', async () => {
+    const { repositories, queue } = setup();
+    await repositories.workLogs.create(createBody({ clientId: 'c1', status: 'draft' }));
+    await repositories.workLogs.update('c1', { text: 'better' });
+    const submitted = await repositories.workLogs.changeStatus('c1', { status: 'submitted' });
+    expect(submitted).toMatchObject({ ok: true, data: { id: 'c1', status: 'submitted' } });
+    const items = await queue.list();
+    expect(items).toHaveLength(1);
+    expect(items[0]?.mutation).toMatchObject({ body: { text: 'better', status: 'submitted' } });
+  });
+
+  it('a task status change is queued with the cached version', async () => {
+    const { repositories, queue, store } = setup();
+    await store.upsert('tasks', [task({ version: 3 })]);
+    const result = await repositories.tasks.changeStatus('task-1', { status: 'in_progress' });
+    expect(result).toMatchObject({ ok: true, data: { status: 'in_progress' } });
+    expect((await queue.list())[0]?.mutation).toEqual({
+      kind: 'changeTaskStatus',
+      taskId: 'task-1',
+      body: { status: 'in_progress', expectedVersion: 3 },
     });
-    expect(events).toEqual(['task:task-1']);
   });
 
-  it('reports a forbidden change as such', async () => {
-    const changeTaskStatus = jest.fn(async () => ({ ok: false, failure: http(403) }));
-    const result = await createRemoteRepositories(
-      fakeClient({ changeTaskStatus }),
-      fakeCache().cache,
-      putFile,
-    ).tasks.changeStatus('task-1', { status: 'cancelled' });
-    expect(result.ok === false && result.error.kind).toBe('forbidden');
+  it('a record the phone does not hold, offline: reported as a network problem, nothing queued', async () => {
+    const { repositories, queue } = setup();
+    expect(await repositories.tasks.changeStatus('unknown', { status: 'done' })).toMatchObject({
+      ok: false,
+      error: { kind: 'network' },
+    });
+    expect(await repositories.workLogs.update('unknown', { text: 'x' })).toMatchObject({
+      ok: false,
+      error: { kind: 'network' },
+    });
+    expect(await queue.pendingCount()).toBe(0);
   });
-});
 
-describe('notifications repository', () => {
-  it('refreshes the list after marking read', async () => {
-    const { cache, events } = fakeCache();
-    const repositories = createRemoteRepositories(fakeClient(), cache, putFile);
-    await repositories.notifications.markRead('n-1');
-    await repositories.notifications.markAllRead();
-    expect(events).toEqual(['notifications', 'notifications']);
+  it('photos added to a synced log are queued with its server id', async () => {
+    const { repositories, queue, store, files } = setup();
+    await store.upsert('workLogs', [workLog({ id: 'l1', clientId: 'c1' })]);
+    files.seed(photo('p1').uri, 10);
+    expect(await repositories.attachments.add('l1', [photo('p1')])).toEqual({
+      ok: true,
+      data: { queued: 1 },
+    });
+    expect((await queue.list())[0]?.mutation).toMatchObject({
+      workLogClientId: 'c1',
+      workLogId: 'l1',
+    });
+  });
+
+  it('marking a notification read updates the phone copy on success', async () => {
+    const { repositories, store } = setup();
+    expect((await repositories.notifications.markRead('n-1')).ok).toBe(true);
+    expect((await store.get('notifications', 'n-1'))?.readAt).toBe(T0.toISOString());
   });
 });
 
 describe('toWriteError', () => {
-  it.each([
-    [{ kind: 'network', message: 'x' } as ApiFailure, 'network'],
-    [{ kind: 'timeout', message: 'x' } as ApiFailure, 'network'],
-    [{ kind: 'invalid-response', status: 200, message: 'x' } as ApiFailure, 'server'],
-    [http(400), 'invalid'],
-    [http(422), 'invalid'],
-    [http(401), 'signedOut'],
-    [http(403), 'forbidden'],
-    [http(404), 'notFound'],
-    [http(409), 'conflict'],
-    [http(429), 'network'],
-    [http(500), 'server'],
-  ])('%#', (failure, kind) => {
-    expect(toWriteError(failure).kind).toBe(kind);
+  it('maps failures to the kinds the screens know', () => {
+    expect(toWriteError(network).kind).toBe('network');
+    expect(toWriteError({ kind: 'timeout', message: 't' }).kind).toBe('network');
+    expect(toWriteError({ kind: 'invalid-response', status: 200, message: 'x' }).kind).toBe(
+      'server',
+    );
   });
 
   it('offers "try again" only for failures that can pass', () => {
     expect(isRetryableWriteError({ kind: 'network', message: '', details: [] })).toBe(true);
-    expect(isRetryableWriteError({ kind: 'invalid', message: '', details: [] })).toBe(false);
+    expect(isRetryableWriteError({ kind: 'conflict', message: '', details: [] })).toBe(false);
   });
 });

@@ -178,6 +178,7 @@ describe('audit and outbox in the transaction of the change', () => {
         'completedAt',
         'status',
         'updatedAt',
+        'version',
       ]);
 
       const outbox = await onlyOutbox();

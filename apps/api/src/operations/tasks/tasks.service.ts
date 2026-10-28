@@ -25,11 +25,12 @@ import {
   type TaskFacts,
 } from '../access';
 import { ChangeRecorder } from '../common/change-recorder';
+import { assertExpectedVersion, lockRowForUpdate, NEXT_VERSION } from '../common/concurrency';
 import { activeUnless, contains, iso, isoOrNull, type Db } from '../common/db';
 import { assertActiveReferences, ref } from '../common/references';
 
 /** A task is always read together with its assignees. */
-const TASK_INCLUDE = {
+export const TASK_INCLUDE = {
   assignees: { select: { userId: true }, orderBy: { userId: 'asc' } },
 } satisfies Prisma.TaskInclude;
 
@@ -55,6 +56,7 @@ export function toTask(row: TaskRow): Task {
     dueAt: isoOrNull(row.dueAt),
     completedAt: isoOrNull(row.completedAt),
     statusReason: row.statusReason,
+    version: row.version,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
     archivedAt: isoOrNull(row.archivedAt),
@@ -195,6 +197,7 @@ export class TasksService {
         await tx.task.update({
           where: { id },
           data: {
+            version: NEXT_VERSION,
             title: input.title,
             description: input.description,
             priority: input.priority,
@@ -230,24 +233,32 @@ export class TasksService {
    *
    * Outbox payload of `task.status_changed`: `{ from, to, reason, changedById, createdById,
    * assigneeIds, task }`.
+   *
+   * Check order (ADR-0008 section 2): visible (404); the status and reason the task already has
+   * (no-op, 200, so a resend after a lost answer succeeds); a manager may; otherwise not an
+   * assignee (403 `task_not_assigned`), cancelled (409 `task_cancelled`), a status an assignee
+   * may not set (403); archived (409 `record_archived`); `expectedVersion` (409
+   * `version_conflict`: the supervisor's change wins).
    */
   async changeStatus(id: string, input: ChangeTaskStatus): Promise<Task> {
     const context = await this.access.context();
     const { status } = input;
     const reason = input.reason ?? null;
     return this.prisma.$transaction(async (tx) => {
+      await lockRowForUpdate(tx, 'Task', id);
       const before = toTask(await this.find(tx, context, id));
-      enforce(canChangeTaskStatus(context, factsOf(before), status), 'Task', id);
-      assertNotArchived(before);
       if (before.status === status && before.statusReason === reason) {
         return before;
       }
+      enforce(canChangeTaskStatus(context, factsOf(before), status), 'Task', id);
+      assertNotArchived(before);
+      assertExpectedVersion('Task', id, before.version, input.expectedVersion);
       const completedAt =
         status === 'done' ? (before.status === 'done' ? undefined : new Date()) : null;
       const task = toTask(
         await tx.task.update({
           where: { id },
-          data: { status, statusReason: reason, completedAt },
+          data: { version: NEXT_VERSION, status, statusReason: reason, completedAt },
           include: TASK_INCLUDE,
         }),
       );
@@ -304,7 +315,7 @@ export class TasksService {
       const task = toTask(
         await tx.task.update({
           where: { id },
-          data: { updatedAt: new Date() },
+          data: { updatedAt: new Date(), version: NEXT_VERSION },
           include: TASK_INCLUDE,
         }),
       );
@@ -333,7 +344,7 @@ export class TasksService {
       const task = toTask(
         await tx.task.update({
           where: { id },
-          data: { archivedAt: new Date() },
+          data: { archivedAt: new Date(), version: NEXT_VERSION },
           include: TASK_INCLUDE,
         }),
       );
@@ -366,9 +377,12 @@ export class TasksService {
   }
 }
 
-/** 409 for a write to an archived task. Checked after the permission, so a 403 comes first. */
+/**
+ * 409 `record_archived` for a write to an archived task. Checked after the permission, so a
+ * 403 comes first.
+ */
 function assertNotArchived(task: Task): void {
   if (task.archivedAt !== null) {
-    throw ApiException.conflict(`Task ${task.id} is archived and cannot be changed`);
+    throw ApiException.of('record_archived', `Task ${task.id} is archived and cannot be changed`);
   }
 }

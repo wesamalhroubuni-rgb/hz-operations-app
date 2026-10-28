@@ -1,7 +1,15 @@
 import 'reflect-metadata';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { AUTH_ACCESS_COOKIE, CSRF_HEADER, REQUEST_ID_HEADER } from '@ops/shared';
+import {
+  AUTH_ACCESS_COOKIE,
+  CLIENT_SYNC_HEADER,
+  CSRF_HEADER,
+  DEVICE_TIME_HEADER,
+  IDEMPOTENCY_KEY_HEADER,
+  IDEMPOTENT_REPLAYED_HEADER,
+  REQUEST_ID_HEADER,
+} from '@ops/shared';
 import { AppModule } from './app.module';
 import { type Env, logLevelsFrom, validateEnv } from './config/env';
 import { setupApiDocs } from './platform/docs/api-docs.setup';
@@ -39,8 +47,17 @@ async function bootstrap(): Promise<void> {
     origin: env.CORS_ORIGINS,
     credentials: true,
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Accept', 'Authorization', CSRF_HEADER, REQUEST_ID_HEADER],
-    exposedHeaders: [REQUEST_ID_HEADER, 'Retry-After'],
+    allowedHeaders: [
+      'Content-Type',
+      'Accept',
+      'Authorization',
+      CSRF_HEADER,
+      REQUEST_ID_HEADER,
+      IDEMPOTENCY_KEY_HEADER,
+      CLIENT_SYNC_HEADER,
+      DEVICE_TIME_HEADER,
+    ],
+    exposedHeaders: [REQUEST_ID_HEADER, 'Retry-After', IDEMPOTENT_REPLAYED_HEADER],
     maxAge: 600,
   });
   app.enableShutdownHooks();

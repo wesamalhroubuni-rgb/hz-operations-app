@@ -31,6 +31,7 @@ export interface AuditEventRow {
   after: unknown;
   changes: unknown;
   correlationId: string | null;
+  metadata: unknown;
   occurredAt: Date;
 }
 
@@ -48,6 +49,7 @@ export function toAuditEvent(row: AuditEventRow): AuditEvent {
     after: row.after ?? null,
     changes: (row.changes ?? null) as AuditEvent['changes'],
     correlationId: row.correlationId,
+    metadata: (row.metadata ?? null) as AuditEvent['metadata'],
     occurredAt: row.occurredAt.toISOString(),
   };
 }

@@ -13,4 +13,9 @@ export const queryKeys = {
   scope: ['scope'] as const,
   organization: ['organization'] as const,
   notifications: ['notifications'] as const,
+  // Offline state (Phase 5): the write queue, the sync meta, the photo storage.
+  queue: ['offline', 'queue'] as const,
+  queueCounts: ['offline', 'queue', 'counts'] as const,
+  syncMeta: ['offline', 'syncMeta'] as const,
+  photoStorage: ['offline', 'photoStorage'] as const,
 };

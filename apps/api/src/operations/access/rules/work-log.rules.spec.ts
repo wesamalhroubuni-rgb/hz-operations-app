@@ -77,7 +77,8 @@ describe('editing a work log', () => {
 
   it('refuses an approved log, even to its author inside the window', () => {
     expect(canEditWorkLog(worker, log({ status: 'approved' }), NOW, HOURS)).toMatchObject({
-      outcome: 'forbidden',
+      outcome: 'conflict',
+      code: 'already_reviewed',
     });
   });
 

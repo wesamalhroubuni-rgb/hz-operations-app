@@ -16,9 +16,27 @@ function next(): number {
   return counter;
 }
 
-/** A fixed moment in the past, `minutes` after 2026-09-01T08:00:00Z. */
+/**
+ * 08:00 UTC two days before the day the tests run. Recent on purpose: a work log created
+ * through the API must have an `occurredAt` within the organization's backdating limit
+ * (`offlineMaxBackdateDays`, 7 days by default, ADR-0008), so a fixed calendar date would make
+ * the suites fail as time passes.
+ */
+const ANCHOR_MS = (() => {
+  const today = new Date();
+  return Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - 2, 8);
+})();
+
+/** A fixed moment of this test run, in the recent past: `minutes` after the anchor above. */
 export function at(minutes = 0): Date {
-  return new Date(Date.UTC(2026, 8, 1, 8, 0, 0) + minutes * 60_000);
+  return new Date(ANCHOR_MS + minutes * 60_000);
+}
+
+/** {@link at} written as local time with a whole-hour UTC offset (`...T11:30:00+03:00`). */
+export function atWithOffset(minutes: number, offsetHours: number): string {
+  const local = new Date(at(minutes).getTime() + offsetHours * 3_600_000).toISOString();
+  const sign = offsetHours < 0 ? '-' : '+';
+  return `${local.slice(0, 19)}${sign}${String(Math.abs(offsetHours)).padStart(2, '0')}:00`;
 }
 
 /** A UUID that names no record. */

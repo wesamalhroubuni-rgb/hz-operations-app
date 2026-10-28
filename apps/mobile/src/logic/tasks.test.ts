@@ -34,6 +34,7 @@ function task(overrides: Partial<Task> = {}): Task {
     dueAt: null,
     completedAt: null,
     statusReason: null,
+    version: 1,
     createdAt: at(1, 9),
     updatedAt: at(1, 9),
     archivedAt: null,

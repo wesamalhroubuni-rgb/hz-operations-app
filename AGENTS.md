@@ -32,13 +32,14 @@ Naming: never hard-code a client name. The name shown in the apps comes from
 `NEXT_PUBLIC_BRAND_NAME` / `EXPO_PUBLIC_BRAND_NAME` through each app's brand module. "Operations"
 stays as the technical name (folder, `@ops/*`, `src/operations`, database `operations_app`).
 
-State on 2026-10-17: Phase 3 is committed (`8c8283a`). Phase 4 is code complete and uncommitted:
-the API (56 paths) adds S3-compatible photo storage (MinIO in Docker Compose for development) with
-verified uploads and signed downloads, in-app and Expo push notifications, and an outbox consumer;
-the mobile app has the worker screens (tasks, work logs with photos, location, and custom fields,
-notifications, profile). **Nothing has run on a phone yet**; the owner's phone test, a development
-build, and the commit are open. The web app still has only login, activation, and a placeholder
-home. Phase 5 (offline) is next. See [MEMORY.md](MEMORY.md).
+State on 2026-10-28: Phases 1 to 4 are committed (Phase 4: `280c50a`). Phase 5 (offline mode and
+sync, ADR-0008) is code complete, tested, and reviewed: the API (57 paths) adds row versions,
+typed conflict codes, `Idempotency-Key` handling, offline audit metadata, and `GET /sync/pull`;
+the mobile app keeps a per-user SQLite cache and write queue and syncs when the connection
+returns. **Nothing has run on a phone or in the emulator yet** (README section 6). The owner must
+run `pnpm db:reset` once (the development database holds a stray migration from lost work). The
+web app still has only login, activation, and a placeholder home. Phase 6 (web dashboard) is
+next. See [MEMORY.md](MEMORY.md).
 
 ## Engineering principles
 
@@ -110,7 +111,8 @@ All from the repo root. Package names: `@ops/api`, `@ops/web`, `@ops/mobile`, `@
 | Other Prisma                      | `pnpm --filter @ops/api db:generate`, `db:studio`                                                     |
 
 Ports: API 3001 on `127.0.0.1` (`/health`; in development also `/docs`, `/docs-json`,
-`/docs-yaml`), web 3000, Metro 8081, PostgreSQL 5432, MinIO 9000 (S3 API) and 9001 (console).
+`/docs-yaml`), web 3000, Metro 8081, PostgreSQL 5432 (5433 on the owner's PC through the local
+`.env`, because another project's PostgreSQL holds 5432), MinIO 9000 (S3 API) and 9001 (console).
 
 Calling the API in development: `POST /auth/login` with `"client": "mobile"` and send
 `Authorization: Bearer <tokens.accessToken>`. Identifiers per seeded role and PowerShell examples
@@ -203,7 +205,14 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   unknown key is a 400. Validate with `ZodPipe`; document with `ApiDocs`.
 - Status conventions: 404 for a missing or other-organization record, 409 for changing an archived
   record or a duplicate unique value, 422 for a bad reference in a body. Date ranges are
-  inclusive lower bound, exclusive upper bound.
+  inclusive lower bound, exclusive upper bound. Prefer the typed codes of ADR-0008
+  (`ApiException.of('record_archived', ...)`, `version_conflict`, `already_reviewed`, ...): the
+  phone maps each code to a message, and each code has one status in `API_ERROR_STATUS`.
+- **Offline sync (ADR-0008)**: every change of a `Task` or `WorkLog` row must raise its `version`
+  (`NEXT_VERSION`) in the same transaction; check `expectedVersion` with `assertExpectedVersion`
+  after the no-op check (a no-op answers 200 even with a stale version). Writes the phone queues
+  are `@Idempotent()` and must stay no-ops on a repeat. A `POST /work-logs` with the caller's own
+  `clientId` answers 200 before any other check. `src/platform/idempotency/` knows no route names.
 - Audit and outbox redact by key name at any depth (`password`, `secret`, `token`, `hash` suffix,
   ...). A field or custom-field key that matches is stored as `"[redacted]"` in both.
 - The enum arrays in `packages/shared/src/domain/enums.ts`, `ATTACHMENT_STATUSES`
@@ -293,7 +302,7 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
 | Expo SDK 57 / React Native `0.86.3`                                                                                       | Must match each other and Expo Go. Upgrade them together.                                         |
 | NestJS 12 with a CommonJS API                                                                                             | Nest 12 packages are ESM-only; Node 24 loads them via `require`. Do not add `"type": "module"`.   |
 | Jest 30 (api), Jest 29 + jest-expo (mobile)                                                                               | The API test script needs `node --experimental-vm-modules`. jest-expo 57 is built for Jest 29.    |
-| Every `expo-*` package `~57.0.x` (`expo` ~57.0.30)                                                                        | Expo SDK 57 packages. They move with the SDK, not on their own.                                   |
+| Every `expo-*` package `~57.0.x` (`expo` ~57.0.31)                                                                        | Expo SDK 57 packages. They move with the SDK, not on their own.                                   |
 | Mobile: React Navigation 7, TanStack Query 5, AsyncStorage, datetimepicker, `@expo/vector-icons`, `zod` at exact versions | Versions Expo SDK 57 accepts (`expo install`); `zod` equal to the one `@ops/shared` uses.         |
 | `sharp` `^0.35.5` (API)                                                                                                   | Prebuilt native binary, no install script, so no `allowBuilds` entry. Check that on any bump.     |
 | `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` `^3.1152.0`                                                         | Keep both on the same version.                                                                    |
@@ -319,13 +328,21 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   splash. A phone cannot reach `localhost`: a phone test needs `API_HOST=0.0.0.0`,
   `MINIO_BIND_HOST=0.0.0.0`, and the PC's address in `EXPO_PUBLIC_API_URL` and
   `STORAGE_PUBLIC_ENDPOINT` (README section 5). No phone test has been done yet.
-- Mobile rules: **every write goes through `src/data/repositories.ts`** (Phase 5 puts a local
-  queue behind it; screens must not call `apiClient` to change data). **Every user-facing string
-  goes through `src/i18n`** (`t('...')`, catalogue `en.ts`; styles use `start` / `end`, never
-  `left` / `right`). **Tokens only in SecureStore**; drafts and the photo upload queue in
-  AsyncStorage (`src/storage/`), deleted after 14 days. Android Expo Go has no remote push; push
+- Mobile rules: **every write goes through `src/data/repositories.ts` → the user's write queue**
+  (`src/offline/writeQueue.ts`); the sync engine sends it. Screens never call `apiClient`, the
+  queue, or the engine to change data; reads come from the local store through
+  `src/data/queries.ts`. **One SQLite database per user** (`ops-<userId>.db`) and one photo folder
+  per user (`offline-photos/<userId>/`): never read or send one user's data while another is
+  signed in. **Never delete a queued write silently**: only when the server accepted it, when the
+  worker discards it, or by the kept-queue rule (an explicit "keep for later" sign-out, after 30
+  days). **Every user-facing string goes through `src/i18n`** (`t('...')`, catalogue `en.ts`; a
+  new API error code needs a `sync.reasons` text; styles use `start` / `end`, never `left` /
+  `right`). **Tokens and the offline identity only in SecureStore**; form drafts in AsyncStorage
+  (`src/storage/`), deleted after 14 days. Android Expo Go has no remote push; push
   needs the development build (`expo-dev-client`, `eas.json`, `dev:client`) and
-  `EXPO_PUBLIC_EAS_PROJECT_ID`. Bundle identifiers come from `EXPO_IOS_BUNDLE_IDENTIFIER` /
+  `EXPO_PUBLIC_EAS_PROJECT_ID`; the background sync task also needs the development build. To
+  test offline without a phone, use the emulator `hz_pixel` with `adb reverse` (README section 6).
+  Bundle identifiers come from `EXPO_IOS_BUNDLE_IDENTIFIER` /
   `EXPO_ANDROID_PACKAGE`. `eas-build-post-install` builds `@ops/shared` on EAS.
 
 **This file**

@@ -25,7 +25,7 @@ const BATCH_SIZE = 100;
  * Removes abandoned uploads: attachments still `pending` more than {@link STALE_UPLOAD_HOURS}
  * after they were started. The object (if any bytes arrived) is deleted from the storage and the
  * attachment is archived with the event `attachment.upload_expired` (audit and outbox, actor
- * `system`). The row is kept, like every archived record.
+ * `system`). The row is kept, like every archived record, without its `clientId`.
  *
  * It also purges the stored upload of every attachment archived while still pending (by the
  * user, or by the expiry above) once its upload URL can no longer be used: an upload URL signed
@@ -106,7 +106,9 @@ export class AttachmentCleanupService implements OnApplicationBootstrap, OnAppli
         const archived = await this.prisma.$transaction(async (tx) => {
           const { count } = await tx.attachment.updateMany({
             where: { id: row.id, status: 'pending', archivedAt: null },
-            data: { archivedAt: now },
+            // The clientId is freed (ADR-0008): a phone that comes back later with the same
+            // queued photo starts a new upload instead of finding this expired one.
+            data: { archivedAt: now, clientId: null },
           });
           if (count === 0) {
             return false;

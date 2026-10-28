@@ -99,6 +99,10 @@ const config: ExpoConfig = {
       },
     ],
     'expo-localization',
+    // Phase 5 (ADR-0008): the per-user offline database (read cache and write queue) and the
+    // best-effort background sync. Foreground sync never depends on the background task.
+    'expo-sqlite',
+    'expo-background-task',
   ],
 };
 

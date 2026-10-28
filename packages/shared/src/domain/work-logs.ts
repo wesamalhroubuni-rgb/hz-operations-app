@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ApiResult, ApiTransport } from '../api-client/client.js';
+import type { ApiCallOptions, ApiResult, ApiTransport } from '../api-client/client.js';
 import {
   paginatedSchema,
   paginationQuerySchema,
@@ -11,18 +11,57 @@ import { customFieldValuesInputSchema, customFieldValuesSchema } from './custom-
 import { workLogSourceSchema, workLogStatusSchema } from './enums.js';
 import {
   AT_LEAST_ONE_FIELD,
-  atLeastOneField,
+  atLeastOneFieldBesidesVersion,
+  expectedVersionSchema,
   longTextSchema,
   nullableIsoDateTimeSchema,
+  uniqueIdListSchema,
   type ListQueryParams,
 } from './shared.js';
 import { latitudeSchema, longitudeSchema } from './sites.js';
 
 /**
  * How far ahead of the server clock `occurredAt` may be. Work happens in the past; the margin
- * only absorbs a phone clock that runs fast.
+ * only absorbs a phone clock that runs fast. A log further ahead is refused with 422
+ * `occurred_at_out_of_range` (ADR-0008 keeps one hour rather than a few minutes: a phone with a
+ * wrong clock would otherwise lose every offline log; the skew is flagged instead).
  */
 export const WORK_LOG_MAX_FUTURE_MS = 60 * 60 * 1000;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Why `occurredAt` is outside the accepted range, or null when it is inside: not more than
+ * `maxBackdateDays` (the organization's `offlineMaxBackdateDays`) before `now` and not more than
+ * {@link WORK_LOG_MAX_FUTURE_MS} after it. The API checks it with its own clock on create and when
+ * an edit changes `occurredAt`; the phone checks it before queueing so the worker is told at once.
+ */
+export function occurredAtRangeProblem(
+  occurredAt: string | Date,
+  now: Date,
+  maxBackdateDays: number,
+): 'too_old' | 'in_future' | null {
+  const time = occurredAt instanceof Date ? occurredAt.getTime() : Date.parse(occurredAt);
+  if (time > now.getTime() + WORK_LOG_MAX_FUTURE_MS) {
+    return 'in_future';
+  }
+  if (time < now.getTime() - maxBackdateDays * DAY_MS) {
+    return 'too_old';
+  }
+  return null;
+}
+
+/**
+ * Most attachment clientIds a create request may declare. Equal to the API's limit of
+ * attachments per work log (`MAX_ATTACHMENTS_PER_WORK_LOG`).
+ */
+export const MAX_DECLARED_ATTACHMENTS = 20;
+
+/**
+ * How long after a log reached the server (`createdAt`) its author may still upload the photos
+ * declared in its create request, whatever the edit window and the log's status (ADR-0008).
+ */
+export const DECLARED_ATTACHMENT_GRACE_DAYS = 30;
 
 /** GPS position of a work log. Latitude and longitude always come together. */
 export const workLogLocationSchema = z.strictObject({
@@ -70,6 +109,19 @@ export const workLogSchema = z.object({
   source: workLogSourceSchema,
   /** Reserved for AI-derived data. Always null today. */
   aiMetadata: z.record(z.string(), z.unknown()).nullable(),
+  /** Optimistic-concurrency counter: send it back as `expectedVersion` (ADR-0008). */
+  version: z.number().int().min(1),
+  /** Sent by the phone's offline queue (`X-Client-Sync: offline` on the create request). */
+  submittedOffline: z.boolean(),
+  /** The phone's clock when the worker saved the log, as the phone reported it. */
+  deviceCreatedAt: nullableIsoDateTimeSchema,
+  /** Phone clock minus server clock at create, in seconds; null when unknown. */
+  clockSkewSeconds: z.number().int().nullable(),
+  /** True when |clockSkewSeconds| > CLOCK_SKEW_FLAG_SECONDS: the phone's times are doubtful. */
+  clockSkewFlagged: z.boolean(),
+  /** The photo clientIds declared at create: the "original submission" (ADR-0008). */
+  declaredAttachmentClientIds: z.array(idSchema),
+  /** When the server stored the log (its receive time; the edit window counts from it). */
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
   archivedAt: nullableIsoDateTimeSchema,
@@ -85,10 +137,18 @@ export const WORK_LOG_CREATE_STATUSES = ['draft', 'submitted'] as const;
  * another user is a conflict (409). The author is always the signed-in user: `authorId` is not
  * accepted. `customFields` is validated against the log type; without a log type it must be
  * empty.
+ *
+ * Phase 5 (ADR-0008): `occurredAt` must pass {@link occurredAtRangeProblem} with the
+ * organization's `offlineMaxBackdateDays` (else 422 `occurred_at_out_of_range`).
+ * `attachmentClientIds` declares the clientIds of the photos that belong to this submission
+ * (stored as `declaredAttachmentClientIds`); only those may be uploaded after the edit window.
+ * `deviceCreatedAt` is the phone's clock when the worker saved the log (informative).
  */
 export const createWorkLogSchema = z.strictObject({
   clientId: idSchema,
   occurredAt: isoDateTimeSchema,
+  attachmentClientIds: uniqueIdListSchema(MAX_DECLARED_ATTACHMENTS).default([]),
+  deviceCreatedAt: isoDateTimeSchema.optional(),
   taskId: idSchema.nullable().optional(),
   siteId: idSchema.nullable().optional(),
   teamId: idSchema.nullable().optional(),
@@ -107,9 +167,11 @@ export type CreateWorkLogInput = z.input<typeof createWorkLogSchema>;
 /**
  * A field left out is unchanged; `null` clears it. When `logTypeId` or `customFields` is sent,
  * the resulting custom fields are validated again against the current log type definition.
+ * `expectedVersion` (optional) is the optimistic-concurrency check; it does not count as a field.
  */
 export const updateWorkLogSchema = z
   .strictObject({
+    expectedVersion: expectedVersionSchema.optional(),
     occurredAt: isoDateTimeSchema.optional(),
     taskId: idSchema.nullable().optional(),
     siteId: idSchema.nullable().optional(),
@@ -119,7 +181,7 @@ export const updateWorkLogSchema = z
     customFields: customFieldValuesInputSchema.optional(),
     location: workLogLocationSchema.nullable().optional(),
   })
-  .refine(atLeastOneField, AT_LEAST_ONE_FIELD);
+  .refine(atLeastOneFieldBesidesVersion, AT_LEAST_ONE_FIELD);
 export type UpdateWorkLog = z.infer<typeof updateWorkLogSchema>;
 
 /**
@@ -134,6 +196,8 @@ export const WORK_LOG_REVIEW_NOTE_MAX_LENGTH = 2000;
  */
 export const changeWorkLogStatusSchema = z
   .strictObject({
+    /** Optimistic-concurrency check (ADR-0008). Setting the status the log already has is a no-op. */
+    expectedVersion: expectedVersionSchema.optional(),
     status: workLogStatusSchema,
     note: z.string().trim().min(1).max(WORK_LOG_REVIEW_NOTE_MAX_LENGTH).optional(),
   })
@@ -177,28 +241,42 @@ export function workLogsEndpoints(transport: ApiTransport) {
     get(id: string): Promise<ApiResult<WorkLog>> {
       return transport.request({ path: `/work-logs/${id}`, schema: workLogSchema });
     },
-    /** Resolves with status 201 for a new log and 200 when the `clientId` already existed. */
-    create(body: CreateWorkLogInput): Promise<ApiResult<WorkLog>> {
+    /**
+     * Resolves with status 201 for a new log and 200 when the `clientId` already existed.
+     * `options.headers`: the offline queue's `offlineSyncHeaders(...)`.
+     */
+    create(body: CreateWorkLogInput, options: ApiCallOptions = {}): Promise<ApiResult<WorkLog>> {
       return transport.request({
         method: 'POST',
         path: '/work-logs',
         body,
+        headers: options.headers,
         schema: workLogSchema,
       });
     },
-    update(id: string, body: UpdateWorkLog): Promise<ApiResult<WorkLog>> {
+    update(
+      id: string,
+      body: UpdateWorkLog,
+      options: ApiCallOptions = {},
+    ): Promise<ApiResult<WorkLog>> {
       return transport.request({
         method: 'PATCH',
         path: `/work-logs/${id}`,
         body,
+        headers: options.headers,
         schema: workLogSchema,
       });
     },
-    changeStatus(id: string, body: ChangeWorkLogStatus): Promise<ApiResult<WorkLog>> {
+    changeStatus(
+      id: string,
+      body: ChangeWorkLogStatus,
+      options: ApiCallOptions = {},
+    ): Promise<ApiResult<WorkLog>> {
       return transport.request({
         method: 'PATCH',
         path: `/work-logs/${id}/status`,
         body,
+        headers: options.headers,
         schema: workLogSchema,
       });
     },

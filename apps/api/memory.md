@@ -1,6 +1,6 @@
 # apps/api memory
 
-Package `@ops/api`. Last updated: 2026-10-17.
+Package `@ops/api`. Last updated: 2026-10-28.
 
 ## Purpose
 
@@ -10,13 +10,24 @@ permission rules, photo storage, notifications, the audit trail, and the event o
 
 ## Current state
 
-Phase 3 committed (`8c8283a`). Phase 4 (storage, uploads, notifications) code complete on
-2026-10-17, uncommitted.
+Phase 4 committed (`280c50a`). Phase 5 (offline sync support) code complete on 2026-10-27, about
+to be committed.
 
-- **56 paths**: the Phase 2 resources, nine `/auth/*` routes, the two user code routes, and from
+- **57 paths**: the Phase 2 resources, nine `/auth/*` routes, the two user code routes, from
   Phase 4 `POST /attachments/:id/complete`, `POST /attachments/:id/upload-url`, and five
-  `/notifications` paths. The full list with the policy of each route, the HTTP conventions, and
-  the permissions matrix are in [ARCHITECTURE.md](../../ARCHITECTURE.md).
+  `/notifications` paths, and from Phase 5 `GET /sync/pull`. The full list with the policy of each
+  route, the HTTP conventions, and the permissions matrix are in
+  [ARCHITECTURE.md](../../ARCHITECTURE.md).
+- **Offline sync** (ADR-0008): `Task.version` and `WorkLog.version` raised by every change;
+  `expectedVersion` on log edits and status changes and task status changes (409
+  `version_conflict` unless the request is a no-op); typed refusal codes (`already_reviewed`,
+  `edit_window_closed`, `record_archived`, `task_not_assigned`, `task_cancelled`,
+  `occurred_at_out_of_range`, `attachment_not_declared`, ...); `Idempotency-Key` on the four
+  `@Idempotent()` writes (`src/platform/idempotency/`); offline creates store
+  `submittedOffline`, `deviceCreatedAt`, `clockSkewSeconds`, and the declared photo client ids,
+  drop unusable references instead of refusing, and respect `offlineMaxBackdateDays`; declared
+  photos accepted for 30 days; audit `metadata` `via: offline_sync`; `GET /sync/pull`
+  (`src/operations/sync/`).
 - **File storage** (`src/platform/storage/`, ADR-0006): `S3FileStorage` on any S3-compatible store
   (MinIO in development), an internal client on `STORAGE_ENDPOINT` and a signer on
   `STORAGE_PUBLIC_ENDPOINT`. Uploads are direct pre-signed PUTs (type and size signed) to an
@@ -40,18 +51,20 @@ Phase 3 committed (`8c8283a`). Phase 4 (storage, uploads, notifications) code co
   definition per resource; role-shaped responses (users `basic` / `contact` / `full`,
   organization `summary` / `full`).
 - **Data model**: 14 business models, four auth tables, three notification platform tables
-  (`Notification`, `PushToken`, `OutboxConsumerCursor`), four migrations, UUIDv7 ids.
+  (`Notification`, `PushToken`, `OutboxConsumerCursor`), `IdempotencyRecord`, five migrations,
+  UUIDv7 ids.
 - **Every write** is one transaction: business row, audit event, outbox event, through
   `ChangeRecorder`. Auth security events and push token changes go to the audit log only;
   notification rows are not audited.
 - **Swagger** at `/docs`, `/docs-json`, `/docs-yaml`, in development only, with a bearer scheme.
-- **Tests**: 477 unit tests in 21 suites; 1,339 integration tests in 18 suites (about 3 minutes).
+- **Tests**: 513 unit tests in 24 suites; 1,416 integration tests in 19 suites (about 3 minutes).
 
-Verified in the Phase 4 session (2026-10-17, as reported by the coordinator; unit counts re-run by
-the docs-keeper): lint, typecheck, build, unit and integration tests pass; the migration `20261017090000_phase4_mobile` is applied to the development database; storage
-against the real MinIO; a task assignment produced an in-app notification within about one second
-on a live API; the push token was removed on sign-out. **Not verified**: real Expo push delivery,
-any provider other than MinIO.
+Verified in the Phase 5 session (2026-10-27): unit tests, lint, and typecheck re-run by the
+docs-keeper; integration tests as reported by the coordinator. **Not applied**: the Phase 5
+migration on the development database, which holds a stray `20261018090000_phase5_offline_sync`
+from lost work (`prisma migrate status`, 2026-10-28); the owner must run `pnpm db:reset`. Earlier
+(Phase 4): storage against the real MinIO, a live in-app notification, push token removal on
+sign-out. **Not verified**: real Expo push delivery, any provider other than MinIO.
 
 ## Layout
 
@@ -66,13 +79,17 @@ src/
   health/                 GET /health (@Public)
   platform/               REUSABLE. Must not import src/operations (ESLint error)
     platform.module.ts    global: middleware, no-store on /auth, exception filter, AuthGuard,
+                          IdempotencyInterceptor,
                           auth/audit/outbox controllers, auth providers; imports StorageModule
                           and NotificationsModule
     storage/              file-storage.ts (interface, FILE_STORAGE, safe Content-Disposition),
                           s3-file-storage.ts, images.ts (verify, re-encode, thumbnail,
                           ImageProcessor), concurrency.ts (ConcurrencyLimit, KeyedSerializer),
                           storage-settings.ts, storage.module.ts
-    request-context/      RequestContext (AsyncLocalStorage: correlation id, actor), middleware
+    request-context/      RequestContext (AsyncLocalStorage: correlation id, actor, offline-sync
+                          facts), middleware
+    idempotency/          @Idempotent(), IdempotencyInterceptor (global), IdempotencyService
+                          (claim, replay, release, hourly expiry), request hash
     http/                 ApiException (incl. rateLimited), filter, ZodPipe, ApiDocs, pagination,
                           filters, requireActor, @Public()
     auth/                 auth.guard.ts, auth.controller.ts, auth.service.ts, auth-admin.service.ts,
@@ -95,7 +112,9 @@ src/
                           decision.ts, visibility.ts, rules/*.rules.ts,
                           operations-request-authorizer.ts, operations-auth-profile.provider.ts,
                           access.module.ts (global), clock.ts, testing.ts
-    common/               ChangeRecorder, references.ts, hierarchy.ts, db.ts
+    common/               ChangeRecorder, references.ts, concurrency.ts (NEXT_VERSION,
+                          assertExpectedVersion), hierarchy.ts, db.ts
+    sync/                 GET /sync/pull: sync.service.ts, sync.controller.ts, sync-cursor.ts
     organization/ users/ memberships/ sites/ teams/ log-types/ tasks/ work-logs/ attachments/
                           each: *.controller.ts, *.service.ts, *.module.ts
     memberships/admin-guard.ts   last-admin check under an advisory lock
@@ -110,7 +129,8 @@ src/
 prisma/
   schema.prisma
   migrations/             20261013112952_init, 20261013150000_attachment_storage_key_per_org,
-                          20261014090000_auth, 20261017090000_phase4_mobile
+                          20261014090000_auth, 20261017090000_phase4_mobile,
+                          20261027090000_phase5_offline_sync
   seed.ts                 entry point of the seed
 test/
   *.int-spec.ts           integration suites
@@ -122,38 +142,42 @@ test/
 
 ## Key files
 
-| File                                                       | What it does                                                                                                                                           |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/config/env.ts`                                        | Environment schema. Production refuses placeholder or repetitive auth and storage secrets and a non-https `WEB_APP_URL` or `STORAGE_PUBLIC_ENDPOINT`.  |
-| `src/platform/storage/s3-file-storage.ts`                  | `FileStorage` on S3: internal and signer clients, bucket check or creation at start-up, signed PUT (type and length) and GET, stat, ranged read, put.  |
-| `src/platform/storage/images.ts`                           | `verifyImage` (magic bytes, full decode, 24 MP cap, re-encode, 320 px thumbnail) and `ImageProcessor` (2 decodes at once, 30 s wait).                  |
-| `src/operations/attachments/attachments.service.ts`        | `startUpload`, `renewUpload`, `complete`, `archive`, `present` (signed URLs); key helpers `attachmentStorageKey`, `verifiedKeyOf`, `thumbnailKeyOf`.   |
-| `src/operations/attachments/attachment-cleanup.service.ts` | Hourly: expire pending uploads older than 24 h (claim, then delete), purge bytes of archived pending uploads (48 h window).                            |
-| `src/platform/notifications/notification.service.ts`       | `notify` (write rows, deliver after commit), `notifyInTransaction`, `deliver`, `whenIdle`. Idempotent per `(sourceEventId, recipientId, type)`.        |
-| `src/platform/notifications/push-tokens.service.ts`        | Register (bound to the session, one per session, rebinding), unregister, `sessionsEnded`, `deliverableTokens`, `removeInvalid`; audited.               |
-| `src/platform/notifications/expo-push.channel.ts`          | Sends one push per live token with the generic text; tickets and in-memory receipts; removes `DeviceNotRegistered` tokens.                             |
-| `src/platform/outbox/outbox-consumer.ts`                   | Named consumer, `registerHandler`, polling, `processPending()`, cursor table; the rules are in `outbox-consumer-state.ts` (60 s settle, retries).      |
-| `src/operations/notifications/notification-rules.ts`       | Which event notifies whom (pure); the service re-checks the current state before writing.                                                              |
-| `src/platform/auth/auth.guard.ts`                          | The one global guard: development-only 404, public, authenticate (bearer or cookie, database check), CSRF, actor, policy. Order in its header comment. |
-| `src/platform/auth/auth.service.ts`                        | Login (slug rule, lockout, generic failure), refresh, logout, sessions, set-password, change-password, the security audit events.                      |
-| `src/platform/auth/sessions.ts`                            | Session creation, refresh rotation with the race and reuse rule, revocation, and the `onSessionsEnded` hook (push tokens go with the session).         |
-| `src/platform/auth/auth-admin.service.ts`                  | The contract for business modules: `issueOneTimeCode`, `revokeUserSessions`, `setPasswordForSeed`, `isActivated`, `activatedUserIds`.                  |
-| `src/platform/auth/auth-settings.ts`                       | Every auth setting and the default rate limits.                                                                                                        |
-| `src/platform/authz/policy.decorator.ts`                   | `@Policy`, `@Authenticated`, `@DevelopmentOnly`.                                                                                                       |
-| `src/platform/http/api-exception.filter.ts`                | Standard error body; maps Prisma `P2002` to 409, `P2003` to 422, `P2025` to 404; sets `Retry-After`.                                                   |
-| `src/platform/audit/audit.service.ts`                      | `record(tx, input)`: one audit row with redacted `before`, `after`, and `changes`.                                                                     |
-| `src/operations/access/policies.ts`                        | The policy registry: name, roles, description. `listPolicies()`. The permissions matrix is written from it.                                            |
-| `src/operations/access/access.service.ts`                  | `context()` (per-request cached access context) and `runAsSystem()`.                                                                                   |
-| `src/operations/access/visibility.ts`                      | `Visibility` values, `isVisible()`, `visibilityWhere()`.                                                                                               |
-| `src/operations/access/rules/`                             | Pure rules per resource returning a `Decision`; `decision.ts` `enforce()` turns it into 404, 403, or 409.                                              |
-| `src/operations/common/change-recorder.ts`                 | `record(tx, change)`: the audit event and the outbox event of one change.                                                                              |
-| `src/operations/common/references.ts`                      | `assertActiveReferences` (exists, same organization, not archived, visible to the caller, else 422) and `assertValidParent`.                           |
-| `src/operations/scope/resolve-scope.ts`                    | The scope rules (1 to 8, including `colleagueIds`), as a pure function.                                                                                |
-| `src/operations/seed/demo-seed.ts`                         | The demo data, `DEV_PASSWORDS`, and `seedDemo(app)`.                                                                                                   |
-| `test/support/test-app.ts`                                 | The integration harness: `as(userId)`, `loginAs`, `bearer`, `browser()`, `clock`, `notifications`, `rateLimiter`, the fake storage and Expo client.    |
-| `prisma.config.ts`                                         | Prisma 7 config. Attaches `DATABASE_URL` only when set.                                                                                                |
-| `eslint.config.mjs`                                        | Base config, decorator parser options, and the rule that forbids `src/platform` importing `src/operations`.                                            |
-| `nest-cli.json`                                            | `deleteOutDir: true`: every `nest build` wipes `dist/`.                                                                                                |
+| File                                                       | What it does                                                                                                                                                                                  |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/config/env.ts`                                        | Environment schema. Production refuses placeholder or repetitive auth and storage secrets and a non-https `WEB_APP_URL` or `STORAGE_PUBLIC_ENDPOINT`.                                         |
+| `src/platform/storage/s3-file-storage.ts`                  | `FileStorage` on S3: internal and signer clients, bucket check or creation at start-up, signed PUT (type and length) and GET, stat, ranged read, put.                                         |
+| `src/platform/storage/images.ts`                           | `verifyImage` (magic bytes, full decode, 24 MP cap, re-encode, 320 px thumbnail) and `ImageProcessor` (2 decodes at once, 30 s wait).                                                         |
+| `src/operations/attachments/attachments.service.ts`        | `startUpload`, `renewUpload`, `complete`, `archive`, `present` (signed URLs); key helpers `attachmentStorageKey`, `verifiedKeyOf`, `thumbnailKeyOf`.                                          |
+| `src/operations/attachments/attachment-cleanup.service.ts` | Hourly: expire pending uploads older than 24 h (claim, then delete), purge bytes of archived pending uploads (48 h window).                                                                   |
+| `src/platform/notifications/notification.service.ts`       | `notify` (write rows, deliver after commit), `notifyInTransaction`, `deliver`, `whenIdle`. Idempotent per `(sourceEventId, recipientId, type)`.                                               |
+| `src/platform/notifications/push-tokens.service.ts`        | Register (bound to the session, one per session, rebinding), unregister, `sessionsEnded`, `deliverableTokens`, `removeInvalid`; audited.                                                      |
+| `src/platform/notifications/expo-push.channel.ts`          | Sends one push per live token with the generic text; tickets and in-memory receipts; removes `DeviceNotRegistered` tokens.                                                                    |
+| `src/platform/outbox/outbox-consumer.ts`                   | Named consumer, `registerHandler`, polling, `processPending()`, cursor table; the rules are in `outbox-consumer-state.ts` (60 s settle, retries).                                             |
+| `src/operations/notifications/notification-rules.ts`       | Which event notifies whom (pure); the service re-checks the current state before writing.                                                                                                     |
+| `src/platform/auth/auth.guard.ts`                          | The one global guard: development-only 404, public, authenticate (bearer or cookie, database check), CSRF, actor, policy. Order in its header comment.                                        |
+| `src/platform/auth/auth.service.ts`                        | Login (slug rule, lockout, generic failure), refresh, logout, sessions, set-password, change-password, the security audit events.                                                             |
+| `src/platform/auth/sessions.ts`                            | Session creation, refresh rotation with the race and reuse rule, revocation, and the `onSessionsEnded` hook (push tokens go with the session).                                                |
+| `src/platform/auth/auth-admin.service.ts`                  | The contract for business modules: `issueOneTimeCode`, `revokeUserSessions`, `setPasswordForSeed`, `isActivated`, `activatedUserIds`.                                                         |
+| `src/platform/auth/auth-settings.ts`                       | Every auth setting and the default rate limits.                                                                                                                                               |
+| `src/platform/authz/policy.decorator.ts`                   | `@Policy`, `@Authenticated`, `@DevelopmentOnly`.                                                                                                                                              |
+| `src/platform/http/api-exception.filter.ts`                | Standard error body; maps Prisma `P2002` to 409, `P2003` to 422, `P2025` to 404; sets `Retry-After`.                                                                                          |
+| `src/platform/audit/audit.service.ts`                      | `record(tx, input)`: one audit row with redacted `before`, `after`, and `changes`.                                                                                                            |
+| `src/operations/access/policies.ts`                        | The policy registry: name, roles, description. `listPolicies()`. The permissions matrix is written from it.                                                                                   |
+| `src/operations/access/access.service.ts`                  | `context()` (per-request cached access context) and `runAsSystem()`.                                                                                                                          |
+| `src/operations/access/visibility.ts`                      | `Visibility` values, `isVisible()`, `visibilityWhere()`.                                                                                                                                      |
+| `src/operations/access/rules/`                             | Pure rules per resource returning a `Decision`; `decision.ts` `enforce()` turns it into 404, 403, or 409.                                                                                     |
+| `src/operations/common/change-recorder.ts`                 | `record(tx, change)`: the audit event and the outbox event of one change (`auditMetadata` for dropped references).                                                                            |
+| `src/operations/common/concurrency.ts`                     | `NEXT_VERSION` and `assertExpectedVersion` (409 `version_conflict`). ADR-0008 section 1.                                                                                                      |
+| `src/platform/idempotency/idempotency.service.ts`          | `Idempotency-Key` claim, replay, take-over after the 60 s lock, release of non-final answers, hourly deletion after 14 days. Header comment: why it is safe outside the business transaction. |
+| `src/operations/sync/sync.service.ts`                      | `GET /sync/pull`: the caller's slice through the visibility filters, `upserts` since the cursor minus 60 s, complete `ids` per resource.                                                      |
+| `src/operations/sync/sync-cursor.ts`                       | The opaque cursor (`v`, time, scope fingerprint); an unusable cursor means a full pull.                                                                                                       |
+| `src/operations/common/references.ts`                      | `assertActiveReferences` (exists, same organization, not archived, visible to the caller, else 422) and `assertValidParent`.                                                                  |
+| `src/operations/scope/resolve-scope.ts`                    | The scope rules (1 to 8, including `colleagueIds`), as a pure function.                                                                                                                       |
+| `src/operations/seed/demo-seed.ts`                         | The demo data, `DEV_PASSWORDS`, and `seedDemo(app)`.                                                                                                                                          |
+| `test/support/test-app.ts`                                 | The integration harness: `as(userId)`, `loginAs`, `bearer`, `browser()`, `clock`, `notifications`, `rateLimiter`, the fake storage and Expo client.                                           |
+| `prisma.config.ts`                                         | Prisma 7 config. Attaches `DATABASE_URL` only when set.                                                                                                                                       |
+| `eslint.config.mjs`                                        | Base config, decorator parser options, and the rule that forbids `src/platform` importing `src/operations`.                                                                                   |
+| `nest-cli.json`                                            | `deleteOutDir: true`: every `nest build` wipes `dist/`.                                                                                                                                       |
 
 ## Environment variables
 
@@ -234,24 +258,27 @@ needed.
 - Idempotent on the slug: if the organization exists, nothing is written.
 - The seed compiles the API with `tsc` into `node_modules/.cache/ops-seed` (decorator metadata;
   `dist/` belongs to a running dev server).
-- The development database holds the Phase 3 seed (the owner ran `pnpm db:reset` before
-  2026-10-17), with the Phase 4 migration applied on top.
+- The development database holds the Phase 3 seed with the Phase 4 migration applied, plus a
+  stray Phase 5 migration from lost work; it needs the owner's `pnpm db:reset` (2026-10-28).
 
 ## Tests
 
-- **Unit** (`pnpm --filter @ops/api test`): `src/**/*.spec.ts`, 21 suites, 477 tests. No database,
-  no `.env`. Covers the environment schema, health, `ZodPipe`, the platform modules, auth (tokens,
-  cookies, CSRF, codes, policy, identifiers, rate limiter), `AuthAdminService`, scope resolution,
-  the access rules (including `attachment.rules.spec.ts`) and visibility, storage
+- **Unit** (`pnpm --filter @ops/api test`): `src/**/*.spec.ts`, 24 suites, 513 tests (2026-10-27).
+  No database, no `.env`. Covers the environment schema, health, `ZodPipe`, the platform modules,
+  auth (tokens, cookies, CSRF, codes, policy, identifiers, rate limiter), `AuthAdminService`, scope
+  resolution, the access rules (including `attachment.rules.spec.ts` and the Phase 5
+  `offline-rules.spec.ts`) and visibility, idempotency, the sync cursor, storage
   (`storage.spec.ts`), notifications and Expo push, the outbox consumer, the notification rules,
   and `route-policies.spec.ts`. Running it at the same time as other packages' test runners once
   failed four suites to load on 2026-10-17; a rerun alone passed.
-- **Integration** (`pnpm test:integration`): `test/*.int-spec.ts`, 18 suites, 1,339 tests (as
-  reported 2026-10-17), about 3 minutes. Suites: `harness`, `auth-and-errors`, `auth-login`,
+- **Integration** (`pnpm test:integration`): `test/*.int-spec.ts`, 19 suites, 1,416 tests (as
+  reported 2026-10-27), about 3 minutes. Suites: `harness`, `auth-and-errors`, `auth-login`,
   `auth-sessions`, `secrets`, `org-structure`, `log-types`, `tasks`, `work-logs`,
   `audit-outbox-transaction`, `audit-outbox-read`, `tenant-isolation`, `permissions-matrix` (every
   cell, fixture in `support/matrix-world.ts`), `permissions-cases`, and from Phase 4 `uploads`,
-  `storage-minio` (the real MinIO, bucket `hz-attachments-test`), `worker-app`, `notifications`.
+  `storage-minio` (the real MinIO, bucket `hz-attachments-test`), `worker-app`, `notifications`,
+  and from Phase 5 `offline-sync` (versions, codes, idempotency, offline creates, late photos, the
+  pull).
 - The harness binds an in-memory `FileStorage` (`support/fake-file-storage.ts`) and a fake Expo
   client; the outbox consumer and push are off, and tests call `processPending()`.
 - The harness authenticates for real: `as(userId)` opens a `mobile` session through
@@ -278,7 +305,12 @@ needed.
   Author fields come from `authorOf(context)`. When access is taken away, call
   `AuthAdminService.revokeUserSessions` in the same transaction.
 - Body references are checked with `assertActiveReferences`, passing the caller's visibility.
-- A no-op write returns the record and records nothing.
+- A no-op write returns the record and records nothing, even with a stale `expectedVersion`.
+- Every change of a task or work log raises `version` (`NEXT_VERSION`) in the same transaction;
+  edits and status changes lock the row before reading it. Throw typed codes with
+  `ApiException.of(code, message, details?)`; a new code goes into `API_ERROR_CODES` and
+  `API_ERROR_STATUS` in `@ops/shared` and gets a phone message in `apps/mobile/src/i18n/en.ts`.
+- A write the phone queues must be `@Idempotent()` and safe to repeat (ADR-0008 section 4).
 - New entity types go into `EntityType` and `PAYLOAD_KEYS` in `change-recorder.ts`, and into
   `ReferenceKind` in `references.ts` if other records can point at them.
 - Platform code writes through narrow structural types (`AuditWriter`, `OutboxWriter`,
@@ -305,8 +337,11 @@ needed.
 - **Orphan upload bytes** after a PUT to a still-valid upload URL of a completed attachment; never
   served, never removed (ADR-0006). The purge covers attachments archived while pending, for
   48 hours.
-- A lost `startUpload` answer leaves a second pending attachment until the 24-hour cleanup. An
-  author cannot complete an upload after the edit window closed.
+- A lost `startUpload` answer of a start without an attachment `clientId` leaves a second pending
+  attachment until the 24-hour cleanup (with a `clientId` the repeat returns the same one).
+- Approved logs can still receive declared photos for 30 days (ADR-0008). An edit resent after
+  its idempotency key expired, on a log approved meanwhile, is refused although it took effect.
+- The idempotency cleanup, like the attachment cleanup, runs in every API process.
 - **Push receipts are in memory**; push-token rebinding is accepted; notification text is English
   only (ADR-0007).
 - The cleanup and the Expo receipt checks run in every API process (harmless, each claims rows
@@ -315,7 +350,8 @@ needed.
   `NotificationSender` is bound, and logs a warning per code.
 - **Redaction is by key name** in audit and outbox events.
 - **The append-only trigger does not block `TRUNCATE`.**
-- **No optimistic locking.** Concurrent updates are last-write-wins.
+- **Optimistic locking only on tasks and work logs**, and only when the client sends
+  `expectedVersion`; everything else is last-write-wins.
 - **Outbox sequences are assigned at insert, not commit**; the consumer's 60-second settle rule
   handles it and re-reads that window every poll.
 - **`db:reset` has no guard on its target database.**

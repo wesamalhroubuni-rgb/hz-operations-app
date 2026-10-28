@@ -6,9 +6,41 @@
  * package. Nothing else.
  */
 import { Logger } from '@nestjs/common';
-import { REQUEST_ID_HEADER } from '@ops/shared';
+import {
+  CLIENT_SYNC_HEADER,
+  CLIENT_SYNC_OFFLINE,
+  clockSkewSecondsOf,
+  DEVICE_TIME_HEADER,
+  deviceTimeHeaderSchema,
+  REQUEST_ID_HEADER,
+} from '@ops/shared';
 import { resolveCorrelationId } from './correlation-id';
-import { RequestContext, type RequestContextStore } from './request-context';
+import { RequestContext, type OfflineSyncInfo, type RequestContextStore } from './request-context';
+
+/**
+ * The offline-sync facts of a request (ADR-0008), or null when it does not carry
+ * `x-client-sync: offline`. A missing, repeated or invalid `x-device-time` gives a null device
+ * time (and skew); it never fails the request.
+ */
+export function offlineSyncOf(
+  headers: Record<string, string | string[] | undefined>,
+  receivedAt: Date,
+): OfflineSyncInfo | null {
+  const flag = headers[CLIENT_SYNC_HEADER];
+  if (typeof flag !== 'string' || flag.trim().toLowerCase() !== CLIENT_SYNC_OFFLINE) {
+    return null;
+  }
+  const raw = headers[DEVICE_TIME_HEADER];
+  const deviceTime =
+    typeof raw === 'string' && deviceTimeHeaderSchema.safeParse(raw.trim()).success
+      ? raw.trim()
+      : null;
+  return {
+    deviceTime,
+    serverTime: receivedAt,
+    clockSkewSeconds: clockSkewSecondsOf(deviceTime, receivedAt),
+  };
+}
 import { DEFAULT_QUIET_PATHS, formatRequestLog, isQuietPath, pathOf } from './request-log';
 
 const STORE = Symbol('platform.requestContextStore');
@@ -61,6 +93,7 @@ export function createRequestContextMiddleware(
       store = {
         correlationId: resolveCorrelationId(request.headers[REQUEST_ID_HEADER]),
         actor: null,
+        offlineSync: offlineSyncOf(request.headers, new Date()),
       };
       request[STORE] = store;
       response.setHeader(REQUEST_ID_HEADER, store.correlationId);

@@ -36,6 +36,8 @@ export interface ApiRequest<Schema extends z.ZodType> {
   path: string;
   query?: Record<string, QueryValue>;
   body?: unknown;
+  /** Extra headers of this request only (offline sync headers, Idempotency-Key). */
+  headers?: Record<string, string>;
   /** Schema of the success body. The body is validated before it reaches the caller. */
   schema: Schema;
   /** Non-2xx statuses whose body is still a valid success body (GET /health answers 503). */
@@ -46,6 +48,14 @@ export interface ApiRequest<Schema extends z.ZodType> {
    * answer, not a reason to refresh the session and try again.
    */
   skipAuthRefresh?: boolean;
+}
+
+/**
+ * Per-call options of a write endpoint. The offline queue passes `headers` built with
+ * `offlineSyncHeaders` (`X-Client-Sync`, `X-Device-Time`, `Idempotency-Key`).
+ */
+export interface ApiCallOptions {
+  headers?: Record<string, string>;
 }
 
 /**
@@ -168,6 +178,7 @@ export function createApiTransport(options: ApiClientOptions): ApiTransport {
         const headers: Record<string, string> = {
           Accept: 'application/json',
           ...(await options.getHeaders?.()),
+          ...request.headers,
         };
         if (request.body !== undefined) {
           headers['Content-Type'] = 'application/json';

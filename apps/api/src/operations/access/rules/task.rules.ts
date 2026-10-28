@@ -1,6 +1,6 @@
 import type { TaskStatus } from '@ops/shared';
 import type { AccessContext } from '../access-context';
-import { ALLOW, forbid, notVisible, type Decision } from '../decision';
+import { ALLOW, conflict, forbid, notVisible, type Decision } from '../decision';
 import {
   anyOf,
   EVERYTHING,
@@ -129,10 +129,16 @@ export function canChangeTaskStatus(
     return ALLOW;
   }
   if (!task.assigneeIds.includes(context.userId)) {
-    return forbid('Only an assignee or a manager of this task can change its status');
+    return forbid(
+      'Only an assignee or a manager of this task can change its status',
+      'task_not_assigned',
+    );
   }
   if (task.status === 'cancelled') {
-    return forbid('A cancelled task can only be reopened by whoever manages it');
+    return conflict(
+      'A cancelled task can only be reopened by whoever manages it',
+      'task_cancelled',
+    );
   }
   return ASSIGNEE_TASK_STATUSES.includes(to)
     ? ALLOW

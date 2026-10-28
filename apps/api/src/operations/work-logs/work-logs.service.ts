@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import {
   customFieldValuesSchema,
+  isClockSkewFlagged,
+  occurredAtRangeProblem,
+  offlineMaxBackdateDaysOf,
   validateCustomFieldValues,
-  WORK_LOG_MAX_FUTURE_MS,
   type ChangeWorkLogStatus,
   workLogEditWindowHoursOf,
   type CreateWorkLog,
@@ -15,6 +17,8 @@ import {
 } from '@ops/shared';
 import type { Prisma, WorkLog as WorkLogRow } from '../../generated/prisma/client';
 import { ApiException, orderByArgs, pageArgs, paginated } from '../../platform/http';
+import { canonicalJson } from '../../platform/idempotency/idempotency';
+import { RequestContext } from '../../platform/request-context/request-context';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AccessClock,
@@ -32,8 +36,14 @@ import {
   type WorkLogFacts,
 } from '../access';
 import { ChangeRecorder } from '../common/change-recorder';
+import { assertExpectedVersion, lockRowForUpdate, NEXT_VERSION } from '../common/concurrency';
 import { activeUnless, iso, isoOrNull, isUniqueViolation, type Db } from '../common/db';
-import { assertActiveReferences, ref, type Reference } from '../common/references';
+import {
+  assertActiveReferences,
+  ref,
+  referenceProblems,
+  type Reference,
+} from '../common/references';
 import { fieldsOf } from '../log-types/log-types.service';
 
 export function toWorkLog(row: WorkLogRow): WorkLog {
@@ -62,6 +72,12 @@ export function toWorkLog(row: WorkLogRow): WorkLog {
         : null,
     source: row.source,
     aiMetadata: (row.aiMetadata ?? null) as WorkLog['aiMetadata'],
+    version: row.version,
+    submittedOffline: row.submittedOffline,
+    deviceCreatedAt: isoOrNull(row.deviceCreatedAt),
+    clockSkewSeconds: row.clockSkewSeconds,
+    clockSkewFlagged: isClockSkewFlagged(row.clockSkewSeconds),
+    declaredAttachmentClientIds: row.declaredAttachmentClientIds,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
     archivedAt: isoOrNull(row.archivedAt),
@@ -97,18 +113,105 @@ function locationColumns(location: WorkLogLocationInput | null) {
   };
 }
 
-/** Work is logged after it happened; only a small margin for a fast phone clock is allowed. */
-function assertNotInFuture(occurredAt: string | undefined, now: Date): void {
-  if (occurredAt && new Date(occurredAt).getTime() > now.getTime() + WORK_LOG_MAX_FUTURE_MS) {
-    throw ApiException.validation([{ path: 'occurredAt', message: 'must not be in the future' }]);
+/** The organization's settings the work-log rules read, with their defaults. */
+export async function loadWorkLogSettings(
+  db: Db,
+  organizationId: string,
+): Promise<{ editWindowHours: number; offlineMaxBackdateDays: number }> {
+  const organization = await db.organization.findUnique({
+    where: { id: organizationId },
+    select: { settings: true },
+  });
+  return {
+    editWindowHours: workLogEditWindowHoursOf(organization?.settings),
+    offlineMaxBackdateDays: offlineMaxBackdateDaysOf(organization?.settings),
+  };
+}
+
+/**
+ * 422 `occurred_at_out_of_range` unless `occurredAt` is at most `maxBackdateDays` before the
+ * server clock and at most `WORK_LOG_MAX_FUTURE_MS` after it (ADR-0008 section 3). The phone's
+ * clock is never used: work is dated by the worker, judged by the server.
+ */
+function assertOccurredAtInRange(occurredAt: string, now: Date, maxBackdateDays: number): void {
+  const problem = occurredAtRangeProblem(occurredAt, now, maxBackdateDays);
+  if (problem === null) {
+    return;
+  }
+  const message =
+    problem === 'in_future'
+      ? 'must not be more than one hour in the future'
+      : `must not be more than ${maxBackdateDays} days in the past`;
+  throw ApiException.of('occurred_at_out_of_range', `occurredAt ${message}`, [
+    { path: 'occurredAt', message },
+  ]);
+}
+
+/** 409 `record_archived` for a write to an archived log. Checked after the permission. */
+function assertNotArchived(row: WorkLogRow): void {
+  if (row.archivedAt) {
+    throw ApiException.of(
+      'record_archived',
+      `Work log ${row.id} is archived and cannot be changed`,
+    );
   }
 }
 
-/** 409 for a write to an archived log. Checked after the permission, so a 403 comes first. */
-function assertNotArchived(row: WorkLogRow): void {
-  if (row.archivedAt) {
-    throw ApiException.conflict(`Work log ${row.id} is archived and cannot be changed`);
+/**
+ * True when an edit would leave the log exactly as it is: every field sent already has that
+ * value. `custom` is the result of validating the sent custom fields (when they or the log type
+ * were sent), or null when that validation failed.
+ */
+export function isWorkLogEditNoop(
+  row: WorkLogRow,
+  input: UpdateWorkLog,
+  custom: { customFields: CustomFieldValues; logTypeVersion: number | null } | null | undefined,
+): boolean {
+  const same = <Value>(sent: Value | undefined, current: Value): boolean =>
+    sent === undefined || sent === current;
+  if (
+    input.occurredAt !== undefined &&
+    new Date(input.occurredAt).getTime() !== row.occurredAt.getTime()
+  ) {
+    return false;
   }
+  if (
+    !same(input.taskId, row.taskId) ||
+    !same(input.siteId, row.siteId) ||
+    !same(input.teamId, row.teamId) ||
+    !same(input.logTypeId, row.logTypeId) ||
+    !same(input.text, row.text)
+  ) {
+    return false;
+  }
+  if (input.location !== undefined) {
+    const sent = locationColumns(input.location);
+    if (
+      sent.latitude !== row.latitude ||
+      sent.longitude !== row.longitude ||
+      sent.locationAccuracy !== row.locationAccuracy
+    ) {
+      return false;
+    }
+  }
+  if (input.logTypeId !== undefined || input.customFields !== undefined) {
+    if (!custom) {
+      return false;
+    }
+    if (
+      custom.logTypeVersion !== row.logTypeVersion ||
+      canonicalJson(custom.customFields) !== canonicalJson(row.customFields)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Validated custom field values and the log type version they were validated against. */
+interface ResolvedCustomFields {
+  customFields: CustomFieldValues;
+  logTypeVersion: number | null;
 }
 
 export interface CreateWorkLogResult {
@@ -164,8 +267,16 @@ export class WorkLogsService {
    * Creates a work log of the signed-in user: the author is never taken from the request.
    *
    * Idempotent on `clientId`: when the caller already has a log with that client id (a retried
-   * upload), that log is returned as it is, nothing is written and no audit or outbox event is
-   * recorded. A `clientId` that belongs to somebody else's log is a 409, never their log.
+   * upload), that log is returned as it is, before any other check (a resend days later must not
+   * fail on the date), nothing is written and no audit or outbox event is recorded. A `clientId`
+   * that belongs to somebody else's log is a 409, never their log.
+   *
+   * Then (ADR-0008): `occurredAt` must be within the organization's `offlineMaxBackdateDays`
+   * and at most one hour ahead (422 `occurred_at_out_of_range`). A request from an offline queue
+   * (`x-client-sync: offline`) stores `submittedOffline` and the measured clock skew, and a
+   * task, site or team it refers to that is archived or no longer visible to the caller is stored
+   * as null instead of refusing the log (the field names go into the audit metadata as
+   * `droppedReferences`); an archived log type is accepted. Online creates keep the 422.
    */
   async create(input: CreateWorkLog): Promise<CreateWorkLogResult> {
     const context = await this.access.context();
@@ -176,11 +287,38 @@ export class WorkLogsService {
     if (existing) {
       return { workLog: existing, created: false };
     }
-    assertNotInFuture(input.occurredAt, this.clock.now());
+    const offline = RequestContext.offlineSync();
 
     try {
       const workLog = await this.prisma.$transaction(async (tx) => {
-        await assertActiveReferences(tx, organizationId, this.references(context, input));
+        const settings = await loadWorkLogSettings(tx, organizationId);
+        assertOccurredAtInRange(
+          input.occurredAt,
+          this.clock.now(),
+          settings.offlineMaxBackdateDays,
+        );
+        const placement = {
+          taskId: input.taskId ?? null,
+          siteId: input.siteId ?? null,
+          teamId: input.teamId ?? null,
+        };
+        const dropped: string[] = [];
+        if (offline) {
+          const problems = await referenceProblems(
+            tx,
+            organizationId,
+            this.references(context, placement),
+          );
+          for (const { path } of problems) {
+            if (path === 'taskId' || path === 'siteId' || path === 'teamId') {
+              placement[path] = null;
+              dropped.push(path);
+            }
+          }
+          await this.assertLogTypeExists(tx, organizationId, input.logTypeId ?? null);
+        } else {
+          await assertActiveReferences(tx, organizationId, this.references(context, input));
+        }
         const custom = await this.resolveCustomFields(
           tx,
           organizationId,
@@ -194,15 +332,17 @@ export class WorkLogsService {
               clientId: input.clientId,
               authorId,
               occurredAt: new Date(input.occurredAt),
-              taskId: input.taskId,
-              siteId: input.siteId,
-              teamId: input.teamId,
+              ...placement,
               logTypeId: input.logTypeId,
               text: input.text,
               status: input.status,
               source: input.source,
               ...custom,
               ...locationColumns(input.location ?? null),
+              submittedOffline: offline !== null,
+              clockSkewSeconds: offline?.clockSkewSeconds ?? null,
+              deviceCreatedAt: input.deviceCreatedAt ? new Date(input.deviceCreatedAt) : null,
+              declaredAttachmentClientIds: input.attachmentClientIds,
             },
           }),
         );
@@ -212,6 +352,7 @@ export class WorkLogsService {
           verb: 'created',
           entityId: created.id,
           after: created,
+          ...(dropped.length > 0 ? { auditMetadata: { droppedReferences: dropped } } : {}),
         });
         return created;
       });
@@ -233,40 +374,70 @@ export class WorkLogsService {
   /**
    * Edits the content of a log: its author only, inside the organization's edit window and
    * while the log is not approved (`canEditWorkLog`).
+   *
+   * Check order (ADR-0008 section 2): visible (404), author (403), approved (409
+   * `already_reviewed`), edit window (403 `edit_window_closed`), archived (409
+   * `record_archived`), `expectedVersion` (409 `version_conflict`), `occurredAt` range when it
+   * changes (422), references and custom fields. An edit that changes nothing answers 200 with the
+   * log and records nothing, whatever `expectedVersion` says.
    */
   async update(id: string, input: UpdateWorkLog): Promise<WorkLog> {
     const context = await this.access.context();
     const { organizationId } = context;
     const now = this.clock.now();
-    assertNotInFuture(input.occurredAt, now);
     return this.prisma.$transaction(async (tx) => {
+      await lockRowForUpdate(tx, 'WorkLog', id);
       const row = await this.find(tx, context, id);
-      const editWindowHours = await loadWorkLogEditWindowHours(tx, organizationId);
-      enforce(canEditWorkLog(context, workLogFactsOf(row), now, editWindowHours), 'Work log', id);
+      const settings = await loadWorkLogSettings(tx, organizationId);
+      enforce(
+        canEditWorkLog(context, workLogFactsOf(row), now, settings.editWindowHours),
+        'Work log',
+        id,
+      );
       assertNotArchived(row);
-      await assertActiveReferences(tx, organizationId, this.references(context, input));
       // Changing the log type or the values re-validates the result against the current
-      // definition, which is also the version recorded on the log from then on.
-      const custom =
-        input.logTypeId !== undefined || input.customFields !== undefined
-          ? await this.resolveCustomFields(
-              tx,
-              organizationId,
-              input.logTypeId !== undefined ? input.logTypeId : row.logTypeId,
-              input.customFields ?? row.customFields,
-            )
-          : {};
+      // definition, which is also the version recorded on the log from then on. A failure is
+      // reported after the version and reference checks.
+      let custom: ResolvedCustomFields | undefined;
+      let customError: unknown = null;
+      if (input.logTypeId !== undefined || input.customFields !== undefined) {
+        try {
+          custom = await this.resolveCustomFields(
+            tx,
+            organizationId,
+            input.logTypeId !== undefined ? input.logTypeId : row.logTypeId,
+            input.customFields ?? row.customFields,
+          );
+        } catch (error) {
+          customError = error;
+        }
+      }
+      if (isWorkLogEditNoop(row, input, customError ? null : custom)) {
+        return toWorkLog(row);
+      }
+      assertExpectedVersion('Work log', id, row.version, input.expectedVersion);
+      if (
+        input.occurredAt !== undefined &&
+        new Date(input.occurredAt).getTime() !== row.occurredAt.getTime()
+      ) {
+        assertOccurredAtInRange(input.occurredAt, now, settings.offlineMaxBackdateDays);
+      }
+      await assertActiveReferences(tx, organizationId, this.references(context, input));
+      if (customError) {
+        throw customError;
+      }
       const workLog = toWorkLog(
         await tx.workLog.update({
           where: { id },
           data: {
+            version: NEXT_VERSION,
             occurredAt: input.occurredAt ? new Date(input.occurredAt) : undefined,
             taskId: input.taskId,
             siteId: input.siteId,
             teamId: input.teamId,
             logTypeId: input.logTypeId,
             text: input.text,
-            ...custom,
+            ...(custom ?? {}),
             ...(input.location !== undefined ? locationColumns(input.location) : {}),
           },
         }),
@@ -295,6 +466,11 @@ export class WorkLogsService {
    * Outbox payload of `work_log.status_changed`: `{ from, to, note, changedById, authorId,
    * reviewedById, workLog }` (`reviewedById` and `note` are null unless the new status is
    * approved or rejected).
+   *
+   * Check order (ADR-0008 section 2): visible (404), same status and note (no-op, 200),
+   * transition exists (409 `conflict`), author or reviewer rules (403; for the author 409
+   * `already_reviewed` and 403 `edit_window_closed`), archived (409 `record_archived`),
+   * `expectedVersion` (409 `version_conflict`).
    */
   async changeStatus(id: string, input: ChangeWorkLogStatus): Promise<WorkLog> {
     const context = await this.access.context();
@@ -302,6 +478,7 @@ export class WorkLogsService {
     const { status } = input;
     const now = this.clock.now();
     return this.prisma.$transaction(async (tx) => {
+      await lockRowForUpdate(tx, 'WorkLog', id);
       const row = await this.find(tx, context, id);
       const before = toWorkLog(row);
       const reviewed = status === 'approved' || status === 'rejected';
@@ -318,11 +495,13 @@ export class WorkLogsService {
         id,
       );
       assertNotArchived(row);
+      assertExpectedVersion('Work log', id, row.version, input.expectedVersion);
       const changedById = authorOf(context);
       const workLog = toWorkLog(
         await tx.workLog.update({
           where: { id },
           data: {
+            version: NEXT_VERSION,
             status,
             reviewedById: reviewed ? changedById : null,
             reviewedAt: reviewed ? now : null,
@@ -371,7 +550,10 @@ export class WorkLogsService {
         id,
       );
       const workLog = toWorkLog(
-        await tx.workLog.update({ where: { id }, data: { archivedAt: now } }),
+        await tx.workLog.update({
+          where: { id },
+          data: { archivedAt: now, version: NEXT_VERSION },
+        }),
       );
       await this.changes.record(tx, {
         organizationId,
@@ -404,6 +586,36 @@ export class WorkLogsService {
   }
 
   /**
+   * An offline create may name a log type archived since the worker chose it (ADR-0008): it
+   * must still exist in the organization (422 otherwise); its values are validated against its
+   * current definition.
+   */
+  private async assertLogTypeExists(
+    db: Db,
+    organizationId: string,
+    logTypeId: string | null,
+  ): Promise<void> {
+    if (!logTypeId) {
+      return;
+    }
+    const found = await db.logType.findFirst({
+      where: { id: logTypeId, organizationId },
+      select: { id: true },
+    });
+    if (!found) {
+      throw ApiException.unprocessable(
+        'The request refers to records that do not exist or are archived',
+        [
+          {
+            path: 'logTypeId',
+            message: `Log type ${logTypeId} does not exist in this organization`,
+          },
+        ],
+      );
+    }
+  }
+
+  /**
    * Validates custom field values against the log type's current definition and returns the
    * columns to store. Without a log type there is nothing to validate against, so the values
    * must be empty.
@@ -413,7 +625,7 @@ export class WorkLogsService {
     organizationId: string,
     logTypeId: string | null,
     values: unknown,
-  ): Promise<{ customFields: CustomFieldValues; logTypeVersion: number | null }> {
+  ): Promise<ResolvedCustomFields> {
     const logType = logTypeId
       ? await db.logType.findFirst({ where: { id: logTypeId, organizationId } })
       : null;

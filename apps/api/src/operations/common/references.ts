@@ -90,6 +90,26 @@ export async function assertActiveReferences(
   organizationId: string,
   references: Reference[],
 ): Promise<void> {
+  const details = await referenceProblems(db, organizationId, references);
+  if (details.length > 0) {
+    throw ApiException.unprocessable(
+      'The request refers to records that do not exist or are archived',
+      details,
+    );
+  }
+}
+
+/**
+ * The references of {@link assertActiveReferences} that fail its check (missing, of another
+ * organization, archived, or outside the caller's visibility), one detail each, without
+ * throwing. Used where an unusable reference is dropped instead of refused (a queued offline
+ * create, ADR-0008 section 3).
+ */
+export async function referenceProblems(
+  db: Db,
+  organizationId: string,
+  references: Reference[],
+): Promise<ApiErrorDetail[]> {
   const details: ApiErrorDetail[] = [];
 
   // One query per kind and visibility rule (a body rarely has more than one rule per kind).
@@ -121,12 +141,7 @@ export async function assertActiveReferences(
     }
   }
 
-  if (details.length > 0) {
-    throw ApiException.unprocessable(
-      'The request refers to records that do not exist or are archived',
-      details,
-    );
-  }
+  return details;
 }
 
 /**

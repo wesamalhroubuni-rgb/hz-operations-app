@@ -1,5 +1,5 @@
-import { pruneStaleQueue, uploadQueueKey } from '../data/uploadQueue';
-import { draftKey, isDraftStale } from './draftStore';
+import { uploadQueueKey } from '../offline/legacyUploads';
+import { draftKey, editDraftKey, isDraftStale } from './draftStore';
 import { createMemoryStore } from './keyValueStore';
 import type { LocalPhoto } from './localPhoto';
 import { LOCAL_DATA_MAX_AGE_MS, purgeStaleLocalData } from './retention';
@@ -39,22 +39,18 @@ function draft(savedAt: string, photos: LocalPhoto[] = []): string {
   });
 }
 
-function queued(id: string, queuedAt?: string) {
+function legacyQueued(id: string, queuedAt: string) {
   return {
     workLogId: 'log-1',
     photo: photo(id),
     checkpoint: { attachmentId: null, stored: false },
     failed: false,
     error: null,
-    ...(queuedAt === undefined ? {} : { queuedAt }),
+    queuedAt,
   };
 }
 
-describe('retention of local work data', () => {
-  it('keeps 14 days', () => {
-    expect(LOCAL_DATA_MAX_AGE_MS).toBe(14 * DAY);
-  });
-
+describe('retention of drafts', () => {
   it('isDraftStale: older than the limit or unreadable is stale, with its photos', () => {
     expect(isDraftStale(draft(ago(13)), NOW, LOCAL_DATA_MAX_AGE_MS)).toEqual({
       stale: false,
@@ -65,39 +61,14 @@ describe('retention of local work data', () => {
       photoUris: [photo('a').uri],
     });
     expect(isDraftStale('{not json', NOW, LOCAL_DATA_MAX_AGE_MS).stale).toBe(true);
-    expect(isDraftStale(null, NOW, LOCAL_DATA_MAX_AGE_MS).stale).toBe(false);
   });
 
-  it('pruneStaleQueue: drops old entries, keeps recent ones, stamps entries without a date', () => {
-    const raw = JSON.stringify([queued('old', ago(20)), queued('new', ago(1)), queued('legacy')]);
-    const pruned = pruneStaleQueue(raw, NOW, LOCAL_DATA_MAX_AGE_MS);
-    expect(pruned.changed).toBe(true);
-    expect(pruned.expiredUris).toEqual([photo('old').uri]);
-    expect(pruned.keptUris).toEqual([photo('new').uri, photo('legacy').uri]);
-    const kept = JSON.parse(pruned.value!) as { photo: LocalPhoto; queuedAt: string }[];
-    expect(kept.map((entry) => [entry.photo.localId, entry.queuedAt])).toEqual([
-      ['new', ago(1)],
-      ['legacy', NOW.toISOString()],
-    ]);
-    // Everything old: the key goes.
-    expect(
-      pruneStaleQueue(JSON.stringify([queued('old', ago(15))]), NOW, LOCAL_DATA_MAX_AGE_MS),
-    ).toMatchObject({ value: null, changed: true });
-    // Nothing to change.
-    expect(
-      pruneStaleQueue(JSON.stringify([queued('new', ago(1))]), NOW, LOCAL_DATA_MAX_AGE_MS).changed,
-    ).toBe(false);
-  });
-
-  it('purgeStaleLocalData: for every user of the phone, deletes stale drafts and queued photos and their files', async () => {
+  it('deletes stale new-log and edit drafts of every user, but never a queued upload (no age limit)', async () => {
     const store = createMemoryStore({
       [draftKey('user-a')]: draft(ago(30), [photo('draft-a')]),
       [draftKey('user-b')]: draft(ago(2), [photo('draft-b')]),
-      [uploadQueueKey('user-a')]: JSON.stringify([queued('q-old', ago(15))]),
-      [uploadQueueKey('user-b')]: JSON.stringify([
-        queued('q-b-old', ago(40)),
-        queued('q-b-new', ago(3)),
-      ]),
+      [editDraftKey('user-a', 'log-9')]: draft(ago(20), [photo('edit-a')]),
+      [uploadQueueKey('user-a')]: JSON.stringify([legacyQueued('q-old', ago(40))]),
       'ops.other.setting': 'kept',
     });
     const deleted: string[] = [];
@@ -108,27 +79,18 @@ describe('retention of local work data', () => {
         deleted.push(uri);
       },
     });
-
-    expect(result).toEqual({ drafts: 1, queuedPhotos: 2 });
-    const left = store.dump();
-    expect(Object.keys(left).sort()).toEqual(
-      [draftKey('user-b'), uploadQueueKey('user-b'), 'ops.other.setting'].sort(),
+    expect(result).toEqual({ drafts: 2 });
+    expect(Object.keys(store.dump()).sort()).toEqual(
+      [draftKey('user-b'), uploadQueueKey('user-a'), 'ops.other.setting'].sort(),
     );
-    expect(
-      (JSON.parse(left[uploadQueueKey('user-b')]!) as { photo: LocalPhoto }[]).map(
-        (entry) => entry.photo.localId,
-      ),
-    ).toEqual(['q-b-new']);
-    expect(deleted.sort()).toEqual(
-      [photo('draft-a').uri, photo('q-old').uri, photo('q-b-old').uri].sort(),
-    );
+    expect(deleted.sort()).toEqual([photo('draft-a').uri, photo('edit-a').uri].sort());
   });
 
-  it('never deletes a file a kept queued upload still needs, and survives a broken store', async () => {
+  it('never deletes a file a not-yet-migrated upload still needs, and survives a broken store', async () => {
     const shared = photo('shared');
     const store = createMemoryStore({
       [draftKey('user-a')]: draft(ago(30), [shared]),
-      [uploadQueueKey('user-a')]: JSON.stringify([{ ...queued('x', ago(1)), photo: shared }]),
+      [uploadQueueKey('user-a')]: JSON.stringify([{ ...legacyQueued('x', ago(1)), photo: shared }]),
     });
     const deleted: string[] = [];
     await purgeStaleLocalData({
@@ -148,6 +110,6 @@ describe('retention of local work data', () => {
     };
     await expect(
       purgeStaleLocalData({ store: broken, now: NOW, deleteLocalFile: async () => undefined }),
-    ).resolves.toEqual({ drafts: 0, queuedPhotos: 0 });
+    ).resolves.toEqual({ drafts: 0 });
   });
 });

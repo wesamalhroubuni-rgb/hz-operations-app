@@ -6,7 +6,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 //
 // Signed out (stack): Login -> Activate.
 // Signed in (stack):  Tabs [Home | Tasks | Logs | Notifications | Profile]
-//                     + TaskDetail, LogForm (new or edit), LogDetail, PhotoViewer above the tabs.
+//                     + TaskDetail, LogForm (new or edit), LogDetail, PhotoViewer, Sync above the tabs.
 
 export type SignedOutStackParamList = {
   Login: { passwordSet?: boolean } | undefined;
@@ -29,6 +29,8 @@ export type SignedInStackParamList = {
   LogForm: LogFormParams;
   LogDetail: { logId: string };
   PhotoViewer: { uri: string; title: string };
+  /** Phase 5: what is on this phone and not yet accepted by the server. */
+  Sync: undefined;
 };
 
 export type SignedOutScreenProps<Name extends keyof SignedOutStackParamList> =

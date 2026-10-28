@@ -3,6 +3,7 @@ import { AuthScreenLayout } from '../components/AuthScreenLayout';
 import { Button } from '../components/Button';
 import { PasswordField, TextField } from '../components/FormField';
 import { Message } from '../components/Message';
+import { SyncSignInNotice } from '../components/SyncNotices';
 import { useLoginForm } from '../hooks/useLoginForm';
 import { t } from '../i18n';
 import type { SignedOutScreenProps } from '../navigation/types';
@@ -26,6 +27,8 @@ export function LoginScreen({ route, navigation }: Readonly<SignedOutScreenProps
           ) : undefined}
         </Message>
       ) : null}
+
+      <SyncSignInNotice />
 
       {form.failure !== null ? <Message tone="error" text={form.failure} /> : null}
 

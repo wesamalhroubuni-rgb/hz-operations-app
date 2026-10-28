@@ -80,7 +80,8 @@ describe('changing a task status', () => {
       outcome: 'forbidden',
     });
     expect(canChangeTaskStatus(worker, task({ status: 'cancelled' }), 'todo')).toMatchObject({
-      outcome: 'forbidden',
+      outcome: 'conflict',
+      code: 'task_cancelled',
     });
   });
 

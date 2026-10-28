@@ -228,6 +228,8 @@ export const en = {
       occurredFuture: 'The time cannot be in the future.',
       occurredInvalid: 'Choose a valid time.',
       checkFields: 'Check the fields marked below.',
+      photoStorageFull:
+        'These photos do not fit in the space for photos waiting to be sent on this phone. Remove some, or sync first to free space. You can still save the log without photos.',
     },
     fieldErrors: {
       required: 'This field is required.',
@@ -271,6 +273,148 @@ export const en = {
       failed: 'Could not turn on push notifications. The list in the app works anyway.',
       pending: 'Setting up…',
       channelName: 'Notifications',
+    },
+  },
+
+  sync: {
+    title: 'Sync',
+    status: {
+      synced: 'All sent',
+      syncing: 'Sending…',
+      pending: { one: '{{count}} waiting', other: '{{count}} waiting' },
+      failed: { one: '{{count}} not accepted', other: '{{count}} not accepted' },
+      offline: 'Offline',
+      offlineWaiting: { one: 'Offline, {{count}} waiting', other: 'Offline, {{count}} waiting' },
+      needsSignIn: 'Sign in again',
+    },
+    indicatorLabel: 'Sync status: {{status}}. Opens the list of changes on this phone.',
+    lastRefreshed: 'Last refreshed {{time}}',
+    neverRefreshed: 'Not refreshed yet',
+    offlineBanner: 'You are offline. Keep working: your changes are sent when you have signal.',
+    offlineBannerRefreshed:
+      'You are offline. Showing data from {{time}}. Keep working: your changes are sent when you have signal.',
+    needsSignInBanner: {
+      one: 'Your session has ended. Sign in again to send the change waiting on this phone.',
+      other:
+        'Your session has ended. Sign in again to send the {{count}} changes waiting on this phone.',
+    },
+    needsSignInBannerEmpty: 'Your session has ended. Sign in again to refresh your data.',
+    signInAgain: 'Sign in again',
+    offlineStart:
+      'You opened the app without a connection to the server. Showing what is saved on this phone; your changes are sent when the connection is back.',
+    needsSignInLogin: {
+      one: '1 change waits on this phone for {{name}}. Sign in again as {{name}} to send it.',
+      other:
+        '{{count}} changes wait on this phone for {{name}}. Sign in again as {{name}} to send them.',
+    },
+    needsSignInLoginEmpty: 'The session of {{name}} has ended. Sign in again.',
+    notDownloaded:
+      'No data on this phone yet. Connect to the internet once to download your tasks and logs.',
+    droppedReferences: {
+      note: 'This log was received, but its link to {{fields}} was removed because you no longer have access to it.',
+      taskId: 'the task',
+      siteId: 'the site',
+      teamId: 'the team',
+      separator: ', ',
+    },
+    syncNow: 'Sync now',
+    syncing: 'Syncing…',
+    failedTitle: 'Not accepted',
+    failedIntro:
+      'The server did not accept these changes. They stay on this phone until you decide what to do.',
+    pendingTitle: 'Waiting to send',
+    empty: 'Everything on this phone has been sent.',
+    kinds: {
+      createWorkLog: 'New log',
+      updateWorkLog: 'Changes to a log',
+      changeWorkLogStatus: 'Log sent for review',
+      changeTaskStatus: 'Task status: {{status}}',
+      uploadAttachment: 'Photo',
+    },
+    savedAt: 'Made {{time}}',
+    attempts: { one: 'Tried {{count}} time', other: 'Tried {{count}} times' },
+    nextAttempt: 'Next try {{time}}',
+    states: {
+      pending: 'Waiting',
+      sending: 'Sending',
+      failed_retryable: 'Will try again',
+      failed_permanent: 'Not accepted',
+    },
+    actions: {
+      retry: 'Try again',
+      view: 'View',
+      hide: 'Hide',
+      copy: 'Copy',
+      resubmit: 'Send as a new log',
+      discard: 'Discard',
+    },
+    discardTitle: 'Discard this change?',
+    discardMessage: 'It is deleted from this phone and never sent. This cannot be undone.',
+    resubmitted: 'Saved as a new log. It is sent with the next sync.',
+    actionFailed: 'That did not work. Try again.',
+    logState: {
+      pending: 'Waiting to send',
+      synced: 'Sent',
+      failed: 'Not accepted',
+    },
+    logFailedNote: 'A change to this log was not accepted: {{reason}}',
+    openSync: 'See what is waiting',
+    photoStorage: {
+      warning:
+        'Photos waiting to be sent use {{used}} of the {{limit}} kept on this phone. Sync soon to free space.',
+      full: 'The space for photos waiting to be sent is full ({{limit}}). New photos cannot be added until some are sent. You can still save logs without photos.',
+      megabytes: '{{value}} MB',
+    },
+    signOut: {
+      title: 'Changes not sent yet',
+      message: {
+        one: '1 change on this phone has not been sent yet.',
+        other: '{{count}} changes on this phone have not been sent yet.',
+      },
+      syncFirst: 'Sync first',
+      keepForLater: 'Keep them and sign out',
+      keepForLaterHint:
+        'They stay on this phone for {{days}} days and are sent when you sign in again.',
+      discard: 'Discard and sign out',
+      discardConfirmTitle: 'Discard the changes?',
+      discardConfirmMessage:
+        'Changes that were not sent are deleted from this phone and never reach your supervisor. This cannot be undone.',
+      stillPending: {
+        one: '1 change could not be sent yet. Try again when you have signal, or choose another option.',
+        other:
+          '{{count}} changes could not be sent yet. Try again when you have signal, or choose another option.',
+      },
+    },
+    reasons: {
+      validation_failed: 'The server found a problem with what was entered.',
+      unauthenticated: 'Your session has ended. Sign in again to send it.',
+      forbidden: 'You are no longer allowed to make this change.',
+      not_found: 'This item no longer exists or is no longer visible to you.',
+      conflict: 'This conflicts with a change made elsewhere.',
+      unprocessable: 'The server could not accept this change.',
+      rate_limited: 'The server is busy. It is sent again automatically.',
+      service_unavailable: 'The server is not available right now. It is sent again automatically.',
+      internal_error: 'Something went wrong. It is tried again automatically.',
+      version_conflict:
+        'Someone else changed this meanwhile (for example your supervisor reviewed it). Their version is kept.',
+      edit_window_closed: 'The time to edit this log has passed.',
+      already_reviewed: 'This log was approved meanwhile, so it can no longer be changed.',
+      record_archived: 'This item was archived, so it can no longer be changed.',
+      task_not_assigned: 'You are not assigned to this task.',
+      task_cancelled: 'This task was cancelled by your supervisor.',
+      occurred_at_out_of_range:
+        'The time of this log is too far in the past, or in the future, to be accepted.',
+      attachment_not_declared: 'The time to add photos to this log has passed.',
+      idempotency_key_reused:
+        'The server already received a different change under the same reference. Discard this one and make the change again.',
+      request_in_progress:
+        'The server is still working on this. It is checked again automatically.',
+      network: 'No connection. It is sent when you have signal.',
+      timeout: 'The server took too long to answer. It is tried again automatically.',
+      invalid_response:
+        'The answer from the server could not be read. It is tried again automatically.',
+      photo_missing: 'The photo file is no longer on this phone, so it cannot be sent.',
+      taskNoLongerAssigned: 'This task is no longer assigned to you.',
     },
   },
 

@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
-import type {
-  Attachment,
-  AttachmentMimeType,
-  AttachmentUpload,
-  ListAttachmentsQuery,
-  Paginated,
-  StartAttachmentUpload,
+import {
+  DECLARED_ATTACHMENT_GRACE_DAYS,
+  type Attachment,
+  type AttachmentMimeType,
+  type AttachmentUpload,
+  type ListAttachmentsQuery,
+  type Paginated,
+  type StartAttachmentUpload,
+  type StartedAttachmentUpload,
 } from '@ops/shared';
 import type {
   Attachment as AttachmentRow,
@@ -40,13 +42,15 @@ import {
   attachmentVisibilityWhere,
   authorOf,
   canChangeAttachments,
+  canContinueAttachmentUpload,
+  canStartAttachmentUpload,
   enforce,
   MAX_ATTACHMENTS_PER_WORK_LOG,
   workLogVisibilityWhere,
   type AccessContext,
 } from '../access';
 import { ChangeRecorder } from '../common/change-recorder';
-import { activeUnless, iso, isoOrNull, type Db } from '../common/db';
+import { activeUnless, iso, isoOrNull, isUniqueViolation, type Db } from '../common/db';
 import { loadWorkLogEditWindowHours, workLogFactsOf } from '../work-logs/work-logs.service';
 
 const EXTENSIONS: Record<AttachmentMimeType, string> = {
@@ -112,6 +116,7 @@ export function toAttachment(row: AttachmentRow, urls: AttachmentUrls = NO_URLS)
     organizationId: row.organizationId,
     workLogId: row.workLogId,
     uploadedById: row.uploadedById,
+    clientId: row.clientId,
     fileName: row.fileName,
     mimeType: row.mimeType,
     sizeBytes: row.sizeBytes,
@@ -197,12 +202,28 @@ export class AttachmentsService {
   /**
    * Step 1: creates a pending attachment on a work log and returns where to PUT the bytes. The
    * uploader is the signed-in user; the storage key is chosen here.
+   *
+   * With a `clientId` (ADR-0008 section 5) the start is idempotent: the caller's own attachment
+   * with that clientId on this log is returned (`created: false`) with a fresh upload target
+   * while it is pending, or with `upload: null` once it is ready; a clientId used by somebody
+   * else or on another log is a 409. Who may start: `canStartAttachmentUpload` (the normal rule,
+   * or the author's declared photos within `DECLARED_ATTACHMENT_GRACE_DAYS`).
    */
-  async startUpload(workLogId: string, input: StartAttachmentUpload): Promise<AttachmentUpload> {
+  async startUpload(
+    workLogId: string,
+    input: StartAttachmentUpload,
+  ): Promise<{ result: StartedAttachmentUpload; created: boolean }> {
     const context = await this.access.context();
     await this.limit('start', context);
     const { organizationId } = context;
     const uploadedById = authorOf(context);
+    const clientId = input.clientId ?? null;
+    if (clientId) {
+      const repeated = await this.findOwnByClientId(context, workLogId, clientId);
+      if (repeated) {
+        return { result: await this.restart(context, repeated), created: false };
+      }
+    }
     const maxBytes = this.settings.uploadMaxBytes;
     if (input.sizeBytes > maxBytes) {
       throw ApiException.validation(
@@ -212,42 +233,120 @@ export class AttachmentsService {
     }
     // Nothing is created while the storage is down: the client gets 503 and retries.
     await this.storageCall(() => this.storage.assertAvailable());
-    const row = await this.prisma.$transaction(async (tx) => {
-      const workLog = await this.findWorkLog(tx, context, workLogId);
-      await this.assertMayChange(tx, context, workLog);
-      if (workLog.archivedAt) {
-        throw ApiException.conflict(`Work log ${workLogId} is archived and cannot be changed`);
-      }
-      // One upload start at a time per log, so the cap below cannot be overshot by a race.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`attachments:${workLogId}`}))`;
-      const active = await tx.attachment.count({ where: { workLogId, archivedAt: null } });
-      if (active >= MAX_ATTACHMENTS_PER_WORK_LOG) {
-        throw ApiException.conflict(
-          `A work log can hold at most ${MAX_ATTACHMENTS_PER_WORK_LOG} attachments`,
-        );
-      }
-      const created = await tx.attachment.create({
-        data: {
-          organizationId,
+    let row: AttachmentRow;
+    try {
+      row = await this.prisma.$transaction(async (tx) => {
+        const workLog = await this.findWorkLog(tx, context, workLogId);
+        const editWindowHours = await loadWorkLogEditWindowHours(tx, organizationId);
+        enforce(
+          canStartAttachmentUpload(
+            context,
+            {
+              ...workLogFactsOf(workLog),
+              declaredAttachmentClientIds: workLog.declaredAttachmentClientIds,
+            },
+            clientId,
+            this.clock.now(),
+            editWindowHours,
+            DECLARED_ATTACHMENT_GRACE_DAYS,
+          ),
+          'Work log',
           workLogId,
-          uploadedById,
-          fileName: input.fileName,
-          mimeType: input.mimeType,
-          sizeBytes: input.sizeBytes,
-          storageKey: attachmentStorageKey(organizationId, workLogId, input.mimeType),
-          status: 'pending',
-        },
+        );
+        if (workLog.archivedAt) {
+          throw ApiException.of(
+            'record_archived',
+            `Work log ${workLogId} is archived and cannot be changed`,
+          );
+        }
+        // One upload start at a time per log, so the cap below cannot be overshot by a race.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`attachments:${workLogId}`}))`;
+        const active = await tx.attachment.count({ where: { workLogId, archivedAt: null } });
+        if (active >= MAX_ATTACHMENTS_PER_WORK_LOG) {
+          throw ApiException.conflict(
+            `A work log can hold at most ${MAX_ATTACHMENTS_PER_WORK_LOG} attachments`,
+          );
+        }
+        const created = await tx.attachment.create({
+          data: {
+            organizationId,
+            workLogId,
+            uploadedById,
+            clientId,
+            fileName: input.fileName,
+            mimeType: input.mimeType,
+            sizeBytes: input.sizeBytes,
+            storageKey: attachmentStorageKey(organizationId, workLogId, input.mimeType),
+            status: 'pending',
+          },
+        });
+        await this.changes.record(tx, {
+          organizationId,
+          entityType: 'attachment',
+          verb: 'upload_started',
+          entityId: created.id,
+          after: recordOf(created),
+        });
+        return created;
       });
-      await this.changes.record(tx, {
-        organizationId,
-        entityType: 'attachment',
-        verb: 'upload_started',
-        entityId: created.id,
-        after: recordOf(created),
-      });
-      return created;
+    } catch (error) {
+      // The same start sent twice at once: the other one won the unique (organizationId,
+      // clientId) index. Answer as for a repeat.
+      if (clientId && isUniqueViolation(error)) {
+        const winner = await this.findOwnByClientId(context, workLogId, clientId);
+        if (winner) {
+          return { result: await this.restart(context, winner), created: false };
+        }
+      }
+      throw error;
+    }
+    return {
+      result: { attachment: toAttachment(row), upload: wire(await this.uploadTarget(row)) },
+      created: true,
+    };
+  }
+
+  /**
+   * The caller's attachment started with this clientId on this work log, or null when the
+   * clientId is unused. Somebody else's clientId, or the caller's on another log, is a 409; an
+   * attachment whose log the caller can no longer see is a 404 (the log's).
+   */
+  private async findOwnByClientId(
+    context: AccessContext,
+    workLogId: string,
+    clientId: string,
+  ): Promise<{ attachment: AttachmentRow; workLog: WorkLogRow } | null> {
+    const row = await this.prisma.attachment.findUnique({
+      where: { organizationId_clientId: { organizationId: context.organizationId, clientId } },
     });
-    return { attachment: toAttachment(row), upload: wire(await this.uploadTarget(row)) };
+    if (!row) {
+      return null;
+    }
+    if (row.uploadedById !== context.userId || row.workLogId !== workLogId) {
+      throw ApiException.conflict('This clientId has already been used', [
+        { path: 'clientId', message: 'is already in use' },
+      ]);
+    }
+    const workLog = await this.findWorkLog(this.prisma, context, workLogId);
+    return { attachment: row, workLog };
+  }
+
+  /** The answer to a repeated start: the attachment, with a fresh target while pending. */
+  private async restart(
+    context: AccessContext,
+    found: { attachment: AttachmentRow; workLog: WorkLogRow },
+  ): Promise<StartedAttachmentUpload> {
+    const { attachment, workLog } = found;
+    if (attachment.status === 'ready' && attachment.archivedAt === null) {
+      return { attachment: await this.present(attachment), upload: null };
+    }
+    assertWritable(attachment, workLog);
+    await this.assertMayContinue(this.prisma, context, workLog, attachment);
+    await this.storageCall(() => this.storage.assertAvailable());
+    return {
+      attachment: toAttachment(attachment),
+      upload: wire(await this.uploadTarget(attachment)),
+    };
   }
 
   /** A fresh upload target for a pending attachment (the earlier one expired or failed). */
@@ -255,7 +354,7 @@ export class AttachmentsService {
     const context = await this.access.context();
     await this.limit('renew', context);
     const { attachment, workLog } = await this.find(this.prisma, context, id);
-    await this.assertMayChange(this.prisma, context, workLog);
+    await this.assertMayContinue(this.prisma, context, workLog, attachment);
     assertWritable(attachment, workLog);
     if (attachment.status !== 'pending') {
       throw ApiException.conflict(`Attachment ${id} has already been uploaded`);
@@ -290,7 +389,7 @@ export class AttachmentsService {
     if (attachment.status === 'ready') {
       return this.present(attachment);
     }
-    await this.assertMayChange(this.prisma, context, workLog);
+    await this.assertMayContinue(this.prisma, context, workLog, attachment);
     assertWritable(attachment, workLog);
 
     const key = attachment.storageKey;
@@ -350,7 +449,10 @@ export class AttachmentsService {
         const current = await tx.attachment.findUniqueOrThrow({ where: { id } });
         if (count === 0) {
           if (current.status !== 'ready') {
-            throw ApiException.conflict(`Attachment ${id} is archived and cannot be changed`);
+            throw ApiException.of(
+              'record_archived',
+              `Attachment ${id} is archived and cannot be changed`,
+            );
           }
           return current;
         }
@@ -522,6 +624,31 @@ export class AttachmentsService {
     );
   }
 
+  /**
+   * 403 unless the caller may renew or complete this pending upload: the normal rule, or the
+   * person who started it within `DECLARED_ATTACHMENT_GRACE_DAYS` of its start (ADR-0008).
+   */
+  private async assertMayContinue(
+    db: Db,
+    context: AccessContext,
+    workLog: WorkLogRow,
+    attachment: AttachmentRow,
+  ): Promise<void> {
+    const editWindowHours = await loadWorkLogEditWindowHours(db, context.organizationId);
+    enforce(
+      canContinueAttachmentUpload(
+        context,
+        workLogFactsOf(workLog),
+        attachment,
+        this.clock.now(),
+        editWindowHours,
+        DECLARED_ATTACHMENT_GRACE_DAYS,
+      ),
+      'Work log',
+      workLog.id,
+    );
+  }
+
   /** The attachment and its work log, if the caller may see it; 404 otherwise. */
   private async find(
     db: Db,
@@ -563,13 +690,19 @@ export class AttachmentsService {
   }
 }
 
-/** 409 for an upload step on an archived attachment or on an archived work log. */
+/** 409 `record_archived` for an upload step on an archived attachment or work log. */
 function assertWritable(attachment: AttachmentRow, workLog: WorkLogRow): void {
   if (attachment.archivedAt) {
-    throw ApiException.conflict(`Attachment ${attachment.id} is archived and cannot be changed`);
+    throw ApiException.of(
+      'record_archived',
+      `Attachment ${attachment.id} is archived and cannot be changed`,
+    );
   }
   if (workLog.archivedAt) {
-    throw ApiException.conflict(`Work log ${workLog.id} is archived and cannot be changed`);
+    throw ApiException.of(
+      'record_archived',
+      `Work log ${workLog.id} is archived and cannot be changed`,
+    );
   }
 }
 

@@ -2,7 +2,10 @@
 
 - **Status**: Accepted; amended in part by [ADR-0006](0006-file-storage-and-upload-flow.md)
   (2026-10-17: a `pending` attachment is visible only to its uploader; the API generates
-  attachment storage keys, which resolves F5 below)
+  attachment storage keys, which resolves F5 below) and by
+  [ADR-0008](0008-offline-storage-sync-and-conflicts.md) (2026-10-27: typed refusal codes such as
+  409 `already_reviewed` and 409 `task_cancelled` where this ADR answered a generic 403 or 409; the
+  404-versus-403 rule is kept)
 - **Date**: 2026-10-14
 - **Phase**: 3 (Authentication & permissions)
 - **Amends**: [ADR-0002](0002-flexible-organization-and-scope-model.md) in part (manager and

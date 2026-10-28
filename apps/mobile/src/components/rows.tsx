@@ -11,11 +11,13 @@ import { I18nManager, StyleSheet, View } from 'react-native';
 
 import { formatDateTime, t } from '../i18n';
 import { parseIso } from '../logic/dates';
+import type { LogSyncState } from '../logic/sync';
 import { dueState } from '../logic/tasks';
 import { AppText } from './AppText';
 import { Badge, type Tone } from './Badge';
 import { Card } from './Card';
 import { iconSize } from './sizes';
+import { SyncStateBadge } from './SyncStateBadge';
 
 export const TASK_STATUS_TONES: Record<TaskStatus, Tone> = {
   todo: 'neutral',
@@ -95,11 +97,14 @@ export function LogRow({
   log,
   typeName,
   pendingPhotos = 0,
+  syncState = 'synced',
   onPress,
 }: Readonly<{
   log: WorkLog;
   typeName: string | null;
   pendingPhotos?: number;
+  /** Phase 5: whether the log's changes are still on the phone (shown when not sent). */
+  syncState?: LogSyncState;
   onPress: () => void;
 }>) {
   const occurred = parseIso(log.occurredAt);
@@ -107,7 +112,17 @@ export function LogRow({
   const status = t(`logs.status.${log.status}`);
   const when = occurred ? formatDateTime(occurred) : '';
   return (
-    <Card onPress={onPress} accessibilityLabel={[title, when, status].join(', ')}>
+    <Card
+      onPress={onPress}
+      accessibilityLabel={[
+        title,
+        when,
+        status,
+        syncState === 'synced' ? null : t(`sync.logState.${syncState}`),
+      ]
+        .filter(Boolean)
+        .join(', ')}
+    >
       <View style={styles.top}>
         <AppText variant="bodyStrong" style={styles.title} numberOfLines={1}>
           {title}
@@ -127,6 +142,7 @@ export function LogRow({
       ) : null}
       <View style={styles.badges}>
         <Badge label={status} tone={LOG_STATUS_TONES[log.status]} />
+        <SyncStateBadge state={syncState} hideSynced />
         {pendingPhotos > 0 ? <Badge label={t('logs.uploads.title')} tone="warning" /> : null}
       </View>
     </Card>

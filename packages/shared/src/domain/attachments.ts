@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ApiResult, ApiTransport } from '../api-client/client.js';
+import type { ApiCallOptions, ApiResult, ApiTransport } from '../api-client/client.js';
 import {
   paginatedSchema,
   paginationQuerySchema,
@@ -34,6 +34,8 @@ export const attachmentSchema = z.object({
   organizationId: idSchema,
   workLogId: idSchema,
   uploadedById: idSchema,
+  /** The device-generated id the upload was started with, or null (ADR-0008). */
+  clientId: idSchema.nullable(),
   fileName: z.string(),
   mimeType: z.string(),
   sizeBytes: z.number().int(),
@@ -52,8 +54,16 @@ export type Attachment = z.infer<typeof attachmentSchema>;
 /**
  * Starts an upload. The API creates a `pending` attachment, chooses the storage key, and answers
  * with a short-lived URL the client PUTs the bytes to; then the client calls `complete`.
+ *
+ * `clientId` (ADR-0008) is generated on the device, one per photo, and makes the start
+ * idempotent: starting again with the caller's own clientId on the same log returns the
+ * existing attachment (200) with a fresh URL while it is pending, or with `upload: null` once it
+ * is ready. A clientId used by somebody else, or on another log, is a 409 `conflict`. Only a
+ * clientId declared in the log's create request (`declaredAttachmentClientIds`) lets the author
+ * upload after the edit window (for `DECLARED_ATTACHMENT_GRACE_DAYS`).
  */
 export const startAttachmentUploadSchema = z.strictObject({
+  clientId: idSchema.optional(),
   fileName: z.string().trim().min(1).max(255),
   mimeType: attachmentMimeTypeSchema,
   sizeBytes: z.number().int().min(1).max(MAX_ATTACHMENT_SIZE_BYTES),
@@ -74,6 +84,16 @@ export const attachmentUploadSchema = z.object({
   upload: uploadTargetSchema,
 });
 export type AttachmentUpload = z.infer<typeof attachmentUploadSchema>;
+
+/**
+ * Answer of `startUpload`: as {@link attachmentUploadSchema}, except that `upload` is null when a
+ * repeated start (same `clientId`) finds the attachment already `ready`: nothing is left to send.
+ */
+export const startedAttachmentUploadSchema = z.object({
+  attachment: attachmentSchema,
+  upload: uploadTargetSchema.nullable(),
+});
+export type StartedAttachmentUpload = z.infer<typeof startedAttachmentUploadSchema>;
 
 export const ATTACHMENT_SORT_FIELDS = ['createdAt', 'fileName', 'sizeBytes'] as const;
 
@@ -97,31 +117,38 @@ export function attachmentsEndpoints(transport: ApiTransport) {
         schema: attachmentListSchema,
       });
     },
-    /** Step 1: creates the pending attachment and returns where to PUT the bytes. */
+    /**
+     * Step 1: creates the pending attachment and returns where to PUT the bytes (201), or the
+     * existing one for a repeated `clientId` (200; `upload` null when it is already ready).
+     */
     startUpload(
       workLogId: string,
       body: StartAttachmentUpload,
-    ): Promise<ApiResult<AttachmentUpload>> {
+      options: ApiCallOptions = {},
+    ): Promise<ApiResult<StartedAttachmentUpload>> {
       return transport.request({
         method: 'POST',
         path: `/work-logs/${workLogId}/attachments`,
         body,
-        schema: attachmentUploadSchema,
+        headers: options.headers,
+        schema: startedAttachmentUploadSchema,
       });
     },
     /** Step 2 (after the PUT): the API verifies the stored file and marks it ready. */
-    complete(id: string): Promise<ApiResult<Attachment>> {
+    complete(id: string, options: ApiCallOptions = {}): Promise<ApiResult<Attachment>> {
       return transport.request({
         method: 'POST',
         path: `/attachments/${id}/complete`,
+        headers: options.headers,
         schema: attachmentSchema,
       });
     },
     /** A fresh upload URL for a pending attachment whose earlier URL expired or failed. */
-    renewUpload(id: string): Promise<ApiResult<AttachmentUpload>> {
+    renewUpload(id: string, options: ApiCallOptions = {}): Promise<ApiResult<AttachmentUpload>> {
       return transport.request({
         method: 'POST',
         path: `/attachments/${id}/upload-url`,
+        headers: options.headers,
         schema: attachmentUploadSchema,
       });
     },

@@ -5,13 +5,17 @@ import { AppText } from '../components/AppText';
 import { Button } from '../components/Button';
 import { LogRow, TaskRow } from '../components/rows';
 import { ScreenContainer } from '../components/ScreenContainer';
-import { EmptyState, ErrorState, LoadingState } from '../components/StateViews';
+import { EmptyState, LoadingState } from '../components/StateViews';
+import { SyncReadErrorState } from '../components/SyncNotices';
+import { SyncBanner } from '../components/SyncBanner';
+import { useSync } from '../components/SyncProvider';
 import { useData } from '../data/DataProvider';
-import { useMyLogs, useMyTasks } from '../data/queries';
+import { readErrorKind, useMyLogs, useMyTasks } from '../data/queries';
 import { useLookups } from '../hooks/useLookups';
 import { useNow } from '../hooks/useNow';
 import { usePendingPhotoCounts } from '../hooks/useUploads';
 import { t } from '../i18n';
+import { logSyncState } from '../logic/sync';
 import { tasksForToday } from '../logic/tasks';
 import type { TabScreenProps } from '../navigation/types';
 
@@ -28,6 +32,7 @@ export function HomeScreen({ navigation }: Readonly<TabScreenProps<'Home'>>) {
   const logs = useMyLogs();
   const lookups = useLookups();
   const pendingPhotos = usePendingPhotoCounts();
+  const { logStates } = useSync();
 
   const today = tasksForToday(tasks.data ?? [], now);
   const recent = logs.data?.pages[0]?.items.slice(0, RECENT_LOGS) ?? [];
@@ -50,6 +55,7 @@ export function HomeScreen({ navigation }: Readonly<TabScreenProps<'Home'>>) {
         />
       }
     >
+      <SyncBanner />
       <AppText variant="title">{t('home.greeting', { name: user.displayName })}</AppText>
 
       <View style={styles.section}>
@@ -57,7 +63,10 @@ export function HomeScreen({ navigation }: Readonly<TabScreenProps<'Home'>>) {
         {tasks.isPending ? (
           <LoadingState />
         ) : tasks.isError ? (
-          <ErrorState onRetry={() => void tasks.refetch()} />
+          <SyncReadErrorState
+            kind={readErrorKind(tasks.error)}
+            onRetry={() => void tasks.refetch()}
+          />
         ) : today.length === 0 ? (
           <EmptyState icon="checkmark-done-outline" message={t('home.nothingToday')} />
         ) : (
@@ -82,7 +91,10 @@ export function HomeScreen({ navigation }: Readonly<TabScreenProps<'Home'>>) {
         {logs.isPending ? (
           <LoadingState />
         ) : logs.isError ? (
-          <ErrorState onRetry={() => void logs.refetch()} />
+          <SyncReadErrorState
+            kind={readErrorKind(logs.error)}
+            onRetry={() => void logs.refetch()}
+          />
         ) : recent.length === 0 ? (
           <EmptyState icon="create-outline" message={t('home.noLogs')} />
         ) : (
@@ -92,6 +104,7 @@ export function HomeScreen({ navigation }: Readonly<TabScreenProps<'Home'>>) {
               log={log}
               typeName={lookups.logTypeName(log.logTypeId)}
               pendingPhotos={pendingPhotos.get(log.id) ?? 0}
+              syncState={logSyncState(logStates, log.clientId)}
               onPress={() => navigation.navigate('LogDetail', { logId: log.id })}
             />
           ))

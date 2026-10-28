@@ -9,12 +9,13 @@ approve.
 technical name "Operations". The name shown in the apps comes from configuration, so the same code
 can be deployed for another client.
 
-**Status (2026-10-17)**: Phase 4, the mobile worker app, code complete and waiting for the first
-test on a real phone. Workers sign in on the phone, see and update their tasks, and create work
-logs with text, photos, location, and custom fields; they get in-app (and, in a development build,
-push) notifications when a task is assigned or a log is approved or rejected. Photos are stored in
-S3-compatible storage (MinIO in development). The web app still has only sign-in and a placeholder
-home page. See [ROADMAP.md](ROADMAP.md).
+**Status (2026-10-27)**: Phase 5, offline mode and sync, code complete and tested; it has not run
+on a phone or in the emulator yet. Workers sign in on the phone, see and update their tasks, and
+create work logs with text, photos, location, and custom fields, with or without a connection:
+everything is kept on the phone and sent when the connection returns. They get in-app (and, in a
+development build, push) notifications when a task is assigned or a log is approved or rejected.
+Photos are stored in S3-compatible storage (MinIO in development). The web app still has only
+sign-in and a placeholder home page. See [ROADMAP.md](ROADMAP.md).
 
 This guide is for a developer on Windows 11 using PowerShell.
 
@@ -41,13 +42,14 @@ More documentation:
 
 ## 1. Prerequisites
 
-| Tool           | Version                    | Used for                        |
-| -------------- | -------------------------- | ------------------------------- |
-| Node.js        | 24 LTS                     | Everything                      |
-| pnpm           | 12 (the repo pins 12.11.2) | Installing and running packages |
-| Git            | Any recent version         | Source control                  |
-| Docker Desktop | With the WSL 2 backend     | Running PostgreSQL and MinIO    |
-| Expo Go        | Latest, on your phone      | Running the mobile app          |
+| Tool           | Version                    | Used for                         |
+| -------------- | -------------------------- | -------------------------------- |
+| Node.js        | 24 LTS                     | Everything                       |
+| pnpm           | 12 (the repo pins 12.11.2) | Installing and running packages  |
+| Git            | Any recent version         | Source control                   |
+| Docker Desktop | With the WSL 2 backend     | Running PostgreSQL and MinIO     |
+| Expo Go        | Latest, on your phone      | Running the mobile app           |
+| Android Studio | Optional                   | The Android emulator (section 6) |
 
 ### Install the tools
 
@@ -126,6 +128,21 @@ pnpm lint
 pnpm typecheck
 pnpm test
 ```
+
+### Updating an existing checkout to Phase 5
+
+Phase 5 added offline mode: no new variables in `.env`.
+
+1. Run `pnpm install` (new mobile packages: `expo-sqlite`, `expo-background-task`,
+   `expo-task-manager`, `@react-native-community/netinfo`).
+2. Run `pnpm db:migrate` (migration `20261027090000_phase5_offline_sync`: row versions, offline
+   facts on work logs, attachment client ids, audit metadata, the idempotency table).
+3. Restart `pnpm dev`, and start Expo once with `--clear`.
+
+If `pnpm db:migrate` reports a migration that exists in the database but not in the repository
+(`20261018090000_phase5_offline_sync`, from Phase 5 work that was lost before it was pushed), run
+`pnpm db:reset` once. It deletes all data in the development database and seeds again; an AI agent
+cannot run it for you.
 
 ### Updating an existing checkout to Phase 4
 
@@ -349,7 +366,8 @@ The owner confirmed sign-in for `aylin`, `selin`, and `deniz` on 2026-10-17. Not
 
 ## 5. Test on my phone
 
-**Not yet done on a real phone** (as of 2026-10-17). Everything below is what it needs.
+**Not yet done on a real phone** (as of 2026-10-27). Everything below is what it needs. Without a
+phone that can reach this PC, use the Android emulator instead (section 6).
 
 A phone cannot reach `localhost` on your PC. It needs the PC's address for three things: the API
 (port 3001), the Expo dev server (port 8081), and MinIO (port 9000), because photos are uploaded
@@ -431,7 +449,9 @@ The campus Wi-Fi blocks phone-to-PC traffic, so connect the PC to the phone's ho
 5. Approve or reject it as `selin` in Swagger on the PC (section 4, "Approve or reject a work
    log"). Within a few seconds `deniz` sees it in the Alerts tab (pull to refresh, or wait up to a
    minute), and in a development build gets a push.
-6. Profile: "Sign out".
+6. Offline: turn on airplane mode and repeat steps 2 to 4, then follow section 6 from step 4 of
+   "The offline test".
+7. Profile: "Sign out".
 
 ### Switch everything back afterwards
 
@@ -504,7 +524,84 @@ push also works in Expo Go once `EXPO_PUBLIC_EAS_PROJECT_ID` is set.
 If you change an `EXPO_PUBLIC_*` value, stop the mobile dev server and start it again with
 `--clear`. The values are built into the app bundle.
 
-## 6. Root scripts
+## 6. Test offline mode in the Android emulator
+
+The emulator runs on this PC, so it needs no phone, no hotspot, and no firewall rule. The virtual
+device `hz_pixel` (Android 35, Google APIs, x86_64) already exists on this PC, under
+`%LOCALAPPDATA%\Android\Sdk`. **Not done yet** (as of 2026-10-27).
+
+`adb reverse` makes `localhost` inside the emulator point at this PC for the API (3001), Metro
+(8081), and MinIO (9000), so `.env` stays unchanged: `API_HOST=127.0.0.1`,
+`EXPO_PUBLIC_API_URL=http://localhost:3001`, `STORAGE_PUBLIC_ENDPOINT=http://localhost:9000`.
+(On this PC `.env` uses `POSTGRES_PORT=5433` and port 5433 in both database URLs, because port 5432
+belongs to another project's PostgreSQL; the emulator does not care.)
+
+### Start it
+
+Each block in its own PowerShell terminal, from the repository root.
+
+1. Database, storage, and the API:
+
+   ```powershell
+   pnpm db:up
+   pnpm --filter @ops/api dev
+   ```
+
+   (`pnpm dev` also works, but run Expo in its own terminal as below to get its keyboard
+   shortcuts.)
+
+2. The emulator; wait until the Android home screen shows:
+
+   ```powershell
+   & "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe" -avd hz_pixel
+   ```
+
+3. The port forwarding (again after every emulator start):
+
+   ```powershell
+   $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+   & $adb reverse tcp:3001 tcp:3001
+   & $adb reverse tcp:8081 tcp:8081
+   & $adb reverse tcp:9000 tcp:9000
+   ```
+
+4. Expo, then press `a` to open the app in Expo Go on the emulator (Expo installs Expo Go the
+   first time):
+
+   ```powershell
+   $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+   pnpm --filter @ops/mobile dev
+   ```
+
+### The offline test
+
+1. Sign in as `deniz` (worker; password `DEV_PASSWORDS.worker` in
+   `apps/api/src/operations/seed/demo-seed.ts`) while online. The first sign-in fills the phone's
+   cache. The sync indicator in the header shows "synced".
+2. Go offline: swipe down from the top of the emulator screen twice and turn on **Airplane mode**.
+   The indicator shows offline. `adb reverse` runs over the emulator's debug link, not its network,
+   so the app may still reach `localhost`; to be certain nothing reaches the server, also stop the
+   API (`Ctrl+C`) while offline.
+3. Create two logs with a photo each (site **North Depot**, so `selin` can see them) and change
+   the status of a task. Each shows at once with "Waiting to send"; the indicator counts them.
+4. Close the app completely (recent apps, swipe it away) and open it again from Expo Go: you are
+   still signed in and the changes are still waiting.
+5. Start the API again if you stopped it, turn Airplane mode off, and watch the indicator go back
+   to "synced" (or tap it and press "Sync now"). If requests keep failing, run the three
+   `adb reverse` commands again.
+6. Check as `selin` in Swagger (section 4): both logs, their photos, and the task status arrived
+   exactly once.
+
+A conflict: as `deniz`, go offline and edit one of those logs. Meanwhile approve it as `selin` in
+Swagger (section 4, "Approve or reject a work log"). Go back online: the edit is not accepted, the
+Sync screen (tap the indicator) says "This log was approved meanwhile, so it can no longer be
+changed", keeps `deniz`'s version, and offers "Send as a new log", "Copy", and "Discard". The log
+itself shows the approved server version.
+
+Background sync and push do not run in Expo Go; they need the development build (section 5),
+served with `pnpm --filter @ops/mobile dev:client`. Foreground sync never depends on them.
+
+## 7. Root scripts
 
 | Command                 | What it does                                                                           |
 | ----------------------- | -------------------------------------------------------------------------------------- |
@@ -513,7 +610,7 @@ If you change an `EXPO_PUBLIC_*` value, stop the mobile dev server and start it 
 | `pnpm lint`             | Runs ESLint in every package                                                           |
 | `pnpm typecheck`        | Runs the TypeScript compiler in every package without emitting files                   |
 | `pnpm test`             | Runs every unit test suite                                                             |
-| `pnpm test:integration` | Runs the API integration tests against the test database (section 7)                   |
+| `pnpm test:integration` | Runs the API integration tests against the test database (section 8)                   |
 | `pnpm format`           | Formats the whole repository with Prettier                                             |
 | `pnpm format:check`     | Checks formatting without changing files                                               |
 | `pnpm db:up`            | Starts PostgreSQL and MinIO in Docker and waits until both are healthy                 |
@@ -537,7 +634,7 @@ More database commands for the API:
 To run a script in one package only, add `--filter`, for example `pnpm --filter @ops/web test`.
 The mobile app has `dev` (Expo Go), `dev:client` (the development build), `android`, and `ios`.
 
-## 7. Tests
+## 8. Tests
 
 ### Unit tests
 
@@ -576,7 +673,7 @@ real sign-ins and sessions. They take about 3 minutes and are not part of `pnpm 
 - Test files are `apps/api/test/*.int-spec.ts`. `permissions-matrix.int-spec.ts` checks every cell
   of the permissions matrix.
 
-## 8. Configuration
+## 9. Configuration
 
 All configuration is in the root `.env`. [.env.example](.env.example) lists every variable with a
 comment.
@@ -628,46 +725,50 @@ secrets from `.env.example` (auth and storage), a non-https `WEB_APP_URL` or
 The passwords and the secret in `.env.example` are for local development only. Never commit `.env`
 or real secrets.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
-| Problem                                                                                  | What to do                                                                                                                                                                                                                                                                         |
-| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `node`, `pnpm`, or `git` is not recognised                                               | Close the terminal and open a new one. If it still fails, reinstall the tool.                                                                                                                                                                                                      |
-| `pnpm db:up` fails with a Docker connection error                                        | Start Docker Desktop and wait for the engine. If Docker was just installed, restart the computer first.                                                                                                                                                                            |
-| Docker Desktop stopped by itself, and the database is suddenly "down"                    | This happened once on 2026-10-13; the cause is unknown. Run `docker desktop restart`, wait for the engine, then `pnpm db:up`. The data is kept.                                                                                                                                    |
-| `pnpm db:up` says a variable must be set                                                 | `.env` is missing or incomplete. Run `copy .env.example .env`.                                                                                                                                                                                                                     |
-| `pnpm db:up` fails because port 5432 is in use                                           | Another PostgreSQL is running. Stop it, or change `POSTGRES_PORT` and the port inside `DATABASE_URL` and `DATABASE_URL_TEST`.                                                                                                                                                      |
-| The API exits with "Invalid environment configuration"                                   | The message names each variable that is missing or wrong (for example the `STORAGE_*` variables after updating to Phase 4). Fix them in `.env`; `.env.example` has every key.                                                                                                      |
-| `pnpm --filter @ops/api start` exits, naming `AUTH_ACCESS_TOKEN_SECRET` or `WEB_APP_URL` | Intended. `start` runs in production mode, which refuses the development placeholder secret and a non-https web address. Use `pnpm dev` for development.                                                                                                                           |
-| Signing in on the web says "Something went wrong" and the API answered 403               | The page's origin is not in `CORS_ORIGINS`. Add the exact address you opened the dashboard from (for example `http://localhost:3000`), then restart `pnpm dev`.                                                                                                                    |
-| Sign-in fails for every seeded user with the right password                              | The development database was seeded before Phase 3 (no usernames, no passwords). Run `pnpm db:reset` once. Check also that `NEXT_PUBLIC_ORGANIZATION_SLUG` is `hz-demo`, and that the account is not locked.                                                                       |
-| Sign-in answers 429 "Too many attempts"                                                  | A rate limit was hit (for example 10 attempts per identifier in 5 minutes). Wait the number of seconds in the `Retry-After` header. Restarting the API also clears the limits (they are kept in memory).                                                                           |
-| The right password is refused after several wrong ones                                   | The account is locked for 15 minutes after 5 failed sign-ins. The answer is the same as for a wrong password on purpose. Wait, or have an admin issue a password reset (`POST /users/:id/password-reset`).                                                                         |
-| Every API call answers 401 "Sign in to continue"                                         | Sign in first. The access token lasts 15 minutes; renew it with `POST /auth/refresh`. A session also ends when the user signs out everywhere, sets a new password, is archived, or loses a membership.                                                                             |
-| A call from PowerShell or Swagger answers 403 "refused as a cross-site request"          | You sent the session cookies without a valid `Origin` and `x-csrf-token`. From scripts, sign in with `"client": "mobile"` and use the bearer token instead.                                                                                                                        |
-| A route answers 403 "Your role does not allow this"                                      | The signed-in user's role may not use that route at all (see the matrix in ARCHITECTURE.md). A user with no active membership gets this on every route except `/auth/*` and `/scope/me`.                                                                                           |
-| A record you know exists answers 404                                                     | It is outside your scope. The API answers exactly as if it did not exist.                                                                                                                                                                                                          |
-| The activation code is refused (422)                                                     | It was mistyped, already used, replaced by a newer code, or expired (activation 72 hours, reset 60 minutes). Ask an admin for a new one.                                                                                                                                           |
-| <http://localhost:3001/docs> returns 404                                                 | The docs are served only in development mode. Start the API with `pnpm dev`, and restart it if it was started before `.env` changed.                                                                                                                                               |
-| `/health` returns 503 with `"database":"down"`                                           | PostgreSQL is not running or `DATABASE_URL` does not match the `POSTGRES_*` values. Run `pnpm db:up`.                                                                                                                                                                              |
-| The API returns 500 and the log says a table does not exist                              | The migrations are not applied. Run `pnpm db:migrate`.                                                                                                                                                                                                                             |
-| The web card shows "API unreachable"                                                     | Start the API; the card retries by itself for 30 seconds, then use "Check again". Check that `NEXT_PUBLIC_API_URL` is right and that `CORS_ORIGINS` contains the exact address you opened the dashboard from.                                                                      |
-| The dashboard or the app shows "Operations" or an old name instead of HZ                 | The brand variables are read when the dev server starts. Set `NEXT_PUBLIC_BRAND_NAME` and `EXPO_PUBLIC_BRAND_NAME` in `.env` and restart `pnpm dev`.                                                                                                                               |
-| The phone cannot reach the API (sign-in says the server is unreachable)                  | Check that `API_HOST=0.0.0.0`, that `EXPO_PUBLIC_API_URL` is the PC's hotspot address, that the hotspot network is Private in Windows, and that the firewall allows 3001 and 8081. Open `http://<IP>:3001/health` in the phone's browser. Restart the API and Expo with `--clear`. |
-| Expo Go cannot load the project                                                          | Same network and firewall checks as above. If the QR code shows another address (Ethernet, VPN), disconnect that adapter. Campus, guest, and office networks often block devices from seeing each other; use the phone's hotspot.                                                  |
-| The phone still uses an old API address                                                  | Stop the mobile dev server and run `pnpm --filter @ops/mobile dev --clear`.                                                                                                                                                                                                        |
-| Photos stay at "uploading" or fail on the phone, or thumbnails do not load               | The signed URLs name `STORAGE_PUBLIC_ENDPOINT`: it must be `http://<IP>:9000`, `MINIO_BIND_HOST=0.0.0.0` (then `pnpm db:up`), and port 9000 allowed in the firewall. **After changing it, restart the API**: a running API keeps signing URLs with the old host.                   |
-| The storage answers 403 to the photo upload (PUT)                                        | The PUT did not send exactly the signed `Content-Type` and size, or the URL expired (5 minutes). The app retries with a fresh URL; from a script, call `POST /attachments/:id/upload-url` for a new one.                                                                           |
-| Upload calls answer 503 "File storage is unavailable"                                    | MinIO is not running or not reachable at `STORAGE_ENDPOINT`. Run `pnpm db:up`. In development the API keeps running without it.                                                                                                                                                    |
-| Upload calls answer 429                                                                  | More than 60 upload starts, completions, or renewals by one user in 10 minutes. Wait for `Retry-After`, or restart the API (the limits are in memory).                                                                                                                             |
-| No push notification arrives                                                             | Expected in Expo Go on Android (use the development build) and without `EXPO_PUBLIC_EAS_PROJECT_ID`. Profile shows the push status. Check that `PUSH_ENABLED=true`. The in-app list (Alerts tab) works regardless.                                                                 |
-| The API exits at start in production naming the bucket                                   | Production never creates the bucket. Create it (private) in the storage provider first.                                                                                                                                                                                            |
-| Port 3000, 3001, or 8081 is already in use                                               | Stop the other program (often an earlier `pnpm dev`), or change `WEB_PORT` or `API_PORT` in `.env`. If you change `API_PORT`, also change both `*_API_URL` values; if you change `WEB_PORT`, also `CORS_ORIGINS` and `WEB_APP_URL`.                                                |
-| The API stops answering right after `pnpm build`                                         | `pnpm build` deletes and rebuilds `apps/api/dist`, which a running `pnpm dev` uses. Restart `pnpm dev`.                                                                                                                                                                            |
-| `pnpm test:integration` says "Refusing to run the integration tests"                     | `DATABASE_URL_TEST` is missing, does not end in `_test`, or names the same database as `DATABASE_URL`. Copy the line from `.env.example`.                                                                                                                                          |
-| `pnpm db:seed` says the organization already exists                                      | Nothing was changed. To start again from an empty database, run `pnpm db:reset` (it deletes all data).                                                                                                                                                                             |
-| `pnpm install` exits with an error about ignored build scripts                           | A new dependency wants to run an install script. Decide it under `allowBuilds` in `pnpm-workspace.yaml` (`true` to allow, `false` to deny), then run `pnpm install` again.                                                                                                         |
-| An app cannot find `@ops/shared`                                                         | Run `pnpm --filter @ops/shared build`. The root scripts do this automatically.                                                                                                                                                                                                     |
-| Errors about `src/generated/prisma` in the API                                           | Run `pnpm --filter @ops/api db:generate`.                                                                                                                                                                                                                                          |
-| "Filename too long" or path errors during install                                        | Enable long paths (section 1), then delete `node_modules` and run `pnpm install` again.                                                                                                                                                                                            |
-| To remove the database completely                                                        | `docker compose down -v` deletes the database and MinIO volumes (all photos too), including the test database. Then run `pnpm db:up`, `pnpm db:migrate`, and `pnpm db:seed`.                                                                                                       |
+| Problem                                                                                   | What to do                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node`, `pnpm`, or `git` is not recognised                                                | Close the terminal and open a new one. If it still fails, reinstall the tool.                                                                                                                                                                                                      |
+| `pnpm db:up` fails with a Docker connection error                                         | Start Docker Desktop and wait for the engine. If Docker was just installed, restart the computer first.                                                                                                                                                                            |
+| Docker Desktop stopped by itself, and the database is suddenly "down"                     | This happened once on 2026-10-13; the cause is unknown. Run `docker desktop restart`, wait for the engine, then `pnpm db:up`. The data is kept.                                                                                                                                    |
+| `pnpm db:up` says a variable must be set                                                  | `.env` is missing or incomplete. Run `copy .env.example .env`.                                                                                                                                                                                                                     |
+| `pnpm db:up` fails because port 5432 is in use                                            | Another PostgreSQL is running. Stop it, or change `POSTGRES_PORT` and the port inside `DATABASE_URL` and `DATABASE_URL_TEST`.                                                                                                                                                      |
+| The API exits with "Invalid environment configuration"                                    | The message names each variable that is missing or wrong (for example the `STORAGE_*` variables after updating to Phase 4). Fix them in `.env`; `.env.example` has every key.                                                                                                      |
+| `pnpm --filter @ops/api start` exits, naming `AUTH_ACCESS_TOKEN_SECRET` or `WEB_APP_URL`  | Intended. `start` runs in production mode, which refuses the development placeholder secret and a non-https web address. Use `pnpm dev` for development.                                                                                                                           |
+| Signing in on the web says "Something went wrong" and the API answered 403                | The page's origin is not in `CORS_ORIGINS`. Add the exact address you opened the dashboard from (for example `http://localhost:3000`), then restart `pnpm dev`.                                                                                                                    |
+| Sign-in fails for every seeded user with the right password                               | The development database was seeded before Phase 3 (no usernames, no passwords). Run `pnpm db:reset` once. Check also that `NEXT_PUBLIC_ORGANIZATION_SLUG` is `hz-demo`, and that the account is not locked.                                                                       |
+| Sign-in answers 429 "Too many attempts"                                                   | A rate limit was hit (for example 10 attempts per identifier in 5 minutes). Wait the number of seconds in the `Retry-After` header. Restarting the API also clears the limits (they are kept in memory).                                                                           |
+| The right password is refused after several wrong ones                                    | The account is locked for 15 minutes after 5 failed sign-ins. The answer is the same as for a wrong password on purpose. Wait, or have an admin issue a password reset (`POST /users/:id/password-reset`).                                                                         |
+| Every API call answers 401 "Sign in to continue"                                          | Sign in first. The access token lasts 15 minutes; renew it with `POST /auth/refresh`. A session also ends when the user signs out everywhere, sets a new password, is archived, or loses a membership.                                                                             |
+| A call from PowerShell or Swagger answers 403 "refused as a cross-site request"           | You sent the session cookies without a valid `Origin` and `x-csrf-token`. From scripts, sign in with `"client": "mobile"` and use the bearer token instead.                                                                                                                        |
+| A route answers 403 "Your role does not allow this"                                       | The signed-in user's role may not use that route at all (see the matrix in ARCHITECTURE.md). A user with no active membership gets this on every route except `/auth/*` and `/scope/me`.                                                                                           |
+| A record you know exists answers 404                                                      | It is outside your scope. The API answers exactly as if it did not exist.                                                                                                                                                                                                          |
+| The activation code is refused (422)                                                      | It was mistyped, already used, replaced by a newer code, or expired (activation 72 hours, reset 60 minutes). Ask an admin for a new one.                                                                                                                                           |
+| <http://localhost:3001/docs> returns 404                                                  | The docs are served only in development mode. Start the API with `pnpm dev`, and restart it if it was started before `.env` changed.                                                                                                                                               |
+| `/health` returns 503 with `"database":"down"`                                            | PostgreSQL is not running or `DATABASE_URL` does not match the `POSTGRES_*` values. Run `pnpm db:up`.                                                                                                                                                                              |
+| The API returns 500 and the log says a table does not exist                               | The migrations are not applied. Run `pnpm db:migrate`.                                                                                                                                                                                                                             |
+| The web card shows "API unreachable"                                                      | Start the API; the card retries by itself for 30 seconds, then use "Check again". Check that `NEXT_PUBLIC_API_URL` is right and that `CORS_ORIGINS` contains the exact address you opened the dashboard from.                                                                      |
+| The dashboard or the app shows "Operations" or an old name instead of HZ                  | The brand variables are read when the dev server starts. Set `NEXT_PUBLIC_BRAND_NAME` and `EXPO_PUBLIC_BRAND_NAME` in `.env` and restart `pnpm dev`.                                                                                                                               |
+| The phone cannot reach the API (sign-in says the server is unreachable)                   | Check that `API_HOST=0.0.0.0`, that `EXPO_PUBLIC_API_URL` is the PC's hotspot address, that the hotspot network is Private in Windows, and that the firewall allows 3001 and 8081. Open `http://<IP>:3001/health` in the phone's browser. Restart the API and Expo with `--clear`. |
+| Expo Go cannot load the project                                                           | Same network and firewall checks as above. If the QR code shows another address (Ethernet, VPN), disconnect that adapter. Campus, guest, and office networks often block devices from seeing each other; use the phone's hotspot.                                                  |
+| The app in the emulator says the server is unreachable, or Expo Go cannot load the bundle | Run the three `adb reverse` commands again (section 6): they are lost when the emulator restarts and sometimes after airplane mode. Check that the API runs and that `.env` uses `localhost` in `EXPO_PUBLIC_API_URL` and `STORAGE_PUBLIC_ENDPOINT`.                               |
+| Pressing `a` in Expo says no Android SDK or no device                                     | Set `$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"` in the Expo terminal, start the emulator first, then press `a` again.                                                                                                                                                    |
+| Changes stay "Waiting to send"                                                            | The phone is offline, or the server cannot be reached. Tap the sync indicator, then "Sync now". Items that the server refused are under "Not accepted" with the reason; they wait for you to resend, copy, or discard them.                                                        |
+| `pnpm db:migrate` names `20261018090000_phase5_offline_sync` as missing locally           | The development database holds a migration from lost work. Run `pnpm db:reset` once (it deletes all data).                                                                                                                                                                         |
+| The phone still uses an old API address                                                   | Stop the mobile dev server and run `pnpm --filter @ops/mobile dev --clear`.                                                                                                                                                                                                        |
+| Photos stay at "uploading" or fail on the phone, or thumbnails do not load                | The signed URLs name `STORAGE_PUBLIC_ENDPOINT`: it must be `http://<IP>:9000`, `MINIO_BIND_HOST=0.0.0.0` (then `pnpm db:up`), and port 9000 allowed in the firewall. **After changing it, restart the API**: a running API keeps signing URLs with the old host.                   |
+| The storage answers 403 to the photo upload (PUT)                                         | The PUT did not send exactly the signed `Content-Type` and size, or the URL expired (5 minutes). The app retries with a fresh URL; from a script, call `POST /attachments/:id/upload-url` for a new one.                                                                           |
+| Upload calls answer 503 "File storage is unavailable"                                     | MinIO is not running or not reachable at `STORAGE_ENDPOINT`. Run `pnpm db:up`. In development the API keeps running without it.                                                                                                                                                    |
+| Upload calls answer 429                                                                   | More than 60 upload starts, completions, or renewals by one user in 10 minutes. Wait for `Retry-After`, or restart the API (the limits are in memory).                                                                                                                             |
+| No push notification arrives                                                              | Expected in Expo Go on Android (use the development build) and without `EXPO_PUBLIC_EAS_PROJECT_ID`. Profile shows the push status. Check that `PUSH_ENABLED=true`. The in-app list (Alerts tab) works regardless.                                                                 |
+| The API exits at start in production naming the bucket                                    | Production never creates the bucket. Create it (private) in the storage provider first.                                                                                                                                                                                            |
+| Port 3000, 3001, or 8081 is already in use                                                | Stop the other program (often an earlier `pnpm dev`), or change `WEB_PORT` or `API_PORT` in `.env`. If you change `API_PORT`, also change both `*_API_URL` values; if you change `WEB_PORT`, also `CORS_ORIGINS` and `WEB_APP_URL`.                                                |
+| The API stops answering right after `pnpm build`                                          | `pnpm build` deletes and rebuilds `apps/api/dist`, which a running `pnpm dev` uses. Restart `pnpm dev`.                                                                                                                                                                            |
+| `pnpm test:integration` says "Refusing to run the integration tests"                      | `DATABASE_URL_TEST` is missing, does not end in `_test`, or names the same database as `DATABASE_URL`. Copy the line from `.env.example`.                                                                                                                                          |
+| `pnpm db:seed` says the organization already exists                                       | Nothing was changed. To start again from an empty database, run `pnpm db:reset` (it deletes all data).                                                                                                                                                                             |
+| `pnpm install` exits with an error about ignored build scripts                            | A new dependency wants to run an install script. Decide it under `allowBuilds` in `pnpm-workspace.yaml` (`true` to allow, `false` to deny), then run `pnpm install` again.                                                                                                         |
+| An app cannot find `@ops/shared`                                                          | Run `pnpm --filter @ops/shared build`. The root scripts do this automatically.                                                                                                                                                                                                     |
+| Errors about `src/generated/prisma` in the API                                            | Run `pnpm --filter @ops/api db:generate`.                                                                                                                                                                                                                                          |
+| "Filename too long" or path errors during install                                         | Enable long paths (section 1), then delete `node_modules` and run `pnpm install` again.                                                                                                                                                                                            |
+| To remove the database completely                                                         | `docker compose down -v` deletes the database and MinIO volumes (all photos too), including the test database. Then run `pnpm db:up`, `pnpm db:migrate`, and `pnpm db:seed`.                                                                                                       |

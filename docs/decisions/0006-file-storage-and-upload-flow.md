@@ -1,6 +1,10 @@
 # ADR-0006: File storage and the photo upload flow
 
-- **Status**: Accepted
+- **Status**: Accepted; amended in part by
+  [ADR-0008](0008-offline-storage-sync-and-conflicts.md) (2026-10-27: attachment `clientId`,
+  photos declared at a log's create accepted for 30 days after the edit window, renew and complete
+  of a started upload allowed for 30 days, which removes the limitation that an upload could not
+  complete after the window)
 - **Date**: 2026-10-17
 - **Phase**: 4 (Mobile worker app)
 - **Amends**: [ADR-0005](0005-authorization-model.md) in part (a `pending` attachment is visible

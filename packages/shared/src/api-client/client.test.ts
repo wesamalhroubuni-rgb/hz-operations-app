@@ -504,6 +504,26 @@ describe('createApiTransport: headers and body', () => {
     });
   });
 
+  it('adds the headers of one request on top of getHeaders (offline sync headers)', async () => {
+    const fetchStub = fetchReturning({ id: 'a', count: 2 });
+    const transport = transportWith(fetchStub, {
+      getHeaders: () => ({ [EXTRA_HEADER]: USER_ID }),
+    });
+    await transport.request({
+      method: 'PATCH',
+      path: '/things',
+      body: {},
+      headers: { 'idempotency-key': USER_ID },
+      schema: thingSchema,
+    });
+    expect(callOf(fetchStub).headers).toMatchObject({
+      'x-example-header': USER_ID,
+      'idempotency-key': USER_ID,
+    });
+    await transport.request({ path: '/things', schema: thingSchema });
+    expect(callOf(fetchStub, 1).headers).not.toHaveProperty('idempotency-key');
+  });
+
   it('awaits an asynchronous getHeaders', async () => {
     const fetchStub = fetchReturning({ id: 'a', count: 2 });
     const transport = transportWith(fetchStub, {
@@ -618,6 +638,7 @@ describe('createApiClient', () => {
       'outboxEvents',
       'scope',
       'sites',
+      'sync',
       'tasks',
       'teams',
       'transport',

@@ -59,7 +59,11 @@ export function isWithinEditWindow(createdAt: Date, now: Date, editWindowHours: 
   return now.getTime() - createdAt.getTime() <= editWindowHours * HOUR_MS;
 }
 
-/** The author's right to change their own log: not approved, and inside the edit window. */
+/**
+ * The author's right to change their own log: not approved (409 `already_reviewed`), and inside
+ * the edit window (403 `edit_window_closed`). Somebody else: 403 `forbidden`. The order is the
+ * check order of ADR-0008 section 2.
+ */
 function authorMayChange(
   context: AccessContext,
   log: WorkLogFacts,
@@ -70,10 +74,13 @@ function authorMayChange(
     return forbid('Only the author can change a work log');
   }
   if (log.status === 'approved') {
-    return forbid('An approved work log cannot be changed by its author');
+    return conflict('An approved work log cannot be changed by its author', 'already_reviewed');
   }
   if (!isWithinEditWindow(log.createdAt, now, editWindowHours)) {
-    return forbid(`The edit window of ${editWindowHours} hours for this work log has passed`);
+    return forbid(
+      `The edit window of ${editWindowHours} hours for this work log has passed`,
+      'edit_window_closed',
+    );
   }
   return ALLOW;
 }

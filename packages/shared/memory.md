@@ -1,6 +1,6 @@
 # packages/shared memory
 
-Package `@ops/shared`. Last updated: 2026-10-17.
+Package `@ops/shared`. Last updated: 2026-10-28.
 
 ## Purpose
 
@@ -15,14 +15,40 @@ Six areas plus the health schema, all re-exported from `src/index.ts`.
 | Area              | Contents                                                                                                                                                                                                                                                                                                                       |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/health.ts`   | `healthResponseSchema` / `HealthResponse`.                                                                                                                                                                                                                                                                                     |
-| `src/common/`     | `apiErrorSchema` and `API_ERROR_CODES` (now including `rate_limited`); pagination, sort, id, date, and query-boolean schemas.                                                                                                                                                                                                  |
-| `src/domain/`     | One file per resource (`organization`, `users`, `memberships`, `sites`, `teams`, `log-types`, `tasks`, `work-logs`, `attachments`, `scope`), plus `enums.ts` (with `roleRank`, `rolesHighestFirst`), `custom-fields.ts`, and `shared.ts`.                                                                                      |
-| `src/platform/`   | `auth.ts` (the sign-in wire contract), `notifications.ts` (Phase 4), `audit.ts`, `outbox.ts`. `AUDIT_REDACTED`.                                                                                                                                                                                                                |
+| `src/common/`     | `apiErrorSchema`, `API_ERROR_CODES` with `API_ERROR_STATUS` and `RETRYABLE_API_ERROR_CODES` (Phase 5 typed codes); pagination, sort, id, date, and query-boolean schemas.                                                                                                                                                      |
+| `src/domain/`     | One file per resource (`organization`, `users`, `memberships`, `sites`, `teams`, `log-types`, `tasks`, `work-logs`, `attachments`, `scope`, and from Phase 5 `sync`), plus `enums.ts` (with `roleRank`, `rolesHighestFirst`), `custom-fields.ts`, and `shared.ts`.                                                             |
+| `src/platform/`   | `auth.ts` (the sign-in wire contract), `notifications.ts` (Phase 4), `offline-sync.ts` (Phase 5), `audit.ts`, `outbox.ts`. `AUDIT_REDACTED`.                                                                                                                                                                                   |
 | `src/forms/`      | `custom-field-form.ts` (Phase 4): form descriptors, initial values, reconciling with a changed log type, number parsing, conversion to wire values through `validateCustomFieldValues`, mapping API error details back to fields.                                                                                              |
 | `src/theme/`      | `tokens.ts`, `contrast.ts`, `css.ts`.                                                                                                                                                                                                                                                                                          |
 | `src/api-client/` | `client.ts` (transport with auth hooks and refresh-once, `ApiResult`, `CSRF_HEADER`, `REQUEST_ID_HEADER`), `create-api-client.ts` (`createApiClient`), `auth-session.ts` (`createAuthSessionManager`), `auth-text.ts`, `auth-forms.ts`, `attachment-upload.ts` (Phase 4), `health-monitor.ts`, `health-status.ts`, `index.ts`. |
 
-650 unit tests in 13 files, confirmed on 2026-10-17.
+689 unit tests in 14 files, confirmed on 2026-10-27.
+
+## Phase 5 contract changes (ADR-0008)
+
+- **Error codes** (`common/errors.ts`): `version_conflict`, `edit_window_closed`,
+  `already_reviewed`, `record_archived`, `task_not_assigned`, `task_cancelled`,
+  `occurred_at_out_of_range`, `attachment_not_declared`, `idempotency_key_reused`,
+  `request_in_progress`; `API_ERROR_STATUS` (one status per code), `RETRYABLE_API_ERROR_CODES`,
+  `isRetryableApiErrorCode`. `isRetryableApiFailure` of the upload helper honours them.
+- **Offline headers** (`platform/offline-sync.ts`): `IDEMPOTENCY_KEY_HEADER`,
+  `IDEMPOTENT_REPLAYED_HEADER`, `CLIENT_SYNC_HEADER` / `CLIENT_SYNC_OFFLINE`, `DEVICE_TIME_HEADER`,
+  `offlineSyncHeaders(...)`, `IDEMPOTENCY_RETENTION_DAYS` (14), `IDEMPOTENCY_LOCK_SECONDS` (60),
+  `CLOCK_SKEW_FLAG_SECONDS` (300), `clockSkewSecondsOf`, `isClockSkewFlagged`,
+  `auditMetadataSchema` (`AuditEvent.metadata`).
+- **Sync** (`domain/sync.ts`): `syncPullResponseSchema`, `SYNC_WINDOW_DAYS` (30),
+  `SYNC_CURSOR_OVERLAP_SECONDS` (60), `SYNC_RESOURCES`, `syncEndpoints` (`pull({ cursor })`),
+  wired into `createApiClient` as `sync`.
+- **Bodies and responses**: `version` on tasks and work logs; `expectedVersion` on the work-log
+  edit and status bodies and the task status body; `createWorkLogSchema` gains
+  `deviceCreatedAt` and `attachmentClientIds` (at most 20); the work-log response adds
+  `submittedOffline`, `deviceCreatedAt`, `clockSkewSeconds`, `clockSkewFlagged`,
+  `declaredAttachmentClientIds`; `startAttachmentUploadSchema` takes an optional `clientId` and
+  answers `startedAttachmentUploadSchema` (`upload: null` once ready); the organization summary
+  adds `offlineMaxBackdateDays` (`DEFAULT_OFFLINE_MAX_BACKDATE_DAYS` 7, max 90,
+  `offlineMaxBackdateDaysOf`, `occurredAtRangeProblem`).
+- **Transport**: per-call `headers` (`ApiCallOptions`) on write endpoints and in
+  `uploadAttachment` (`requestOptions`).
 
 ## Phase 4 contract changes
 
@@ -93,6 +119,8 @@ put, onProgress, checkpoint })` runs start, PUT, and complete and returns an
 | `src/api-client/attachment-upload.ts` | `uploadAttachment` (resumable start, PUT, complete) and the retry helpers.                                                                                          |
 | `src/forms/custom-field-form.ts`      | The custom-field form logic the mobile app (and later the web) generates forms from.                                                                                |
 | `src/platform/notifications.ts`       | Notification and push-token schemas and endpoints.                                                                                                                  |
+| `src/platform/offline-sync.ts`        | Offline sync headers, clock skew helpers, idempotency constants, audit metadata schema (Phase 5).                                                                   |
+| `src/domain/sync.ts`                  | `GET /sync/pull` schemas, constants, and endpoint (Phase 5).                                                                                                        |
 | `src/api-client/health-monitor.ts`    | `createHealthMonitor` with retries after 2, 4, 8, 16 seconds.                                                                                                       |
 | `src/theme/tokens.ts`                 | `darkTheme`, `colors`, `spacing`, `radii`, `fontSizes`, `fontWeights`, `CONTRAST_REQUIREMENTS`.                                                                     |
 | `tsconfig.json`                       | Extends `@ops/config/tsconfig/library.json`. Adds the `DOM` lib, only for `fetch`, `AbortController`, and timers.                                                   |

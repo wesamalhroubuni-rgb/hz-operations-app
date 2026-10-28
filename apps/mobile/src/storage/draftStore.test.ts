@@ -1,5 +1,5 @@
 import { newLogFormValues } from '../logic/logForm';
-import { createDraftStore, draftKey, isDraftWorthKeeping } from './draftStore';
+import { createDraftStore, draftKey, editDraftKey, isDraftWorthKeeping } from './draftStore';
 import { createMemoryStore, type KeyValueStore } from './keyValueStore';
 import type { LocalPhoto } from './localPhoto';
 
@@ -33,6 +33,29 @@ describe('draft store', () => {
     const restored = await createDraftStore(memory).load(USER);
     expect(restored).toEqual({ savedAt: '2026-10-16T10:00:00.000Z', values, photos: [photo] });
     expect(await createDraftStore(memory).load('someone-else')).toBeNull();
+  });
+
+  it('keeps one edit draft per user and log, apart from the new-log draft', async () => {
+    const memory = createMemoryStore();
+    const store = createDraftStore(memory);
+    const values = { ...newLogFormValues(CLIENT_ID), text: 'Edited offline' };
+    await store.saveEdit(
+      USER,
+      'log-1',
+      { values, photos: [photo] },
+      new Date('2026-10-16T10:00:00Z'),
+    );
+    expect(await store.loadEdit(USER, 'log-1')).toEqual({
+      savedAt: '2026-10-16T10:00:00.000Z',
+      values,
+      photos: [photo],
+    });
+    expect(await store.loadEdit(USER, 'log-2')).toBeNull();
+    expect(await store.loadEdit('someone-else', 'log-1')).toBeNull();
+    expect(await store.load(USER)).toBeNull();
+    await store.clearEdit(USER, 'log-1');
+    expect(memory.dump()).toEqual({});
+    expect(editDraftKey(USER, 'log-1')).toBe('ops.drafts.editWorkLog.user-1.log-1');
   });
 
   it('clears the draft once the log is saved', async () => {

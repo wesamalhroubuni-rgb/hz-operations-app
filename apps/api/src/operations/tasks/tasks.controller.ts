@@ -30,6 +30,7 @@ import {
 } from '@ops/shared';
 import { Policy } from '../../platform/authz';
 import { ApiDocs, ZodPipe } from '../../platform/http';
+import { Idempotent } from '../../platform/idempotency';
 import { TasksService } from './tasks.service';
 
 const CHANGE_ERRORS = [
@@ -107,6 +108,7 @@ export class TasksController {
 
   @Patch(':id/status')
   @Policy('task.change_status')
+  @Idempotent()
   @ApiDocs({
     summary: "Change a task's status",
     description:
