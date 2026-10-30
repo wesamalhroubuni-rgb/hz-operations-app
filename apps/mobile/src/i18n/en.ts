@@ -409,6 +409,8 @@ export const en = {
         'The server already received a different change under the same reference. Discard this one and make the change again.',
       request_in_progress:
         'The server is still working on this. It is checked again automatically.',
+      // A dashboard export code (Phase 6); the phone never exports, but the list is typed.
+      export_too_large: 'There is too much data for one export.',
       network: 'No connection. It is sent when you have signal.',
       timeout: 'The server took too long to answer. It is tried again automatically.',
       invalid_response:

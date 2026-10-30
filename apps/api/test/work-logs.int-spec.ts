@@ -116,7 +116,10 @@ describe('work logs', () => {
       // occurredAt (when the work happened) and createdAt (when it was stored) are separate.
       expect(response.body.createdAt).not.toBe(response.body.occurredAt);
       expect(new Date(response.body.createdAt).getTime()).toBeGreaterThan(at().getTime());
-      expect((await api.get(`/work-logs/${response.body.id}`)).body).toEqual(response.body);
+      expect((await api.get(`/work-logs/${response.body.id}`)).body).toEqual({
+        ...response.body,
+        attachmentCount: 0, // Phase 6: reads carry it, write answers do not
+      });
     });
 
     it('creates a plain log without a log type: no version, no custom fields, no location', async () => {
@@ -682,7 +685,7 @@ describe('work logs', () => {
       expect(texts(response)).toEqual(['L4', 'L3', 'L2', 'L1', 'L0']);
     });
 
-    it('sorts by occurredAt or createdAt, in both directions', async () => {
+    it('sorts by occurredAt or createdAt, in both directions, and refuses unknown fields', async () => {
       await seed();
       const sorted = async (sort: string) => texts(await api.get('/work-logs', { sort }));
       expect(await sorted('occurredAt:asc')).toEqual(['L0', 'L1', 'L2', 'L3', 'L4']);
@@ -690,7 +693,8 @@ describe('work logs', () => {
       expect(await sorted('createdAt:desc')).toEqual(['L0', 'L1', 'L2', 'L3', 'L4']);
       expect(await sorted('createdAt:asc')).toEqual(['L4', 'L3', 'L2', 'L1', 'L0']);
       expect((await api.get('/work-logs', { sort: 'text:asc' })).status).toBe(400);
-      expect((await api.get('/work-logs', { sort: 'updatedAt:desc' })).status).toBe(400);
+      // Phase 6 added updatedAt and status to the sort fields (ADR-0009).
+      expect((await api.get('/work-logs', { sort: 'updatedAt:desc' })).status).toBe(200);
     });
 
     it('filters by author', async () => {
@@ -829,7 +833,10 @@ describe('work logs', () => {
       });
       expect(invalid.status).toBe(400);
       expect(detailPaths(invalid)).toEqual(['customFields.quantity']);
-      expect((await api.get(`/work-logs/${created.body.id}`)).body).toEqual(created.body);
+      expect((await api.get(`/work-logs/${created.body.id}`)).body).toEqual({
+        ...created.body,
+        attachmentCount: 0,
+      });
 
       const valid = await api.patch(`/work-logs/${created.body.id}`, {
         customFields: { area: 'Roof', quantity: 2, result: 'defect' },

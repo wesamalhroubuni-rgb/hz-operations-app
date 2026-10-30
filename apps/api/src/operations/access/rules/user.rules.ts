@@ -104,13 +104,13 @@ export function seesEveryContact(context: AccessContext): boolean {
   return contactVisibility(context).all;
 }
 
-/** The only field a user may change about themselves. */
-export const SELF_EDITABLE_USER_FIELDS: readonly string[] = ['displayName'];
+/** The fields a user may change about themselves (Phase 6 added the language). */
+export const SELF_EDITABLE_USER_FIELDS: readonly string[] = ['displayName', 'locale'];
 
 /**
  * Changing a user the caller can see (the service loads the user through
  * {@link userVisibilityWhere} first, which answers 404 for anyone else): an admin changes every
- * field of anyone; everyone else changes only their own display name.
+ * field of anyone; everyone else changes only their own display name and language.
  *
  * @param changedFields the keys present in the request body
  */
@@ -128,5 +128,8 @@ export function canUpdateUser(
   const refused = changedFields.filter((field) => !SELF_EDITABLE_USER_FIELDS.includes(field));
   return refused.length === 0
     ? ALLOW
-    : forbid(`Only an admin can change: ${refused.join(', ')}. You can change your display name`);
+    : forbid(
+        `Only an admin can change: ${refused.join(', ')}. You can change your display name ` +
+          'and language',
+      );
 }

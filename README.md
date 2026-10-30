@@ -9,13 +9,15 @@ approve.
 technical name "Operations". The name shown in the apps comes from configuration, so the same code
 can be deployed for another client.
 
-**Status (2026-10-27)**: Phase 5, offline mode and sync, code complete and tested; it has not run
-on a phone or in the emulator yet. Workers sign in on the phone, see and update their tasks, and
-create work logs with text, photos, location, and custom fields, with or without a connection:
-everything is kept on the phone and sent when the connection returns. They get in-app (and, in a
-development build, push) notifications when a task is assigned or a log is approved or rejected.
-Photos are stored in S3-compatible storage (MinIO in development). The web app still has only
-sign-in and a placeholder home page. See [ROADMAP.md](ROADMAP.md).
+**Status (2026-10-28)**: Phase 6, the web manager dashboard, code complete and tested; nobody has
+used it in a browser with data yet. Workers sign in on the phone, see and update their tasks, and
+create work logs with text, photos, location, and custom fields, with or without a connection
+(Phase 5; not yet run on a phone or in the emulator). They get in-app (and, in a development
+build, push) notifications when a task is assigned or a log is approved or rejected. Supervisors,
+managers, and admins use the web dashboard: an overview of the day, work logs with review and
+approval, tasks, a map, CSV exports and a printable report, and for admins people, structure,
+the audit log, and settings. Photos are stored in S3-compatible storage (MinIO in development).
+See [ROADMAP.md](ROADMAP.md).
 
 This guide is for a developer on Windows 11 using PowerShell.
 
@@ -129,6 +131,19 @@ pnpm typecheck
 pnpm test
 ```
 
+### Updating an existing checkout to Phase 6
+
+Phase 6 added the web dashboard.
+
+1. Run `pnpm install` (new web packages: TanStack Query and Table, Leaflet, react-leaflet; Next.js
+   16.4.3).
+2. Optional: add `NEXT_PUBLIC_MAP_TILE_URL=` to `.env` (empty means the public OpenStreetMap
+   tiles; see section 9).
+3. Run `pnpm db:migrate` (migration `20261028090000_phase6_dashboard`: a language per user). If it
+   names `20261018090000_phase5_offline_sync` as missing locally, run `pnpm db:reset` once
+   instead (it deletes all data and seeds again; an AI agent cannot run it for you).
+4. Restart `pnpm dev`.
+
 ### Updating an existing checkout to Phase 5
 
 Phase 5 added offline mode: no new variables in `.env`.
@@ -212,8 +227,8 @@ What to expect:
 - `/health` returns `{"status":"ok","database":"up",...}` with HTTP 200 when PostgreSQL is running.
   If the database is stopped, the API keeps running and `/health` returns HTTP 503 with
   `"database":"down"`.
-- The web dashboard sends you to `/login`. After signing in it shows the HZ logo, your name, your
-  role, your organization, "Sign out", "Sign out everywhere", and the "API status" card.
+- The web dashboard sends you to `/login`. After signing in it shows the dashboard for your role
+  (see "The web dashboard" below).
 - Every API route except `/health`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`,
   and `POST /auth/set-password` needs a signed-in user.
 - By default the API, PostgreSQL, and MinIO listen on `127.0.0.1`, so they can be reached from
@@ -221,6 +236,43 @@ What to expect:
   `.env`) shows the bucket `hz-attachments`; photos are private and reach the apps only through
   short-lived signed URLs.
 - The API docs exist only in development (`pnpm dev`). A production start does not serve them.
+
+### The web dashboard
+
+Start the database and the API, then the dashboard (or everything with `pnpm dev`):
+
+```powershell
+pnpm db:up
+pnpm --filter @ops/api dev
+pnpm --filter @ops/web dev
+```
+
+Open <http://localhost:3000> (or the port in `WEB_PORT`) and sign in with a seeded user from
+section 4. What each role sees:
+
+| Role       | Sign in as         | Pages                                                                                             |
+| ---------- | ------------------ | ------------------------------------------------------------------------------------------------- |
+| admin      | `aylin`            | Overview, Work logs (review, report), Tasks, Map, People (manage), Structure, Audit log, Settings |
+| manager    | `murat`            | Overview, Work logs, Tasks, Map, People (read only), Structure                                    |
+| supervisor | `selin`, `emre`    | Overview, Work logs, Tasks, Map, limited to their scope                                           |
+| worker     | `deniz` and others | A message to use the mobile app                                                                   |
+
+Nobody approves their own work log. Times are shown in the organization's time zone (Settings,
+default Europe/Istanbul). The map loads its tiles from OpenStreetMap unless
+`NEXT_PUBLIC_MAP_TILE_URL` is set.
+
+**If port 3000 is taken** (on the owner's PC it is used by another project), pick another port
+and tell the API about the new address, then restart `pnpm dev`. In `.env`:
+
+```dotenv
+WEB_PORT=3100
+CORS_ORIGINS=http://localhost:3100
+WEB_APP_URL=http://localhost:3100
+```
+
+`CORS_ORIGINS` may list several origins separated by commas; it must contain the exact address
+you open the dashboard from, or sign-in answers 403. `WEB_APP_URL` is where activation links
+point.
 
 ## 4. Sign in and try the API
 
@@ -250,9 +302,10 @@ without spaces. Names and addresses are invented.
 
 ### In the browser
 
-Open <http://localhost:3000>. You are sent to `/login`. Type an identifier from the table and the
-password, then "Sign in". The home page shows your name, role, and organization. "Sign out" ends
-this browser's session; "Sign out everywhere" ends every session of the user, on every device.
+Open <http://localhost:3000> (or your `WEB_PORT`). You are sent to `/login`. Type an identifier
+from the table and the password, then "Sign in". The dashboard for your role opens (section 3);
+the account menu shows your name and role. "Sign out" ends this browser's session; "Sign out
+everywhere" ends every session of the user, on every device.
 
 ### From PowerShell (as the mobile app does)
 
@@ -339,8 +392,9 @@ in with `test.worker`.
 
 ### Approve or reject a work log (as a supervisor)
 
-There are no approval screens yet (the web dashboard is Phase 6). Sign in as `selin` (or `emre`,
-`murat`, `aylin`) in Swagger or PowerShell and call `PATCH /work-logs/{id}/status`:
+In the web dashboard: Work logs, open a submitted log, "Approve" or "Reject" with a note (or select
+several and review them in bulk). From Swagger or PowerShell, sign in as `selin` (or `emre`,
+`murat`, `aylin`) and call `PATCH /work-logs/{id}/status`:
 
 ```powershell
 # $headers from a supervisor's sign-in; $logId from GET /work-logs
@@ -711,6 +765,7 @@ comment.
 | `NEXT_PUBLIC_API_URL`                                                | Web               | API address used by the browser                                                                                            |
 | `NEXT_PUBLIC_BRAND_NAME`                                             | Web               | Product name shown in the dashboard (`HZ`)                                                                                 |
 | `NEXT_PUBLIC_ORGANIZATION_SLUG`                                      | Web               | Organization this deployment serves, sent with every sign-in (`hz-demo`)                                                   |
+| `NEXT_PUBLIC_MAP_TILE_URL`                                           | Web               | Map tile URL template with `{z}/{x}/{y}`. Empty: public OpenStreetMap tiles (development and light use only)               |
 | `EXPO_PUBLIC_API_URL`                                                | Mobile            | API address used by the phone                                                                                              |
 | `EXPO_PUBLIC_BRAND_NAME`                                             | Mobile            | Product name shown in the app, and the app name on the device (`HZ`)                                                       |
 | `EXPO_PUBLIC_ORGANIZATION_SLUG`                                      | Mobile            | Same as the web variable, for the mobile app                                                                               |
@@ -748,7 +803,8 @@ or real secrets.
 | <http://localhost:3001/docs> returns 404                                                  | The docs are served only in development mode. Start the API with `pnpm dev`, and restart it if it was started before `.env` changed.                                                                                                                                               |
 | `/health` returns 503 with `"database":"down"`                                            | PostgreSQL is not running or `DATABASE_URL` does not match the `POSTGRES_*` values. Run `pnpm db:up`.                                                                                                                                                                              |
 | The API returns 500 and the log says a table does not exist                               | The migrations are not applied. Run `pnpm db:migrate`.                                                                                                                                                                                                                             |
-| The web card shows "API unreachable"                                                      | Start the API; the card retries by itself for 30 seconds, then use "Check again". Check that `NEXT_PUBLIC_API_URL` is right and that `CORS_ORIGINS` contains the exact address you opened the dashboard from.                                                                      |
+| A dashboard page shows an error with "Try again"                                          | Start the API and press "Try again". Check that `NEXT_PUBLIC_API_URL` is right and that `CORS_ORIGINS` contains the exact address you opened the dashboard from. A 500 about a missing column means the Phase 6 migration is not applied (`pnpm db:migrate`).                      |
+| The map shows no background                                                               | The tile server is unreachable or `NEXT_PUBLIC_MAP_TILE_URL` is wrong (it must be an http(s) template with `{z}`). The points stay listed as text below the map.                                                                                                                   |
 | The dashboard or the app shows "Operations" or an old name instead of HZ                  | The brand variables are read when the dev server starts. Set `NEXT_PUBLIC_BRAND_NAME` and `EXPO_PUBLIC_BRAND_NAME` in `.env` and restart `pnpm dev`.                                                                                                                               |
 | The phone cannot reach the API (sign-in says the server is unreachable)                   | Check that `API_HOST=0.0.0.0`, that `EXPO_PUBLIC_API_URL` is the PC's hotspot address, that the hotspot network is Private in Windows, and that the firewall allows 3001 and 8081. Open `http://<IP>:3001/health` in the phone's browser. Restart the API and Expo with `--clear`. |
 | Expo Go cannot load the project                                                           | Same network and firewall checks as above. If the QR code shows another address (Ethernet, VPN), disconnect that adapter. Campus, guest, and office networks often block devices from seeing each other; use the phone's hotspot.                                                  |

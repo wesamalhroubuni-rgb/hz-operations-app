@@ -10,9 +10,9 @@ Criteria for Phases 3 to 8 are the current plan and should be refined at the sta
 | 2     | Backend core                 | Accepted and committed (`1fd2988`); one check waits for a phone build     |
 | 3     | Authentication & permissions | Accepted and committed (`8c8283a`); device checks wait for the phone test |
 | 4     | Mobile worker app            | Committed (`280c50a`); phone test and development build open              |
-| 5     | Offline mode & sync          | Code complete and tested; emulator and phone test open                    |
-| 6     | Web manager dashboard        | Next                                                                      |
-| 7     | Intelligent layer v1         | Planned                                                                   |
+| 5     | Offline mode & sync          | Committed (`2cf5a01`); emulator and phone test open                       |
+| 6     | Web manager dashboard        | Code complete and tested; browser test and commit open                    |
+| 7     | Intelligent layer v1         | Next                                                                      |
 | 8     | Hardening & release          | Planned                                                                   |
 
 ## Phase 1: Setup & architecture
@@ -41,7 +41,8 @@ are documented well enough for a new developer or AI session to continue.
 - [ ] The web "API status" card shows the correct state in a real browser. On 2026-10-13 the owner
       saw "API unreachable" on first load while the API was still compiling. Phase 2 added
       automatic retries (2, 4, 8, 16 seconds) and a "Check again" button; that recovery is unit
-      tested but has not been watched in a real browser.
+      tested but has not been watched in a real browser. Since Phase 6 the card is on the
+      Settings page (admin).
 - [ ] The mobile app opens on a real phone in Expo Go and reaches the API. Part of the Phase 4
       phone test (the campus Wi-Fi blocks phone-to-PC traffic; the owner will use the phone's
       hotspot). The Phase 1 "API reachable" card was replaced by the worker screens in Phase 4.
@@ -467,30 +468,73 @@ Tests, review, verification
       work).
 - [ ] The offline test in the Android emulator (README section 6), including the conflict case.
 - [ ] Verified on a real phone in airplane mode, then back online.
-- [ ] The Phase 5 work is committed and pushed.
+- [x] The Phase 5 work is committed and pushed (`2cf5a01`, in sync with `origin/main` on
+      2026-10-28).
 
 ## Phase 6: Web manager dashboard
 
 **Goals**: supervisors and managers monitor work for their scope in the browser.
 
+"Verified" below means by the unit and integration suites, the `test-writer`, and the `reviewer`
+during the session of 2026-10-28, plus a smoke test of the web routes. **Nobody has used the
+dashboard in a browser with data yet** (it needs the owner's `pnpm db:reset`), so items that need
+a person at a browser stay open even where the code is complete.
+
 **Done when**
 
+Decisions and documentation
+
+- [x] [ADR-0009](docs/decisions/0009-web-dashboard-architecture.md) records the dashboard
+      architecture (data fetching, tables and URL list state, maps, i18n and RTL, time zone,
+      exports, accessibility) and the Phase 6 API contract.
+- [x] MEMORY.md, ARCHITECTURE.md, ROADMAP.md, README.md, AGENTS.md, and the folder `memory.md`
+      files describe Phase 6 (docs-keeper, 2026-10-28).
+
+Screens and API (code complete and tested)
+
 - [ ] Sign-in works on the web with the same accounts as mobile (the login, activation, and
-      sign-out pages exist since Phase 3).
-- [ ] Admin screens issue activation and reset codes and show a user's sessions.
-- [ ] A list of work logs with filters for date, team, site, and worker, limited to the user's
-      scope.
-- [ ] A detail view with text, photos, and location.
-- [ ] Supervisors approve and reject work logs with a note (the API and the notifications exist
-      since Phase 4; there are no approval screens on mobile by design).
-- [ ] Photos can be uploaded from the browser if needed, reusing `uploadAttachment` from
-      `@ops/shared`; this needs a CORS rule on the bucket.
-- [ ] Notification text is localised: each user's language is stored and the server renders the
-      in-app and push text in it (English only since Phase 4).
-- [ ] Admin screens manage users, roles, teams, and sites.
-- [ ] A user cannot reach data outside their scope by editing a URL or request.
-- [ ] Loading, empty, and error states exist for every view.
-- [ ] Works at phone and desktop widths and meets basic accessibility checks.
+      sign-out pages exist since Phase 3; seen by the owner for three roles on 2026-10-17). Needs
+      the browser test after `pnpm db:reset`.
+- [x] Admin screens issue activation and reset codes (shown once) and show and end a user's
+      sessions (`GET /users/:id/sessions`, `POST /users/:id/sessions/revoke`, admin only).
+- [x] A list of work logs with filters for date, team, site, worker, log type, status, photos, and
+      text, sorting and paging held in the URL, limited to the user's scope (`dashboard-scope`
+      suite).
+- [x] A detail view with text, custom fields, photos (signed URLs), location, offline facts, and
+      history.
+- [x] Supervisors approve and reject work logs with a note, one by one or in bulk; nobody approves
+      their own log, in the UI or on the server (single and bulk tests).
+- [ ] Photos can be uploaded from the browser. **Deferred to Phase 8**: not required by the
+      Phase 6 prompt, and it needs a CORS rule on the bucket (`uploadAttachment` in `@ops/shared`
+      is ready for it).
+- [x] Notification text is localised: each user's language is stored (`User.locale`) and the
+      server renders the in-app and push text in it. Only the English catalogue exists; Turkish
+      and Arabic fall back to English key by key.
+- [x] Admin screens manage users, roles (memberships and scope), teams, sites, and log types (the
+      field editor raises the version); settings (time zone, edit window, backdating limit); the
+      audit log.
+- [x] A user cannot reach data outside their scope by editing a URL or request (supervisor,
+      manager, and admin on every new data source with changed ids and query parameters; foreign
+      records 404).
+- [x] Every overview number opens the filtered list it counts and equals its total; CSV exports
+      equal the lists, are audited, and are safe against formula injection.
+- [ ] Loading, empty, and error states exist for every view (built with the shared state
+      components; not yet checked by a person in a browser).
+- [ ] Works at phone and desktop widths and meets basic accessibility checks (native elements,
+      labels, logical CSS, a skip link; not yet checked in a browser).
+
+Tests, review, verification
+
+- [x] The `test-writer` added 58 tests (no bug found).
+- [x] The `reviewer` returned "pass with fixes", nothing blocking; the fixes are in the MEMORY.md
+      session log of 2026-10-28.
+- [x] `pnpm test` passes (re-run by the docs-keeper, 2026-10-28): 743 shared, 527 api, 174 web,
+      305 mobile. `build`, `lint`, `typecheck`, `format:check`, and `test:integration` (1,534
+      tests in 21 suites) pass as reported by the coordinator.
+- [ ] The migration `20261028090000_phase6_dashboard` is applied to the development database
+      (needs the owner's `pnpm db:reset`).
+- [ ] The owner's browser test (`docs/reports/phase-6.md`) as `aylin`, `selin`, and `murat`.
+- [ ] The Phase 6 work is committed and pushed.
 
 ## Phase 7: Intelligent layer v1 (smart capture, daily AI summaries)
 
@@ -542,6 +586,9 @@ Tests, review, verification
       replaced or built from source; a purge marker column so orphan upload bytes on ready
       attachments are removed (ADR-0006).
 - [ ] Retention and erasure of stored photos are decided and implemented.
+- [ ] Photos can be uploaded from the web dashboard, reusing `uploadAttachment` from
+      `@ops/shared`, with a CORS rule on the bucket for the dashboard's origin (moved from Phase 6
+      on 2026-10-28).
 - [ ] Durable push receipts (a `PushTicket` table) instead of the in-memory tracking (ADR-0007).
 - [ ] Activation and reset links open the mobile app's activation screen (deep links). Not in the
       Phase 4 prompt; listed here until the owner places it.
@@ -550,7 +597,8 @@ Tests, review, verification
 - [ ] A real `NotificationSender` (email and/or SMS) delivers activation and reset codes; today
       codes are only logged, and only in development.
 - [ ] The web app sends a Content-Security-Policy with `script-src` and `style-src` using
-      per-request nonces (today only `frame-ancestors`, `base-uri`, `form-action`, `object-src`).
+      per-request nonces (today only `frame-ancestors`, `base-uri`, `form-action`, `object-src`),
+      plus `img-src` and `connect-src` for the tile, storage, and API hosts (`next.config.ts`).
 - [ ] HTTPS everywhere, with the web app and the API on the same site (or `AUTH_COOKIE_DOMAIN`
       set to the parent domain) and the exact web origin in `CORS_ORIGINS`.
 - [ ] Log noise reviewed: `/health` logs an error on every call while the database is down, and

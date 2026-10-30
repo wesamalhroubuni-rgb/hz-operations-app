@@ -291,6 +291,7 @@ describe('sync pull', () => {
       slug: 'hz-demo',
       workLogEditWindowHours: 24,
       offlineMaxBackdateDays: 7,
+      timeZone: 'Europe/Istanbul',
     },
     tasks: empty,
     logTypes: empty,

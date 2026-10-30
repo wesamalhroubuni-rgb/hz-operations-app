@@ -1,0 +1,107 @@
+/* Map page (agent B, ADR-0009). Tokens and logical properties only. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.meta {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.notice {
+  margin: 0;
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-inline-start: 4px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+/* Inside Leaflet's popup (light background, text colour set by map.module.css). */
+.popup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-inline-size: 16rem;
+}
+
+.popupLink {
+  color: inherit;
+  font-weight: var(--font-weight-bold);
+  text-decoration: underline;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+}
+
+.panelTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.table th,
+.table td {
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-sm);
+  border-block-end: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  text-align: start;
+  vertical-align: top;
+}
+
+.table thead th {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.coordinates {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.link {
+  color: var(--color-primary);
+  font-weight: var(--font-weight-semibold);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link:focus-visible,
+.popupLink:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.visuallyHidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

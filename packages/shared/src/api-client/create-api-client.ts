@@ -1,7 +1,11 @@
 import { attachmentsEndpoints } from '../domain/attachments.js';
+import { dashboardEndpoints } from '../domain/dashboard.js';
+import { directoryEndpoints } from '../domain/directory.js';
+import { exportsEndpoints } from '../domain/exports.js';
 import { logTypesEndpoints } from '../domain/log-types.js';
 import { membershipsEndpoints } from '../domain/memberships.js';
 import { organizationEndpoints } from '../domain/organization.js';
+import { reportsEndpoints } from '../domain/reports.js';
 import { scopeEndpoints } from '../domain/scope.js';
 import { sitesEndpoints } from '../domain/sites.js';
 import { syncEndpoints } from '../domain/sync.js';
@@ -43,6 +47,11 @@ export function createApiClient(options: ApiClientOptions) {
     scope: scopeEndpoints(transport),
     sync: syncEndpoints(transport),
     notifications: notificationsEndpoints(transport),
+    // Phase 6 (ADR-0009): the dashboard's read models.
+    dashboard: dashboardEndpoints(transport),
+    directory: directoryEndpoints(transport),
+    reports: reportsEndpoints(transport),
+    exports: exportsEndpoints(transport),
     auditEvents: auditEventsEndpoints(transport),
     outboxEvents: outboxEventsEndpoints(transport),
   };

@@ -1,6 +1,7 @@
 import { createAuthSessionManager, type ApiClient, type AuthSessionManager } from '@ops/shared';
 
 import { env } from '../env';
+import { ApiNotConfiguredError } from './errors';
 
 /** How long the status card waits for GET /health before calling it a timeout. */
 export const HEALTH_TIMEOUT_MS = 5000;
@@ -39,3 +40,14 @@ export const authSession: AuthSessionManager | null =
  * call to the API goes through it, so every call carries the session and renews it on a 401.
  */
 export const apiClient: ApiClient | null = authSession?.client ?? null;
+
+/**
+ * The API client, for query and mutation functions: throws `ApiNotConfiguredError` when
+ * NEXT_PUBLIC_API_URL is missing, which the error states show as a configuration message.
+ */
+export function requireApiClient(): ApiClient {
+  if (apiClient === null) {
+    throw new ApiNotConfiguredError();
+  }
+  return apiClient;
+}

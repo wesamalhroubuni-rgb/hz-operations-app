@@ -1,0 +1,35 @@
+.map {
+  position: relative;
+  inline-size: 100%;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+
+.sm {
+  block-size: 240px;
+}
+
+.md {
+  block-size: 400px;
+}
+
+.lg {
+  block-size: 70vh;
+  min-block-size: 360px;
+}
+
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  block-size: 100%;
+  color: var(--color-text-muted);
+}
+
+/* Leaflet's own controls keep their stylesheet; only the popup text follows the tokens. */
+.map :global(.leaflet-popup-content) {
+  color: var(--color-on-primary);
+  font-size: var(--font-size-sm);
+}

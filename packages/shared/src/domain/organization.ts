@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ApiResult, ApiTransport } from '../api-client/client.js';
 import { idSchema, isoDateTimeSchema } from '../common/primitives.js';
+import { timeZoneSchema } from '../common/time-zone.js';
 import {
   AT_LEAST_ONE_FIELD,
   atLeastOneField,
@@ -25,7 +26,7 @@ export const MAX_OFFLINE_MAX_BACKDATE_DAYS = 90;
 
 /**
  * Organization settings. The keys the API acts on are typed and validated; any other key is
- * kept as it is (time zone, locale, feature switches).
+ * kept as it is (feature switches).
  */
 export const organizationSettingsSchema = z.looseObject({
   /**
@@ -38,6 +39,12 @@ export const organizationSettingsSchema = z.looseObject({
    * {@link DEFAULT_OFFLINE_MAX_BACKDATE_DAYS} when absent.
    */
   offlineMaxBackdateDays: z.number().int().min(1).max(MAX_OFFLINE_MAX_BACKDATE_DAYS).optional(),
+  /**
+   * IANA time zone the dashboard, the reports and the exports show times in, and in which a
+   * "day" is counted (Phase 6, ADR-0009). Defaults to `DEFAULT_TIME_ZONE` (Europe/Istanbul);
+   * read it with `timeZoneOf`.
+   */
+  timeZone: timeZoneSchema.optional(),
 });
 export type OrganizationSettings = z.infer<typeof organizationSettingsSchema>;
 
@@ -83,6 +90,8 @@ const organizationSummaryShape = {
   workLogEditWindowHours: z.number(),
   /** The backdating limit in force for new work logs, in days (the default when unset). */
   offlineMaxBackdateDays: z.number().int(),
+  /** The time zone in force (the default when the organization has not set one). */
+  timeZone: z.string(),
 };
 
 /** What every signed-in user of the organization sees. */
@@ -113,7 +122,11 @@ export const organizationSchema = z.discriminatedUnion('view', [
 ]);
 export type Organization = z.infer<typeof organizationSchema>;
 
-/** Admins only. `settings` replaces the stored settings object as a whole. */
+/**
+ * Admins only. `settings` replaces the stored settings object as a whole: send every key you
+ * want to keep (the settings screen sends `workLogEditWindowHours`, `offlineMaxBackdateDays` and
+ * `timeZone` together, plus any other key it read).
+ */
 export const updateOrganizationSchema = z
   .strictObject({
     name: nameSchema.optional(),

@@ -48,6 +48,21 @@ export interface RecordedChange {
 }
 
 /**
+ * Something the caller did that changes no business record but must be traceable (Phase 6,
+ * ADR-0009): a CSV export. Audit only: no outbox event, because nobody reacts to it.
+ */
+export interface RecordedAccess {
+  organizationId: string;
+  /** Dotted action, e.g. `export.work_logs`. */
+  action: `export.${string}`;
+  entityType: 'export';
+  /** A new id naming this one access. */
+  entityId: string;
+  /** What was done: for an export `{ format, filters, rowCount }`. */
+  after: Record<string, unknown>;
+}
+
+/**
  * Writes the audit event and the outbox event of one change, both named
  * `<entityType>.<verb>`. Every domain service calls this inside the transaction of the change,
  * so the record, its audit row and its event commit or roll back together.
@@ -79,6 +94,21 @@ export class ChangeRecorder {
       aggregateType: change.entityType,
       aggregateId: change.entityId,
       payload: { ...change.extra, [PAYLOAD_KEYS[change.entityType]]: change.after },
+    });
+  }
+
+  /**
+   * The audit-only path (ADR-0009): one audit event, no outbox event, for an action that reads
+   * data in bulk without changing it. The actor and the correlation id come from the request,
+   * and the usual redaction applies to `after`.
+   */
+  async recordAccess(db: Db, access: RecordedAccess): Promise<void> {
+    await this.audit.record(db, {
+      organizationId: access.organizationId,
+      action: access.action,
+      entityType: access.entityType,
+      entityId: access.entityId,
+      after: access.after,
     });
   }
 }

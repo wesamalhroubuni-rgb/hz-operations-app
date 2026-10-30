@@ -4,10 +4,15 @@
 // function for the typed API client.
 export * from './attachments.js';
 export * from './custom-fields.js';
+export * from './dashboard.js';
+export * from './directory.js';
 export * from './enums.js';
+export * from './exports.js';
+export * from './history.js';
 export * from './log-types.js';
 export * from './memberships.js';
 export * from './organization.js';
+export * from './reports.js';
 export * from './scope.js';
 export type { ListQueryParams } from './shared.js';
 export * from './sites.js';

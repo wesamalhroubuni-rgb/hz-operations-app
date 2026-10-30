@@ -80,7 +80,9 @@ model Organization {
   id         String    @id @default(uuid(7)) @db.Uuid
   name       String
   slug       String    @unique
-  /// Free-form organization settings (time zone, locale, feature switches).
+  /// Organization settings, validated by `organizationSettingsSchema` in @ops/shared:
+  /// workLogEditWindowHours, offlineMaxBackdateDays, timeZone (IANA, default Europe/Istanbul,
+  /// Phase 6), plus any other key kept as it is.
   settings   Json      @default("{}")
   createdAt  DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt  DateTime  @updatedAt @db.Timestamptz(3)
@@ -106,6 +108,9 @@ model User {
   phone          String?
   username       String?
   displayName    String
+  /// The user's language (`SUPPORTED_LOCALES` in @ops/shared: en, tr, ar). The apps and the
+  /// server-rendered notification text use it (Phase 6, ADR-0009).
+  locale         String    @default("en")
   createdAt      DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
   archivedAt     DateTime? @db.Timestamptz(3)

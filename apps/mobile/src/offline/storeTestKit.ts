@@ -108,6 +108,7 @@ export const ORGANIZATION: OrganizationSummary = {
   slug: 'demo',
   workLogEditWindowHours: 24,
   offlineMaxBackdateDays: 7,
+  timeZone: 'Europe/Istanbul',
 };
 
 type PullParts = Partial<{

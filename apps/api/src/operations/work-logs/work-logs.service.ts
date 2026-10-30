@@ -1,6 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   customFieldValuesSchema,
+  WORK_LOG_EXCERPT_LENGTH,
+  WORK_LOG_MAP_DEFAULT_DAYS,
+  type BulkWorkLogStatus,
+  type BulkWorkLogStatusItemResult,
+  type BulkWorkLogStatusResult,
+  type WorkLogMap,
+  type WorkLogMapQuery,
   isClockSkewFlagged,
   occurredAtRangeProblem,
   offlineMaxBackdateDaysOf,
@@ -16,7 +23,13 @@ import {
   type WorkLogLocationInput,
 } from '@ops/shared';
 import type { Prisma, WorkLog as WorkLogRow } from '../../generated/prisma/client';
-import { ApiException, orderByArgs, pageArgs, paginated } from '../../platform/http';
+import {
+  ApiException,
+  describeKnownError,
+  orderByArgs,
+  pageArgs,
+  paginated,
+} from '../../platform/http';
 import { canonicalJson } from '../../platform/idempotency/idempotency';
 import { RequestContext } from '../../platform/request-context/request-context';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -37,7 +50,7 @@ import {
 } from '../access';
 import { ChangeRecorder } from '../common/change-recorder';
 import { assertExpectedVersion, lockRowForUpdate, NEXT_VERSION } from '../common/concurrency';
-import { activeUnless, iso, isoOrNull, isUniqueViolation, type Db } from '../common/db';
+import { iso, isoOrNull, isUniqueViolation, type Db } from '../common/db';
 import {
   assertActiveReferences,
   ref,
@@ -45,6 +58,16 @@ import {
   type Reference,
 } from '../common/references';
 import { fieldsOf } from '../log-types/log-types.service';
+import { ATTACHMENT_COUNT, excerptOf, workLogWhere } from './work-log-query';
+
+type WorkLogWithCount = WorkLogRow & { _count: { attachments: number } };
+
+/** The log with `attachmentCount` (ready, non-archived photos), for the reads that carry it. */
+export function toWorkLogWithCount(row: WorkLogWithCount): WorkLog {
+  return { ...toWorkLog(row), attachmentCount: row._count.attachments };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function toWorkLog(row: WorkLogRow): WorkLog {
   const customFields = customFieldValuesSchema.safeParse(row.customFields);
@@ -222,6 +245,8 @@ export interface CreateWorkLogResult {
 
 @Injectable()
 export class WorkLogsService {
+  private readonly logger = new Logger('WorkLogs');
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly changes: ChangeRecorder,
@@ -229,38 +254,138 @@ export class WorkLogsService {
     private readonly clock: AccessClock,
   ) {}
 
-  /** The work logs the caller may see. The filters asked for can only narrow that set. */
+  /**
+   * The work logs the caller may see. The filters asked for can only narrow that set
+   * (`workLogWhere`, shared with the map, the export and the report). Each item carries its
+   * `attachmentCount`, counted in the same query.
+   */
   async list(query: ListWorkLogsQuery): Promise<Paginated<WorkLog>> {
     const context = await this.access.context();
-    const where: Prisma.WorkLogWhereInput = {
-      organizationId: context.organizationId,
-      ...activeUnless(query.includeArchived),
-      AND: [workLogVisibilityWhere(context) as Prisma.WorkLogWhereInput],
-      ...(query.authorId ? { authorId: query.authorId } : {}),
-      ...(query.siteId ? { siteId: query.siteId } : {}),
-      ...(query.teamId ? { teamId: query.teamId } : {}),
-      ...(query.taskId ? { taskId: query.taskId } : {}),
-      ...(query.logTypeId ? { logTypeId: query.logTypeId } : {}),
-      ...(query.status ? { status: query.status } : {}),
-      ...(query.source ? { source: query.source } : {}),
-      ...(query.occurredFrom || query.occurredTo
-        ? {
-            occurredAt: {
-              ...(query.occurredFrom ? { gte: new Date(query.occurredFrom) } : {}),
-              ...(query.occurredTo ? { lt: new Date(query.occurredTo) } : {}),
-            },
-          }
-        : {}),
-    };
+    const where = workLogWhere(context, query);
     const [rows, total] = await Promise.all([
-      this.prisma.workLog.findMany({ where, orderBy: orderByArgs(query.sort), ...pageArgs(query) }),
+      this.prisma.workLog.findMany({
+        where,
+        include: ATTACHMENT_COUNT,
+        orderBy: orderByArgs(query.sort),
+        ...pageArgs(query),
+      }),
       this.prisma.workLog.count({ where }),
     ]);
-    return paginated(rows.map(toWorkLog), total, query);
+    return paginated(rows.map(toWorkLogWithCount), total, query);
   }
 
   async get(id: string): Promise<WorkLog> {
-    return toWorkLog(await this.find(this.prisma, await this.access.context(), id));
+    const context = await this.access.context();
+    const row = await this.prisma.workLog.findFirst({
+      where: {
+        id,
+        organizationId: context.organizationId,
+        AND: [workLogVisibilityWhere(context) as Prisma.WorkLogWhereInput],
+      },
+      include: ATTACHMENT_COUNT,
+    });
+    if (!row) {
+      throw ApiException.notFound('Work log', id);
+    }
+    return toWorkLogWithCount(row);
+  }
+
+  /**
+   * The visible logs with a location, newest `occurredAt` first, at most `limit` (Phase 6,
+   * ADR-0009). Without `occurredFrom` the range is the last `WORK_LOG_MAP_DEFAULT_DAYS` days up
+   * to `occurredTo` (or now). Two queries: a count and one capped page of narrow rows.
+   */
+  async map(query: WorkLogMapQuery): Promise<WorkLogMap> {
+    const context = await this.access.context();
+    const to = query.occurredTo ? new Date(query.occurredTo) : this.clock.now();
+    const from = query.occurredFrom
+      ? new Date(query.occurredFrom)
+      : new Date(to.getTime() - WORK_LOG_MAP_DEFAULT_DAYS * DAY_MS);
+    const where = workLogWhere(
+      context,
+      { ...query, occurredFrom: from.toISOString(), occurredTo: to.toISOString() },
+      [{ latitude: { not: null } }, { longitude: { not: null } }],
+    );
+    const [rows, total] = await Promise.all([
+      this.prisma.workLog.findMany({
+        where,
+        select: {
+          id: true,
+          authorId: true,
+          occurredAt: true,
+          status: true,
+          siteId: true,
+          teamId: true,
+          logTypeId: true,
+          latitude: true,
+          longitude: true,
+          locationAccuracy: true,
+          text: true,
+          ...ATTACHMENT_COUNT,
+        },
+        orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+        take: query.limit,
+      }),
+      this.prisma.workLog.count({ where }),
+    ]);
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        authorId: row.authorId,
+        occurredAt: iso(row.occurredAt),
+        status: row.status,
+        siteId: row.siteId,
+        teamId: row.teamId,
+        logTypeId: row.logTypeId,
+        latitude: row.latitude ?? 0,
+        longitude: row.longitude ?? 0,
+        accuracy: row.locationAccuracy,
+        excerpt: excerptOf(row.text, WORK_LOG_EXCERPT_LENGTH),
+        attachmentCount: row._count.attachments,
+      })),
+      total,
+      truncated: total > rows.length,
+      occurredFrom: iso(from),
+      occurredTo: iso(to),
+    };
+  }
+
+  /**
+   * Approves or rejects many logs (Phase 6, `POST /work-logs/bulk-status`). Each item goes
+   * through {@link changeStatus} exactly as `PATCH /work-logs/:id/status` would: its own
+   * transaction, its own audit and outbox event (and so its own notification), the same rules
+   * (never one's own log: 403 for that item). One refusal never undoes another item. Items are
+   * processed in order, one at a time, and the results keep that order.
+   */
+  async bulkChangeStatus(input: BulkWorkLogStatus): Promise<BulkWorkLogStatusResult> {
+    const results: BulkWorkLogStatusItemResult[] = [];
+    for (const item of input.items) {
+      try {
+        const workLog = await this.changeStatus(item.id, {
+          status: input.status,
+          ...(input.note !== undefined ? { note: input.note } : {}),
+          ...(item.expectedVersion !== undefined ? { expectedVersion: item.expectedVersion } : {}),
+        });
+        results.push({ ok: true, id: item.id, workLog });
+      } catch (error) {
+        const known = describeKnownError(error);
+        if (!known) {
+          this.logger.error(
+            `Bulk review: unexpected error on work log ${item.id}`,
+            error instanceof Error ? error.stack : String(error),
+          );
+        }
+        results.push({
+          ok: false,
+          id: item.id,
+          error: known
+            ? { statusCode: known.statusCode, code: known.code, message: known.message }
+            : { statusCode: 500, code: 'internal_error', message: 'Internal server error' },
+        });
+      }
+    }
+    const succeeded = results.filter((result) => result.ok).length;
+    return { results, succeeded, failed: results.length - succeeded };
   }
 
   /**

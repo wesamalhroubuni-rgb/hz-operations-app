@@ -1,0 +1,221 @@
+/*
+ * Printable work-log report (agent B, ADR-0009). Tokens and logical properties only. On paper
+ * the controls disappear (`.screenOnly`, and the shell hides its navigation), sections avoid
+ * breaking across pages, and the text is printed dark on white whatever the screen theme.
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.link {
+  color: var(--color-primary);
+  font-weight: var(--font-weight-semibold);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.notice {
+  margin: 0;
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-inline-start: 4px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+.report {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.reportHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-block-end: var(--space-md);
+  border-block-end: 2px solid var(--color-border-strong);
+}
+
+.brand {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.range {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+}
+
+.meta {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  break-inside: avoid;
+}
+
+.sectionTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+.totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-sm);
+  margin: 0;
+}
+
+.total {
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.total dt {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.total dd {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+}
+
+.groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-lg);
+}
+
+.table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.table th,
+.table td {
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-sm);
+  border-block-end: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  text-align: start;
+  vertical-align: top;
+}
+
+.table thead th {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.table tbody th {
+  font-weight: var(--font-weight-medium);
+}
+
+.table tr {
+  break-inside: avoid;
+}
+
+.table .number,
+.number {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.barColumn {
+  inline-size: 40%;
+}
+
+.bar {
+  display: block;
+  block-size: var(--space-sm);
+  min-inline-size: 1px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary);
+}
+
+.visuallyHidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media print {
+  .screenOnly {
+    display: none;
+  }
+
+  .page,
+  .report {
+    gap: var(--space-md);
+  }
+
+  /*
+   * Paper is white: print the text in the light scheme's system colours (black, grey rules),
+   * whatever the screen theme. No colour value is written here; `color-scheme` picks them.
+   */
+  .report {
+    color-scheme: light;
+  }
+
+  .report,
+  .report * {
+    color: CanvasText;
+    background: transparent;
+  }
+
+  .report .bar {
+    background: CanvasText;
+    print-color-adjust: exact;
+  }
+
+  .link {
+    text-decoration: none;
+  }
+
+  .total,
+  .table th,
+  .table td {
+    border-color: GrayText;
+  }
+}

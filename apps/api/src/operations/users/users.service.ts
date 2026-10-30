@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import {
   hasLoginIdentifier,
+  localeOf,
   rolesHighestFirst,
   USER_IDENTIFIER_FIELDS,
   type CreatedUser,
   type CreateUser,
+  type AuthSession,
   type IssuedCode,
   type ListUsersQuery,
   type MembershipSummary,
@@ -60,6 +62,7 @@ export interface UserRecord {
   phone: string | null;
   username: string | null;
   displayName: string;
+  locale: string;
   memberships: MembershipSummary[];
   createdAt: string;
   updatedAt: string;
@@ -74,6 +77,7 @@ export function toUserRecord(row: UserRow): UserRecord {
     phone: row.phone,
     username: row.username,
     displayName: row.displayName,
+    locale: localeOf(row.locale),
     memberships: row.memberships.map(toMembershipSummary),
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
@@ -105,6 +109,7 @@ export function toUserFull(row: UserRow, activated: boolean): UserFull {
     username: record.username,
     memberships: record.memberships,
     activated,
+    locale: localeOf(row.locale),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     archivedAt: record.archivedAt,
@@ -294,6 +299,7 @@ export class UsersService {
             email: input.email,
             phone: input.phone,
             username: input.username,
+            locale: input.locale,
           },
           include: USER_INCLUDE,
         });
@@ -360,6 +366,40 @@ export class UsersService {
     });
   }
 
+  /**
+   * The user's active sessions (devices), for an admin (route policy `user.manage`, Phase 6).
+   * Through `AuthAdminService`: never a token, a hash or an IP address.
+   */
+  async sessions(id: string): Promise<{ items: AuthSession[] }> {
+    const context = await this.access.context();
+    await this.findVisible(this.prisma, context, id);
+    return {
+      items: await this.auth.listUserSessions(this.prisma, {
+        userId: id,
+        organizationId: context.organizationId,
+      }),
+    };
+  }
+
+  /**
+   * Ends every session of the user (signs them out on every device) and, through the
+   * session-end hook, removes their push tokens. Audited by the auth module
+   * (`auth.session_revoked`, reason `admin_revoked`) when anything was active.
+   */
+  async revokeSessions(id: string): Promise<{ revoked: number }> {
+    const context = await this.access.context();
+    const { organizationId } = context;
+    return this.prisma.$transaction(async (tx) => {
+      await this.findVisible(tx, context, id);
+      const revoked = await this.auth.revokeUserSessions(tx, {
+        userId: id,
+        organizationId,
+        reason: 'admin_revoked',
+      });
+      return { revoked };
+    });
+  }
+
   /** Archiving an archived user (or restoring an active one) changes and records nothing. */
   private async setArchived(id: string, archived: boolean): Promise<UserFull> {
     const context = await this.access.context();
@@ -406,6 +446,7 @@ export class UsersService {
         email: input.email ?? null,
         phone: input.phone ?? null,
         username: input.username ?? null,
+        ...(input.locale ? { locale: input.locale } : {}),
       },
       include: USER_INCLUDE,
     });

@@ -6,15 +6,18 @@ import {
   sortQuerySchema,
   type Paginated,
 } from '../common/pagination.js';
+import { apiErrorCodeSchema } from '../common/errors.js';
 import { idSchema, isoDateTimeSchema, queryBooleanSchema } from '../common/primitives.js';
 import { customFieldValuesInputSchema, customFieldValuesSchema } from './custom-fields.js';
 import { workLogSourceSchema, workLogStatusSchema } from './enums.js';
+import { recordHistorySchema, type RecordHistory } from './history.js';
 import {
   AT_LEAST_ONE_FIELD,
   atLeastOneFieldBesidesVersion,
   expectedVersionSchema,
   longTextSchema,
   nullableIsoDateTimeSchema,
+  searchQuerySchema,
   uniqueIdListSchema,
   type ListQueryParams,
 } from './shared.js';
@@ -121,6 +124,11 @@ export const workLogSchema = z.object({
   clockSkewFlagged: z.boolean(),
   /** The photo clientIds declared at create: the "original submission" (ADR-0008). */
   declaredAttachmentClientIds: z.array(idSchema),
+  /**
+   * Ready, non-archived photos (Phase 6). Set by `GET /work-logs` and `GET /work-logs/:id`;
+   * absent from write answers and from `/sync/pull`.
+   */
+  attachmentCount: z.number().int().min(0).optional(),
   /** When the server stored the log (its receive time; the edit window counts from it). */
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
@@ -211,11 +219,20 @@ export const changeWorkLogStatusSchema = z
   );
 export type ChangeWorkLogStatus = z.infer<typeof changeWorkLogStatusSchema>;
 
-export const WORK_LOG_SORT_FIELDS = ['occurredAt', 'createdAt'] as const;
+export const WORK_LOG_SORT_FIELDS = ['occurredAt', 'createdAt', 'updatedAt', 'status'] as const;
 
-/** `occurredFrom` is inclusive, `occurredTo` is exclusive. */
-export const listWorkLogsQuerySchema = paginationQuerySchema.extend({
-  sort: sortQuerySchema(WORK_LOG_SORT_FIELDS, { field: 'occurredAt', direction: 'desc' }),
+/**
+ * The filters that the work-log list, the map, the CSV export and the dashboard links share
+ * (Phase 6, ADR-0009). Each is a query parameter of the same name, and the dashboard's page URLs
+ * use the same names, so a filtered view is a shareable link and opens as an export unchanged.
+ * Every filter only NARROWS the caller's visibility (ADR-0005). `occurredFrom` is inclusive,
+ * `occurredTo` exclusive (build them from calendar days with `zonedDaysRange` in the
+ * organization's time zone).
+ *
+ * Phase 6 added `search` (case-insensitive match on the log text) and `hasPhotos` (true: at
+ * least one ready, non-archived attachment; false: none).
+ */
+export const workLogFilterShape = {
   authorId: idSchema.optional(),
   siteId: idSchema.optional(),
   teamId: idSchema.optional(),
@@ -225,11 +242,171 @@ export const listWorkLogsQuerySchema = paginationQuerySchema.extend({
   source: workLogSourceSchema.optional(),
   occurredFrom: isoDateTimeSchema.optional(),
   occurredTo: isoDateTimeSchema.optional(),
+  search: searchQuerySchema,
+  hasPhotos: queryBooleanSchema.optional(),
+  /**
+   * True: leave out the caller's own logs (the review queue: a reviewer never approves their
+   * own). False or absent: no effect. Used by the overview's "awaiting approval" link.
+   */
+  excludeOwn: queryBooleanSchema.optional(),
   includeArchived: queryBooleanSchema.default(false),
+};
+
+export type WorkLogFilterKey = keyof typeof workLogFilterShape;
+/** The filter parameter names. */
+export const WORK_LOG_FILTER_KEYS = Object.keys(workLogFilterShape) as WorkLogFilterKey[];
+
+/** `sort` of the work-log list and export: `occurredAt:desc` by default. */
+export const workLogSortSchema = sortQuerySchema(WORK_LOG_SORT_FIELDS, {
+  field: 'occurredAt',
+  direction: 'desc',
+});
+
+export const listWorkLogsQuerySchema = paginationQuerySchema.extend({
+  sort: workLogSortSchema,
+  ...workLogFilterShape,
 });
 export type ListWorkLogsQuery = z.infer<typeof listWorkLogsQuerySchema>;
 
 export const workLogListSchema = paginatedSchema(workLogSchema);
+
+// ---------------------------------------------------------------------------
+// Bulk review (Phase 6): POST /work-logs/bulk-status [work_log.review]
+// ---------------------------------------------------------------------------
+
+export const BULK_REVIEW_MAX_ITEMS = 100;
+export const BULK_REVIEW_STATUSES = ['approved', 'rejected'] as const;
+
+/**
+ * Approve or reject many logs at once. Each item is processed on its own, exactly as
+ * `PATCH /work-logs/:id/status` would process it (same rules, its own transaction, its own audit
+ * event and notification), so one refusal never undoes another item. Never self-approval: the
+ * caller's own logs are refused per item (403). `note` is required when rejecting and applies to
+ * every item.
+ */
+export const bulkWorkLogStatusSchema = z
+  .strictObject({
+    status: z.enum(BULK_REVIEW_STATUSES),
+    note: z.string().trim().min(1).max(WORK_LOG_REVIEW_NOTE_MAX_LENGTH).optional(),
+    items: z
+      .array(
+        z.strictObject({
+          id: idSchema,
+          expectedVersion: expectedVersionSchema.optional(),
+        }),
+      )
+      .min(1)
+      .max(BULK_REVIEW_MAX_ITEMS)
+      .refine((items) => new Set(items.map((item) => item.id)).size === items.length, {
+        error: 'must not contain the same log twice',
+      }),
+  })
+  .refine((body) => body.status !== 'rejected' || body.note !== undefined, {
+    path: ['note'],
+    error: 'is required when rejecting logs',
+  });
+export type BulkWorkLogStatus = z.infer<typeof bulkWorkLogStatusSchema>;
+export type BulkWorkLogStatusInput = z.input<typeof bulkWorkLogStatusSchema>;
+
+/** One item's outcome: the log as it is now, or the error the single call would have given. */
+export const bulkWorkLogStatusItemResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), id: idSchema, workLog: workLogSchema }),
+  z.object({
+    ok: z.literal(false),
+    id: idSchema,
+    error: z.object({
+      statusCode: z.number().int(),
+      code: apiErrorCodeSchema,
+      message: z.string(),
+    }),
+  }),
+]);
+export type BulkWorkLogStatusItemResult = z.infer<typeof bulkWorkLogStatusItemResultSchema>;
+
+/** HTTP 200 once the body is valid, even when every item failed. Results keep the item order. */
+export const bulkWorkLogStatusResultSchema = z.object({
+  results: z.array(bulkWorkLogStatusItemResultSchema),
+  succeeded: z.number().int().min(0),
+  failed: z.number().int().min(0),
+});
+export type BulkWorkLogStatusResult = z.infer<typeof bulkWorkLogStatusResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Map (Phase 6): GET /work-logs/map [work_log.read]
+// ---------------------------------------------------------------------------
+
+export const WORK_LOG_MAP_DEFAULT_LIMIT = 500;
+export const WORK_LOG_MAP_MAX_LIMIT = 1000;
+/** Without `occurredFrom`, the map covers the last this many days (up to `occurredTo` or now). */
+export const WORK_LOG_MAP_DEFAULT_DAYS = 7;
+/** Length of the text excerpt in map points and report rows. */
+export const WORK_LOG_EXCERPT_LENGTH = 140;
+
+/**
+ * The visible logs WITH a location, newest `occurredAt` first, capped at `limit`. The same
+ * filters as the list.
+ */
+export const workLogMapQuerySchema = z.object({
+  ...workLogFilterShape,
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(WORK_LOG_MAP_MAX_LIMIT)
+    .default(WORK_LOG_MAP_DEFAULT_LIMIT),
+});
+export type WorkLogMapQuery = z.infer<typeof workLogMapQuerySchema>;
+
+export const workLogMapPointSchema = z.object({
+  id: idSchema,
+  authorId: idSchema,
+  occurredAt: isoDateTimeSchema,
+  status: workLogStatusSchema,
+  siteId: idSchema.nullable(),
+  teamId: idSchema.nullable(),
+  logTypeId: idSchema.nullable(),
+  latitude: z.number(),
+  longitude: z.number(),
+  accuracy: z.number().nullable(),
+  /** The first `WORK_LOG_EXCERPT_LENGTH` characters of the text, or null. */
+  excerpt: z.string().nullable(),
+  /** Ready, non-archived photos. */
+  attachmentCount: z.number().int().min(0),
+});
+export type WorkLogMapPoint = z.infer<typeof workLogMapPointSchema>;
+
+export const workLogMapSchema = z.object({
+  items: z.array(workLogMapPointSchema),
+  /** Matching logs with a location, before the cap. */
+  total: z.number().int().min(0),
+  truncated: z.boolean(),
+  /** The range actually used (the default range when none was asked for). */
+  occurredFrom: isoDateTimeSchema,
+  occurredTo: isoDateTimeSchema,
+});
+export type WorkLogMap = z.infer<typeof workLogMapSchema>;
+
+// ---------------------------------------------------------------------------
+// History (Phase 6): GET /work-logs/:id/history [work_log.read]
+// ---------------------------------------------------------------------------
+
+/**
+ * The fields of a work log whose changes the history shows. Every other field of the audit
+ * record (organization id, client id, AI metadata, version, offline metadata) is left out.
+ */
+export const WORK_LOG_HISTORY_FIELDS = [
+  'status',
+  'review',
+  'occurredAt',
+  'text',
+  'customFields',
+  'location',
+  'taskId',
+  'siteId',
+  'teamId',
+  'logTypeId',
+  'archivedAt',
+] as const;
 
 export function workLogsEndpoints(transport: ApiTransport) {
   return {
@@ -285,6 +462,26 @@ export function workLogsEndpoints(transport: ApiTransport) {
         method: 'POST',
         path: `/work-logs/${id}/archive`,
         schema: workLogSchema,
+      });
+    },
+    /** Phase 6. Approve or reject many logs; per-item results (see `bulkWorkLogStatusSchema`). */
+    bulkChangeStatus(body: BulkWorkLogStatusInput): Promise<ApiResult<BulkWorkLogStatusResult>> {
+      return transport.request({
+        method: 'POST',
+        path: '/work-logs/bulk-status',
+        body,
+        schema: bulkWorkLogStatusResultSchema,
+      });
+    },
+    /** Phase 6. Located logs for the map. */
+    map(query: ListQueryParams<typeof workLogMapQuerySchema> = {}): Promise<ApiResult<WorkLogMap>> {
+      return transport.request({ path: '/work-logs/map', query, schema: workLogMapSchema });
+    },
+    /** Phase 6. The log's audit trail (and its photos'), oldest first, role-shaped. */
+    history(id: string): Promise<ApiResult<RecordHistory>> {
+      return transport.request({
+        path: `/work-logs/${id}/history`,
+        schema: recordHistorySchema,
       });
     },
   };

@@ -1,0 +1,81 @@
+/* Modal, Drawer and ConfirmDialog: native <dialog> (focus trap, Escape, top layer for free). */
+
+.dialog {
+  inline-size: min(560px, calc(100vw - 2 * var(--space-lg)));
+  max-block-size: calc(100dvh - 2 * var(--space-xl));
+  padding: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+
+.dialog::backdrop {
+  background: var(--color-background);
+  opacity: 0.75;
+}
+
+.sm {
+  inline-size: min(420px, calc(100vw - 2 * var(--space-lg)));
+}
+
+.lg {
+  inline-size: min(880px, calc(100vw - 2 * var(--space-lg)));
+}
+
+.drawer {
+  inline-size: min(520px, 100vw);
+  max-inline-size: 100vw;
+  block-size: 100dvh;
+  max-block-size: 100dvh;
+  margin-block: 0;
+  margin-inline: auto 0;
+  border-block: 0;
+  border-inline-end: 0;
+  border-radius: 0;
+}
+
+.inner {
+  display: flex;
+  flex-direction: column;
+  max-block-size: inherit;
+  block-size: 100%;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding-block: var(--space-lg);
+  padding-inline: var(--space-xl);
+  border-block-end: 1px solid var(--color-border);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+
+.body {
+  flex: 1;
+  overflow: auto;
+  padding-block: var(--space-lg);
+  padding-inline: var(--space-xl);
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  padding-block: var(--space-md);
+  padding-inline: var(--space-xl);
+  border-block-start: 1px solid var(--color-border);
+}
+
+.description {
+  margin: 0;
+  color: var(--color-text-secondary);
+}

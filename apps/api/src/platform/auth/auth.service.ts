@@ -19,6 +19,7 @@ import type {
   LoginRequest,
   SetPasswordRequest,
 } from '@ops/shared';
+import { localeOf } from '@ops/shared';
 import type { AuditService } from '../audit/audit.service';
 import { ApiException } from '../http/api-exception';
 import { RequestContext, type RequestActor } from '../request-context/request-context';
@@ -520,6 +521,7 @@ export class AuthService {
       username: user.username,
       roles: profile.roles,
       role: profile.role,
+      locale: localeOf(user.locale),
     };
   }
 

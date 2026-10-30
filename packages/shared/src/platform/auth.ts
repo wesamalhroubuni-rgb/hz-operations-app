@@ -61,6 +61,11 @@ export const authUserSchema = z.object({
   roles: z.array(z.string()),
   /** The highest of `roles`, or null for a user with no active membership. */
   role: z.string().nullable(),
+  /**
+   * The user's language (Phase 6, `User.locale`). Optional on the wire so an older API still
+   * parses; read it with `localeOf`, which falls back to `en`.
+   */
+  locale: z.string().optional(),
 });
 export type AuthUser = z.infer<typeof authUserSchema>;
 

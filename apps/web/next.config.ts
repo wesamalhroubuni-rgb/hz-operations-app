@@ -16,6 +16,12 @@ const isProduction = process.env.NODE_ENV === 'production';
  * `script-src` and `style-src` are left out: Next.js injects inline scripts (and, in development,
  * uses `eval` for hot reload), so restricting them needs a per-request nonce from a proxy. That
  * is worth doing before production and is not done here.
+ *
+ * Phase 6 (ADR-0009): there is no `default-src`, so images and connections are not restricted
+ * yet, and the map tiles (OpenStreetMap or NEXT_PUBLIC_MAP_TILE_URL) and the signed photo URLs
+ * of the storage (STORAGE_PUBLIC_ENDPOINT) load as they are. When the nonce-based policy is
+ * added it must allow `img-src 'self' data: blob: https://tile.openstreetmap.org <storage
+ * origin>` (or the configured tile host) and `connect-src 'self' <API origin>`.
  */
 const securityHeaders = [
   { key: 'X-Frame-Options', value: 'DENY' },

@@ -54,6 +54,7 @@ const FULL_KEYS = [
   'activated',
   'archivedAt',
   'createdAt',
+  'locale',
   'memberships',
   'organizationId',
   'updatedAt',
@@ -320,6 +321,7 @@ describe('permissions matrix: who sees what', () => {
               'offlineMaxBackdateDays',
               'settings',
               'slug',
+              'timeZone',
               'updatedAt',
               'view',
               'workLogEditWindowHours',
@@ -333,10 +335,119 @@ describe('permissions matrix: who sees what', () => {
             slug: w.alpha.slug,
             workLogEditWindowHours: 24,
             offlineMaxBackdateDays: 7,
+            timeZone: 'Europe/Istanbul',
           });
         }
       },
     );
+  });
+
+  // Phase 6 (ADR-0009): dashboard.read, directory.read, export.work_logs, export.tasks and
+  // report.read are supervisor+; every answer stays inside the caller's visibility.
+  describe('dashboard reads (Phase 6)', () => {
+    const range = () => ({
+      occurredFrom: new Date(at(0).getTime() - 2 * 86_400_000).toISOString(),
+      occurredTo: new Date(at(0).getTime() + 2 * 86_400_000).toISOString(),
+    });
+
+    it.each(VIEWERS)(
+      'route access as %s: supervisors, managers and admins only',
+      async (viewer) => {
+        const caller = api(viewer);
+        const statuses = {
+          overview: (await caller.get('/dashboard/overview')).status,
+          directory: (await caller.get('/directory')).status,
+          report: (await caller.get('/reports/work-logs', range())).status,
+          workLogsCsv: (await caller.get('/exports/work-logs.csv')).status,
+          tasksCsv: (await caller.get('/exports/tasks.csv')).status,
+          sessions: (await caller.get(`/users/${w.users.wA}/sessions`)).status,
+        };
+        const ok = isSupervisorOrAbove(viewer) ? 200 : 403;
+        expect(statuses).toEqual({
+          overview: ok,
+          directory: ok,
+          report: ok,
+          workLogsCsv: ok,
+          tasksCsv: ok,
+          sessions: ADMINS.includes(viewer) ? 200 : 403,
+        });
+      },
+    );
+
+    it.each(VIEWERS.filter(isSupervisorOrAbove))(
+      'as %s every number, export and report counts exactly the visible records',
+      async (viewer) => {
+        const caller = api(viewer);
+        const overview = await caller.get('/dashboard/overview');
+        // The review queue leaves out the caller's own logs, and its link lists the same set.
+        const reviewable = VISIBLE_LOGS[viewer].filter(
+          (log) => LOG_TEMPLATES[log].author !== viewer,
+        );
+        expect(overview.body.logsAwaitingApproval.count).toBe(reviewable.length);
+        expect(
+          (
+            await caller.get('/work-logs', {
+              ...overview.body.logsAwaitingApproval.filter,
+              pageSize: 100,
+            })
+          ).body.total,
+        ).toBe(reviewable.length);
+        const report = await caller.get('/reports/work-logs', range());
+        expect(report.body.totals.logs).toBe(VISIBLE_LOGS[viewer].length);
+        const csvIds = (text: string) =>
+          text
+            .replace(/^\uFEFF/, '')
+            .trim()
+            .split('\r\n')
+            .slice(1)
+            .map((line) => w.nameOf(line.split(',')[0]!))
+            .sort();
+        expect(csvIds((await caller.get('/exports/work-logs.csv')).text)).toEqual(
+          [...VISIBLE_LOGS[viewer]].sort(),
+        );
+        expect(csvIds((await caller.get('/exports/tasks.csv')).text)).toEqual(
+          [...VISIBLE_TASKS[viewer]].sort(),
+        );
+        const directory = await caller.get('/directory');
+        expect(
+          (directory.body.sites as Json[]).map((site) => w.nameOf(site.id as string)).sort(),
+        ).toEqual([...VISIBLE_SITES[viewer]].sort());
+        expect(
+          (directory.body.teams as Json[]).map((team) => w.nameOf(team.id as string)).sort(),
+        ).toEqual([...VISIBLE_TEAMS[viewer]].sort());
+        expect(
+          (directory.body.users as Json[]).map((user) => w.nameOf(user.id as string)).sort(),
+        ).toEqual(Object.keys(VISIBLE_USERS[viewer]).sort());
+        for (const user of directory.body.users as Json[]) {
+          expect(Object.keys(user).sort()).toEqual(['archived', 'displayName', 'id', 'roles']);
+        }
+      },
+    );
+
+    it.each(VIEWERS)(
+      'GET /work-logs/:id/history as %s: 200 if visible, else 404',
+      async (viewer) => {
+        const actual = await row(LOGS, async (name) => {
+          return (await api(viewer).get(`/work-logs/${w.logs[name]}/history`)).status;
+        });
+        expect(actual).toEqual(
+          expected(LOGS, (name) =>
+            viewer === 'noMember' ? 403 : VISIBLE_LOGS[viewer].includes(name) ? 200 : 404,
+          ),
+        );
+      },
+    );
+
+    it.each(VIEWERS)('GET /tasks/:id/history as %s: 200 if visible, else 404', async (viewer) => {
+      const actual = await row(TASKS, async (name) => {
+        return (await api(viewer).get(`/tasks/${w.tasks[name]}/history`)).status;
+      });
+      expect(actual).toEqual(
+        expected(TASKS, (name) =>
+          viewer === 'noMember' ? 403 : VISIBLE_TASKS[viewer].includes(name) ? 200 : 404,
+        ),
+      );
+    });
   });
 
   describe('scope, memberships, log types, audit and outbox reads', () => {
@@ -511,6 +622,37 @@ describe('permissions matrix: who may change what', () => {
                 : !isAuthor(viewer, name) && isSupervisorOrAbove(viewer)
                   ? 200
                   : 403,
+          ),
+        );
+      },
+    );
+
+    // Phase 6: work_log.review (supervisor+). One request for every log; each item answers what
+    // the single approval would (never the author's own log, 404 outside visibility).
+    it.each(VIEWERS)(
+      'bulk approve as %s: per item exactly like the single approval',
+      async (viewer) => {
+        const ids = {} as Record<LogName, string>;
+        for (const name of LOGS) {
+          ids[name] = await w.freshLog(name);
+        }
+        const response = await api(viewer).post('/work-logs/bulk-status', {
+          status: 'approved',
+          items: LOGS.map((name) => ({ id: ids[name] })),
+        });
+        if (!isSupervisorOrAbove(viewer)) {
+          expect(response.status).toBe(403);
+          return;
+        }
+        expect(response.status).toBe(200);
+        const results = response.body.results as Json[];
+        const actual = expected(LOGS, (name) => {
+          const result = results.find((item) => item.id === ids[name]);
+          return result.ok ? 200 : (result.error.statusCode as number);
+        });
+        expect(actual).toEqual(
+          expected(LOGS, (name) =>
+            !logVisible(viewer, name) ? 404 : isAuthor(viewer, name) ? 403 : 200,
           ),
         );
       },

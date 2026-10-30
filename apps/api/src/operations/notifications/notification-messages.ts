@@ -1,7 +1,10 @@
+import { DEFAULT_LOCALE, localeOf, type Locale } from '@ops/shared';
+
 /**
- * The text of every Operations notification, keyed by type and locale. English only today; a
- * new language is a new entry in `CATALOGUE` (the recipient's locale is not stored yet, so
- * `renderNotification` is called with the default).
+ * The text of every Operations notification, keyed by locale and type. The recipient's
+ * User.locale picks the catalogue (Phase 6, ADR-0009); a catalogue may lack any key, and a
+ * missing key (today every Turkish and Arabic one) falls back to English, key by key. An
+ * unknown or unsupported locale is English.
  */
 
 export const OPERATIONS_NOTIFICATION_TYPES = [
@@ -34,34 +37,42 @@ type Catalogue = {
   ) => RenderedNotification;
 };
 
-export const DEFAULT_NOTIFICATION_LOCALE = 'en';
+export const DEFAULT_NOTIFICATION_LOCALE: Locale = DEFAULT_LOCALE;
 
-const CATALOGUE: Record<string, Catalogue> = {
-  en: {
-    'task.assigned': ({ taskTitle }) => ({
-      title: `New task: ${taskTitle}`,
-      body: 'You have been assigned a task. Open it to see the details.',
-      push: { title: 'New task assigned', body: 'Open the app to see it.' },
-    }),
-    'work_log.approved': () => ({
-      title: 'Work log approved',
-      body: 'Your work log was approved.',
-      push: { title: 'Work log approved', body: 'Open the app to see it.' },
-    }),
-    'work_log.rejected': ({ note }) => ({
-      title: 'Work log rejected',
-      body: note ? `Your work log was rejected: ${note}` : 'Your work log was rejected.',
-      push: { title: 'Work log rejected', body: 'Open the app for the reason.' },
-    }),
-  },
+const ENGLISH: Catalogue = {
+  'task.assigned': ({ taskTitle }) => ({
+    title: `New task: ${taskTitle}`,
+    body: 'You have been assigned a task. Open it to see the details.',
+    push: { title: 'New task assigned', body: 'Open the app to see it.' },
+  }),
+  'work_log.approved': () => ({
+    title: 'Work log approved',
+    body: 'Your work log was approved.',
+    push: { title: 'Work log approved', body: 'Open the app to see it.' },
+  }),
+  'work_log.rejected': ({ note }) => ({
+    title: 'Work log rejected',
+    body: note ? `Your work log was rejected: ${note}` : 'Your work log was rejected.',
+    push: { title: 'Work log rejected', body: 'Open the app for the reason.' },
+  }),
 };
 
-/** The title and body of a notification, in the locale if it exists, else in English. */
+/** Translations by locale; English is complete, the others hold what has been translated. */
+const CATALOGUES: Record<Locale, Partial<Catalogue>> = {
+  en: ENGLISH,
+  tr: {},
+  ar: {},
+};
+
+/**
+ * The title, body and push text of a notification in the locale (tr-TR reads as tr), each
+ * type falling back to English when that catalogue lacks it.
+ */
 export function renderNotification<Type extends OperationsNotificationType>(
   type: Type,
   variables: NotificationVariables[Type],
   locale: string = DEFAULT_NOTIFICATION_LOCALE,
 ): RenderedNotification {
-  const catalogue = CATALOGUE[locale] ?? CATALOGUE[DEFAULT_NOTIFICATION_LOCALE]!;
-  return catalogue[type](variables);
+  const render = (CATALOGUES[localeOf(locale)][type] ?? ENGLISH[type]) as Catalogue[Type];
+  return render(variables);
 }

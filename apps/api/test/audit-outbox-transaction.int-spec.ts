@@ -269,7 +269,7 @@ describe('audit and outbox in the transaction of the change', () => {
       // A user is recorded as the stored row: no response-shape fields (profile, roles,
       // activated) and never the activation code of the answer.
       const { id, organizationId, email, phone, username, displayName } = response.body;
-      const { memberships, createdAt, updatedAt, archivedAt } = response.body;
+      const { locale, memberships, createdAt, updatedAt, archivedAt } = response.body;
       expect(outbox.payload).toEqual({
         user: {
           id,
@@ -278,6 +278,7 @@ describe('audit and outbox in the transaction of the change', () => {
           phone,
           username,
           displayName,
+          locale,
           memberships,
           createdAt,
           updatedAt,

@@ -3,6 +3,8 @@ import type { Metadata, Viewport } from 'next';
 import type { CSSProperties, ReactNode } from 'react';
 
 import { AuthProvider } from '@/components/auth-provider';
+import { QueryProvider } from '@/components/query-provider';
+import { DIRECTION, LOCALE } from '@/i18n';
 import { brand } from '@/lib/brand';
 
 import './globals.css';
@@ -29,9 +31,11 @@ const themeVariables = themeCssVariables(defaultTheme) as CSSProperties;
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en" style={themeVariables}>
+    <html lang={LOCALE} dir={DIRECTION} style={themeVariables}>
       <body>
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <QueryProvider>{children}</QueryProvider>
+        </AuthProvider>
       </body>
     </html>
   );

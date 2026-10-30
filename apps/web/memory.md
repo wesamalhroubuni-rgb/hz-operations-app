@@ -1,78 +1,101 @@
 # apps/web memory
 
-Package `@ops/web`. Last updated: 2026-10-16.
+Package `@ops/web`. Last updated: 2026-10-28.
 
 ## Purpose
 
-The manager dashboard: a web app where supervisors, managers, and admins monitor the work that
-workers log. Built with Next.js (App Router) and React.
+The manager dashboard: a web app where supervisors, managers, and admins monitor and manage the
+work that workers log. Built with Next.js (App Router) and React. The architecture is in
+[ADR-0009](../../docs/decisions/0009-web-dashboard-architecture.md).
 
 ## Current state
 
-Sign-in only, no dashboard features yet (Phase 3, code complete on 2026-10-16).
+Phase 6 code complete, tested, and reviewed on 2026-10-28 (about to be committed). **Not yet used
+in a browser with data** (it needs the owner's `pnpm db:reset`); only a smoke test (every route
+answers, security headers present). The browser test list is in `docs/reports/phase-6.md`.
 
-- **`/login`**: branded sign-in form (email, phone, or username plus password). Signed-in users are
-  sent on to `?next=` (sanitised) or `/`.
-- **`/activate`**: activation and password reset with a one-time code. A code arriving as `?code=`
-  in a link pre-fills the form and is removed from the address bar; the page is sent with
-  `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. After success the user signs in.
-- **`/` (protected)**: logo, product name, a session card with the user's name, role label, and
-  organization, "Sign out" and "Sign out everywhere", and the API status card.
-- **Session**: `createAuthSessionManager({ mode: 'web' })` from `@ops/shared`. The API keeps the
-  session in httpOnly cookies the page cannot read; requests go with `credentials: 'include'`, and
-  only the CSRF token is kept, in memory. On load the manager calls `GET /auth/me`. A 401 triggers
-  one refresh and one repeat. Nothing is stored in `localStorage` or `sessionStorage`.
-- **Route guard** (`AuthProvider` + `src/lib/auth/routes.ts`): signed-out users go to `/login`,
-  protected content never flashes (a loading state is shown while the session is checked). It is a
-  convenience only; the API authorises every request.
+- **Public pages** (Phase 3): `/login` (email, phone, or username plus password; signed-in users go
+  to `?next=`, sanitised, or `/`) and `/activate` (activation and reset with a one-time code; a
+  `?code=` is pre-filled and removed from the address bar; `no-referrer`, `no-store`).
+- **Dashboard** (`src/app/(dashboard)/`, inside `AppShell`):
+
+  | Route                   | Roles                      | What it does                                                                                                                                               |
+  | ----------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `/`                     | supervisor, manager, admin | Overview: today's logs, awaiting my approval (`excludeOwn`), open, overdue, blocked tasks, per site and team, idle workers; each number links to its list. |
+  | `/work-logs`            | supervisor, manager, admin | Table with filters (site, team, worker, log type, status, days, photos, search), sort, paging in the URL; bulk approve or reject; CSV export.              |
+  | `/work-logs/[id]`       | supervisor, manager, admin | Custom fields, photo gallery (signed URLs, lightbox), location map, offline facts and clock warning, history, approve or reject with a note.               |
+  | `/work-logs/report`     | supervisor, manager, admin | Printable report for up to 92 days (`@media print`).                                                                                                       |
+  | `/map`                  | supervisor, manager, admin | Recent located logs (Leaflet), also listed as text.                                                                                                        |
+  | `/tasks`, `/tasks/[id]` | supervisor, manager, admin | List and board by status; create, edit, assign, status with reason and version check; history; CSV export.                                                 |
+  | `/people`               | manager (read only), admin | Invite (activation code shown once), reset code, archive and restore, memberships and scope, sessions and sign-out everywhere, language.                   |
+  | `/structure`            | manager, admin             | Sites and teams as trees; log types with the custom-field editor (saved keys locked, a saved key cannot be reused; saving raises the version).             |
+  | `/audit`                | admin                      | Audit log with filters, paging, and the redacted diff and offline facts.                                                                                   |
+  | `/settings`             | admin                      | Organization name, time zone, edit window, offline backdating limit (sends every settings key).                                                            |
+
+- **Shell** (`src/components/shell/`): navigation by role from `src/lib/navigation.ts` and
+  `src/lib/permissions.ts` (mirrors the API policy registry; UX only), organization name and time
+  zone, the account menu (`user-menu.tsx`: name, role, sign out, sign out everywhere), skip link,
+  "Powered by Kaneri.ai". A worker sees "use the mobile app". Pages render only after the
+  organization (and so its time zone) has loaded (`orgTimeGate` in `src/lib/time.ts`).
+- **Session**: `createAuthSessionManager({ mode: 'web' })` from `@ops/shared`; httpOnly cookies
+  the page cannot read, the CSRF token in memory only, `GET /auth/me` on load, one refresh on a 401. Nothing in `localStorage` or `sessionStorage`. The query cache is cleared when nobody is
+  signed in.
 - **Security headers** (`next.config.ts`): `X-Frame-Options: DENY`, CSP limited to
   `frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'`, `nosniff`,
   referrer and permissions policies, HSTS in production, `poweredByHeader: false`. No
-  `script-src` / `style-src` yet: Next.js needs per-request nonces for that.
-- **Branding and tokens** as in Phase 2: name from `NEXT_PUBLIC_BRAND_NAME` via `src/lib/brand.ts`,
-  colours and sizes from the CSS variables generated from `@ops/shared` tokens.
-- Sends `NEXT_PUBLIC_ORGANIZATION_SLUG` with every sign-in.
-- 46 unit tests in 3 files (`src/lib/brand.test.ts`, `src/lib/api/client.test.ts`,
-  `src/lib/auth/routes.test.ts`).
-
-Verified in the Phase 3 session: lint, typecheck, and tests pass; the clients agent ran 24/24
-automated browser checks of these flows against the real API. **Not verified**: the owner signing in in a real browser; `pnpm build` in the
-final pass; the status card's automatic recovery watched in a real browser.
+  `default-src`, `script-src`, `style-src`, `img-src`, or `connect-src`: the hosts a Phase 8
+  nonce-based policy must allow (tiles, storage, API) are listed in the comment there.
+- **Tests**: 174 unit tests in 11 files (2026-10-28), all in `src/**/*.test.ts` (Vitest, `node`
+  environment): `src/lib/*.test.ts`, `src/lib/work-logs/work-logs.test.ts`, and
+  `src/components/manage/screens.render.test.ts` (renders management screens to a string).
+- Not built: photo upload from the browser (deferred to Phase 8: a CORS rule on the bucket);
+  catalogues other than English; restoring archived log types (no API route).
 
 ## Key files
 
-| File                                                                                                             | What it does                                                                                          |
-| ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `src/app/layout.tsx`                                                                                             | Root layout. Metadata from the brand module; theme tokens on `<html>`; wraps pages in `AuthProvider`. |
-| `src/app/page.tsx`                                                                                               | The protected placeholder home page: logo, name, label, `SessionCard`, `ApiStatus`, footer.           |
-| `src/app/login/page.tsx`                                                                                         | Sign-in page (`AuthShell` + `LoginForm`).                                                             |
-| `src/app/activate/page.tsx`                                                                                      | Activation and reset page; reads `?code=` (at most 200 characters) and passes it to `ActivateForm`.   |
-| `src/components/auth-provider.tsx`                                                                               | Subscribes to the session manager, starts the session check once, `RouteGuard`, `useAuth()`.          |
-| `src/components/session-card.tsx`                                                                                | Name, role label, organization, sign-out buttons.                                                     |
-| `src/components/login-form.tsx`, `activate-form.tsx`, `form-fields.tsx`, `auth-shell.tsx`, `session-loading.tsx` | Sign-in UI. Wording from `AUTH_TEXT` in `@ops/shared`.                                                |
-| `src/hooks/use-login-form.ts`, `use-activate-form.ts`, `use-sign-out.ts`                                         | Form and sign-out state.                                                                              |
-| `src/hooks/use-api-health.ts`                                                                                    | Connects the shared health monitor to React.                                                          |
-| `src/lib/auth/routes.ts`                                                                                         | Public paths, `sanitizeRedirectPath` (no open redirect), `guardView`, `guardRedirect`.                |
-| `src/lib/api/client.ts`                                                                                          | `authSession` (web-mode session manager) and `apiClient`, both `null` without an API URL. `no-store`. |
-| `src/lib/env.ts`                                                                                                 | The only place that reads environment variables: `apiUrl`, `brandName`, `organizationSlug`.           |
-| `src/lib/brand.ts`                                                                                               | `brand`: name, app label, logo, and the "Powered by Kaneri.ai" line.                                  |
-| `scripts/next.mjs`                                                                                               | Launcher that copies `WEB_PORT` to `PORT`, then runs the Next.js CLI.                                 |
-| `next.config.ts`                                                                                                 | Strict mode, `agentRules: false`, monorepo root, `poweredByHeader: false`, security headers.          |
-| `vitest.config.mts`                                                                                              | Node environment, `src/**/*.test.ts`, `@` alias to `src`.                                             |
+| File or folder                                           | What it does                                                                                                                                                                                              |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/app/layout.tsx`                                     | Root layout: brand metadata, theme tokens on `<html>`, `lang` / `dir` from `LOCALE`, `AuthProvider`, `QueryProvider`.                                                                                     |
+| `src/app/(dashboard)/layout.tsx`                         | Wraps every dashboard page in `AppShell`.                                                                                                                                                                 |
+| `src/components/query-provider.tsx`                      | The TanStack Query client with the defaults of `src/lib/api/query.ts`.                                                                                                                                    |
+| `src/components/auth-provider.tsx`                       | Subscribes to the session manager, `RouteGuard`, `useAuth()`.                                                                                                                                             |
+| `src/components/ui/`                                     | DataTable, Pagination, filters, Loading/Empty/ErrorState, dialogs (`<dialog>`), form controls, StatusBadge, layout.                                                                                       |
+| `src/components/<area>/`                                 | One folder per page area: `overview`, `work-logs`, `tasks`, `map-page`, `report`, `exports`, `people`, `structure`, `audit`, `settings`, `manage` (shared parts of the admin screens).                    |
+| `src/components/map/`                                    | `map-view.tsx` loads `leaflet-map.tsx` with `next/dynamic` (`ssr: false`).                                                                                                                                |
+| `src/hooks/`                                             | `use-caller` (role, capabilities), `use-organization`, `use-directory`, `use-list-params`, `use-work-logs`, sign-in and sign-out hooks.                                                                   |
+| `src/lib/api/client.ts`, `api/query.ts`, `api/errors.ts` | `authSession` and `apiClient` (null without an API URL); `queryKeys`, `unwrap`, retry rules; error to message mapping.                                                                                    |
+| `src/lib/list-params.ts`                                 | URL list state: parse and write filters, sort, page (a filter change resets to page 1).                                                                                                                   |
+| `src/lib/time.ts`                                        | `createOrgTime` / `useOrgTime`, `orgTimeGate`, day ranges over the shared time-zone helpers.                                                                                                              |
+| `src/lib/permissions.ts`, `navigation.ts`                | Capabilities per role; routes, navigation, and route access.                                                                                                                                              |
+| `src/lib/log-type-editor.ts`                             | The custom-field editor's logic (locked saved keys, `keyReused`, choices, order, validation).                                                                                                             |
+| `src/lib/` (others)                                      | `directory.ts`, `download.ts` (`saveTextFile` re-adds the CSV BOM), `exports.ts`, `map.ts`, `overview.ts`, `report.ts`, `tasks.ts`, `people.ts`, `structure.ts`, `settings.ts`, `audit.ts`, `work-logs/`. |
+| `src/i18n/index.ts`, `src/i18n/en/*.ts`                  | `t()` over the shared translator; English catalogue, one file per namespace.                                                                                                                              |
+| `src/lib/env.ts`                                         | The only place that reads environment variables.                                                                                                                                                          |
+| `src/lib/brand.ts`                                       | Name, app label, logo, "Powered by Kaneri.ai".                                                                                                                                                            |
+| `scripts/next.mjs`                                       | Copies `WEB_PORT` to `PORT`, then runs the Next.js CLI.                                                                                                                                                   |
+| `next.config.ts`                                         | Strict mode, `agentRules: false`, monorepo root, `poweredByHeader: false`, security headers.                                                                                                              |
 
 `next-env.d.ts` and `.next/` are generated and git-ignored.
+
+## Dependencies
+
+Next.js `~16.4.3` (16.4.0 to 16.4.3 on 2026-10-28 after a security notice; `eslint-config-next`
+the same), React and React DOM exactly `19.2.3` (same as mobile), `@tanstack/react-query` 5.104.3
+(the mobile app's version), `@tanstack/react-table` 8.21.3, `leaflet` 1.9.4, `react-leaflet`
+5.0.0, `@types/leaflet` 1.9.22, `zod`.
 
 ## Environment variables
 
 | Variable                        | Used by            | Notes                                                                                      |
 | ------------------------------- | ------------------ | ------------------------------------------------------------------------------------------ |
-| `WEB_PORT`                      | `scripts/next.mjs` | Port for `dev` and `start`. Next.js itself reads `PORT`.                                   |
+| `WEB_PORT`                      | `scripts/next.mjs` | Port for `dev` and `start`. On the owner's PC 3000 is taken: use for example 3100.         |
 | `NEXT_PUBLIC_API_URL`           | `src/lib/env.ts`   | Must be an `http` or `https` URL. Inlined at build time.                                   |
-| `NEXT_PUBLIC_BRAND_NAME`        | `src/lib/env.ts`   | Product name shown in the dashboard. Falls back to "Operations". Inlined at build time.    |
-| `NEXT_PUBLIC_ORGANIZATION_SLUG` | `src/lib/env.ts`   | Sent with every sign-in (`hz-demo`). Required by the API once several organizations exist. |
+| `NEXT_PUBLIC_BRAND_NAME`        | `src/lib/env.ts`   | Product name. Falls back to "Operations". Inlined at build time.                           |
+| `NEXT_PUBLIC_ORGANIZATION_SLUG` | `src/lib/env.ts`   | Sent with every sign-in (`hz-demo`).                                                       |
+| `NEXT_PUBLIC_MAP_TILE_URL`      | `src/lib/env.ts`   | Optional tile template with `{z}`; anything else (or empty) means the OpenStreetMap tiles. |
 
 The API side must match: `CORS_ORIGINS` must contain the exact origin the dashboard is opened
-from, and `WEB_APP_URL` is where activation links point.
+from (also when `WEB_PORT` changes), and `WEB_APP_URL` is where activation links point.
 
 ## Scripts
 
@@ -89,34 +112,48 @@ Run from the repo root as `pnpm --filter @ops/web <script>`.
 
 ## Conventions
 
-- `src/app/` is routing and layout. `src/components/` is UI. `src/hooks/` connects shared logic to
-  React. `src/lib/` is logic with no React in it, and that is where tests go.
-- **Every call to the API goes through `apiClient` / `authSession`.** Calls return an `ApiResult`
-  and never throw. Sign-in logic, wording, and form validation live in `@ops/shared`, not here.
-- **Never store a token in the browser** and never read the session cookies; the API sets and reads
-  them.
-- New protected pages need nothing extra (every path except `/login` and `/activate` is protected);
-  a new public page must be added to `PUBLIC_PATHS` in `src/lib/auth/routes.ts`.
-- **Never write a client name in a component.** Read `brand` from `src/lib/brand.ts`.
-- **Never write a colour, spacing, radius, or font size in a stylesheet.** Use the CSS variables.
-  The brand red (`--color-accent`) is for decoration, not text.
-- Read environment variables only in `src/lib/env.ts`, written out in full
-  (`process.env.NEXT_PUBLIC_API_URL`), because Next.js inlines them by exact text match.
-- Import from `src` with the `@/` alias.
-- Components are server components unless they need state or browser APIs; then `'use client'`.
-- React is pinned to exactly `19.2.3` to match the mobile app. Change both together.
+- `src/app/` is routing and layout; `src/components/` UI; `src/hooks/` connects logic to React;
+  `src/lib/` is logic with no React in it, and that is where tests go.
+- **Every API call goes through `apiClient`**, in TanStack Query hooks with keys from
+  `queryKeys`; mutations wait for the server and invalidate the affected keys (optimistic only
+  where a refusal cannot surprise). No global state library.
+- **List state lives in the URL** with the API's query parameter names (`useListParams`); a new
+  filter goes into the shared filter shape first, so list, export, and links get it together.
+- **Every user-facing string through `t('...')`.** Add keys to your page's file in
+  `src/i18n/en/`; `core.ts` only for shared words. Never use a plural category name (`zero`,
+  `one`, `two`, `few`, `many`, `other`) as a plain key: an object holding `other` is read as
+  plural forms.
+- **Logical CSS only** (`margin-inline-start`, `padding-inline`, `inset-inline-end`,
+  `text-align: start`); never `left` / `right`. Never write a colour, spacing, radius, or font
+  size: use the CSS variables from the tokens. The brand red is decoration, not text.
+- **Times only through `useOrgTime()`**, day filters only through `zonedDaysRange`: the
+  organization's zone, never the browser's.
+- Leaflet is client-only: import it only inside `src/components/map/` behind `next/dynamic`.
+- Accessibility: native elements first (`<dialog>`, `<select>`, `<table>` with caption and
+  `aria-sort`), labels through `FormField`, status never by colour alone, one `<h1>` per page.
+- Buttons for actions the role may not take are not offered (or disabled with a reason); the API
+  still decides (404 shown as "not found or you cannot see it", 409 `version_conflict` as
+  "reload and try again").
+- **Never store a token in the browser**; never read the session cookies.
+- Never write a client name in a component; read `brand`. Read environment variables only in
+  `src/lib/env.ts`, written out in full (Next.js inlines them by exact text).
+- Import from `src` with the `@/` alias. Components are server components unless they need state
+  or browser APIs.
 
 ## Known issues
 
-- A 403 from `POST /auth/login` means the page's origin is not in `CORS_ORIGINS`; the form then
-  shows the generic "Something went wrong" message.
-- No `script-src` / `style-src` CSP yet (needs nonces before production).
-- In production the web app and the API must be same-site (or `AUTH_COOKIE_DOMAIN` set) and on
-  HTTPS, or the cookies are not sent.
-- `src/lib/env.ts` never throws. Without a valid `NEXT_PUBLIC_API_URL`, `apiClient` is `null`,
-  sign-in shows a configuration message, and the status card shows "API not configured".
+- Not yet used in a browser with data; loading, empty, and error states, phone widths, and
+  keyboard use have not been checked by a person.
+- The API status card (`src/components/api-status.tsx`, `hooks/use-api-health.ts`) is shown on
+  the Settings page (admin) since 2026-10-30; the health texts themselves come from `@ops/shared`
+  in English. The Phase 3 session card was removed (the user menu replaces it).
+- A 403 from `POST /auth/login` means the page's origin is not in `CORS_ORIGINS`.
+- No nonce-based CSP yet; in production the web app and the API must be same-site (or
+  `AUTH_COOKIE_DOMAIN` set) and on HTTPS.
+- The dashboard language is fixed to English (`LOCALE`); per-user selection comes with a second
+  catalogue.
+- The public OpenStreetMap tiles are for development and light use only; set
+  `NEXT_PUBLIC_MAP_TILE_URL` before production.
 - `NEXT_PUBLIC_*` values are inlined at build and dev-server start; restart after changing them.
-- `typecheck` runs `next typegen` first because `tsconfig.json` includes generated route types.
-- There are no component tests; only `src/lib` logic is tested (Vitest in a `node` environment).
-- `agentRules: false` in `next.config.ts` must stay, or `next dev` generates its own `AGENTS.md`.
+- `typecheck` runs `next typegen` first; `agentRules: false` must stay in `next.config.ts`.
 - The `description` in `package.json` still says "Operations App".

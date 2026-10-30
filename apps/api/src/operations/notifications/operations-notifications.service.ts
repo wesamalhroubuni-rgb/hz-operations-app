@@ -1,4 +1,5 @@
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import { DEFAULT_LOCALE, localeOf, type Locale } from '@ops/shared';
 import { NotificationService } from '../../platform/notifications/notification.service';
 import { OutboxConsumer } from '../../platform/outbox/outbox-consumer';
 import type { OutboxEventRow } from '../../platform/outbox/outbox.service';
@@ -70,8 +71,9 @@ export class OperationsNotificationsService implements OnModuleInit {
       }
       const current = new Set(task.assignees.map((assignee) => assignee.userId));
       const recipientIds = plan.recipientIds.filter((userId) => current.has(userId));
-      const message = renderNotification('task.assigned', { taskTitle: task.title });
-      return this.send(sourceEventId, plan, recipientIds, message, { taskId: plan.taskId });
+      const render = (locale: string) =>
+        renderNotification('task.assigned', { taskTitle: task.title }, locale);
+      return this.send(sourceEventId, plan, recipientIds, render, { taskId: plan.taskId });
     }
 
     const workLog = await this.prisma.workLog.findFirst({
@@ -83,38 +85,66 @@ export class OperationsNotificationsService implements OnModuleInit {
       return 0;
     }
     const recipientIds = plan.recipientIds.filter((userId) => userId === workLog.authorId);
-    const message =
+    const note = plan.type === 'work_log.rejected' ? plan.note : null;
+    const render = (locale: string) =>
       plan.type === 'work_log.approved'
-        ? renderNotification('work_log.approved', {})
-        : renderNotification('work_log.rejected', { note: plan.note });
-    return this.send(sourceEventId, plan, recipientIds, message, { workLogId: plan.workLogId });
+        ? renderNotification('work_log.approved', {}, locale)
+        : renderNotification('work_log.rejected', { note }, locale);
+    return this.send(sourceEventId, plan, recipientIds, render, { workLogId: plan.workLogId });
   }
 
   private async send(
     sourceEventId: string,
     plan: PlannedNotification,
     recipientIds: string[],
-    message: RenderedNotification,
+    render: (locale: string) => RenderedNotification,
     data: Record<string, string>,
   ): Promise<number> {
     if (recipientIds.length === 0) {
       return 0;
     }
-    const result = await this.notifications.notify({
-      organizationId: plan.organizationId,
-      recipientIds,
-      type: plan.type,
-      title: message.title,
-      body: message.body,
-      push: message.push,
-      data,
-      sourceEventId,
-    });
-    if (result.created.length > 0) {
-      this.logger.debug(
-        `${plan.type}: ${result.created.length} notification(s) from event ${sourceEventId}`,
-      );
+    // Each recipient reads the text in their own language (User.locale, Phase 6): one notify
+    // call per language, each idempotent per (event, recipient, type).
+    const byLocale = await this.recipientsByLocale(plan.organizationId, recipientIds);
+    let created = 0;
+    for (const [locale, ids] of byLocale) {
+      const message = render(locale);
+      const result = await this.notifications.notify({
+        organizationId: plan.organizationId,
+        recipientIds: ids,
+        type: plan.type,
+        title: message.title,
+        body: message.body,
+        push: message.push,
+        data,
+        sourceEventId,
+      });
+      created += result.created.length;
     }
-    return result.created.length;
+    if (created > 0) {
+      this.logger.debug(`${plan.type}: ${created} notification(s) from event ${sourceEventId}`);
+    }
+    return created;
+  }
+
+  /**
+   * The recipients grouped by their supported locale, in the order given. A recipient who does
+   * not exist (any more) stays in the default group, where `NotificationService` skips them.
+   */
+  private async recipientsByLocale(
+    organizationId: string,
+    recipientIds: string[],
+  ): Promise<Map<Locale, string[]>> {
+    const rows = await this.prisma.user.findMany({
+      where: { id: { in: recipientIds }, organizationId },
+      select: { id: true, locale: true },
+    });
+    const localeById = new Map(rows.map((row) => [row.id, localeOf(row.locale)]));
+    const groups = new Map<Locale, string[]>();
+    for (const id of recipientIds) {
+      const locale = localeById.get(id) ?? DEFAULT_LOCALE;
+      groups.set(locale, [...(groups.get(locale) ?? []), id]);
+    }
+    return groups;
   }
 }

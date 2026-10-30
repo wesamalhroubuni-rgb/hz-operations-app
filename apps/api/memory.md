@@ -1,6 +1,6 @@
 # apps/api memory
 
-Package `@ops/api`. Last updated: 2026-10-28.
+Package `@ops/api`. Last updated: 2026-10-28 (Phase 6).
 
 ## Purpose
 
@@ -8,14 +8,47 @@ The REST API. It owns the PostgreSQL database, the business rules, sign-in and s
 permission rules, photo storage, notifications, the audit trail, and the event outbox. Both clients
 (web and mobile) talk only to this API (and to object storage through URLs it signs).
 
+## Phase 6 additions (2026-10-28, ADR-0009)
+
+Code complete, tested, and reviewed; about to be committed. Migration
+`20261028090000_phase6_dashboard` adds `User.locale` (default `en`); the user full profile maps
+`locale`, the organization summary maps `timeZone` (`settings.timeZone`, default
+`Europe/Istanbul`). 11 new paths:
+
+- New modules `operations/dashboard/` (`GET /dashboard/overview`, `GET /directory`),
+  `operations/exports/` (`GET /exports/work-logs.csv`, `/exports/tasks.csv`),
+  `operations/reports/` (`GET /reports/work-logs`), `operations/history/` (record histories
+  served by `GET /work-logs/:id/history` and `GET /tasks/:id/history`).
+- Shared query builders: `work-logs/work-log-query.ts` (`workLogWhere`, `ATTACHMENT_COUNT`,
+  `excerptOf`; filters `search`, `hasPhotos`, `excludeOwn`) and `tasks/task-query.ts`
+  (`taskWhere`, `open`, `overdue`): the list, map, export, report and overview all count with the
+  same `where`. The overview's "awaiting approval" uses `status=submitted&excludeOwn=true`.
+- Exports: CSV through `toCsv` from `@ops/shared` (formula injection neutralised), UTF-8 BOM, at
+  most 10,000 rows (422 `export_too_large`), audited (`export.work_logs` / `export.tasks`).
+- Log types: a changed field key is **not** refused (a rename cannot be told apart from remove
+  plus add); the web editor locks saved keys (decision of 2026-10-28).
+- `common/names.ts` (id to name maps through each visibility filter), `common/org-time-zone.ts`.
+- `ChangeRecorder.recordAccess`: the audit-only path for exports (no outbox event).
+- `POST /work-logs/bulk-status` loops `changeStatus` per item (own transaction, audit, outbox).
+- `AuthAdminService.listUserSessions`; `GET /users/:id/sessions`, `POST /users/:id/sessions/revoke`.
+- `locale` on user create/update (self may change own `displayName` and `locale`), in the
+  audit record and in `/auth/me`; notifications rendered per recipient locale (en; tr, ar fall
+  back to English per key).
+- Six policies: `dashboard.read`, `directory.read`, `work_log.review`, `export.work_logs`,
+  `export.tasks`, `report.read` (supervisor, manager, admin). No new index or migration: the
+  existing `(organizationId, occurredAt|status|authorId|siteId|teamId)` and audit
+  `(organizationId, entityType, entityId)` indexes cover the new queries.
+- Tests: `src/operations/dashboard/phase6.spec.ts` (unit), `test/dashboard.int-spec.ts`,
+  `test/dashboard-scope.int-spec.ts`, and new rows in `test/permissions-matrix.int-spec.ts`
+  (integration).
+
 ## Current state
 
-Phase 4 committed (`280c50a`). Phase 5 (offline sync support) code complete on 2026-10-27, about
-to be committed.
+Phase 5 committed (`2cf5a01`); Phase 6 as above.
 
-- **57 paths**: the Phase 2 resources, nine `/auth/*` routes, the two user code routes, from
+- **68 paths**: the Phase 2 resources, nine `/auth/*` routes, the two user code routes, from
   Phase 4 `POST /attachments/:id/complete`, `POST /attachments/:id/upload-url`, and five
-  `/notifications` paths, and from Phase 5 `GET /sync/pull`. The full list with the policy of each
+  `/notifications` paths, from Phase 5 `GET /sync/pull`, and the 11 Phase 6 paths. The full list with the policy of each
   route, the HTTP conventions, and the permissions matrix are in
   [ARCHITECTURE.md](../../ARCHITECTURE.md).
 - **Offline sync** (ADR-0008): `Task.version` and `WorkLog.version` raised by every change;
@@ -51,18 +84,18 @@ to be committed.
   definition per resource; role-shaped responses (users `basic` / `contact` / `full`,
   organization `summary` / `full`).
 - **Data model**: 14 business models, four auth tables, three notification platform tables
-  (`Notification`, `PushToken`, `OutboxConsumerCursor`), `IdempotencyRecord`, five migrations,
+  (`Notification`, `PushToken`, `OutboxConsumerCursor`), `IdempotencyRecord`, six migrations,
   UUIDv7 ids.
 - **Every write** is one transaction: business row, audit event, outbox event, through
   `ChangeRecorder`. Auth security events and push token changes go to the audit log only;
   notification rows are not audited.
 - **Swagger** at `/docs`, `/docs-json`, `/docs-yaml`, in development only, with a bearer scheme.
-- **Tests**: 513 unit tests in 24 suites; 1,416 integration tests in 19 suites (about 3 minutes).
+- **Tests**: 527 unit tests in 25 suites; 1,534 integration tests in 21 suites.
 
-Verified in the Phase 5 session (2026-10-27): unit tests, lint, and typecheck re-run by the
-docs-keeper; integration tests as reported by the coordinator. **Not applied**: the Phase 5
-migration on the development database, which holds a stray `20261018090000_phase5_offline_sync`
-from lost work (`prisma migrate status`, 2026-10-28); the owner must run `pnpm db:reset`. Earlier
+Verified in the Phase 6 session (2026-10-28): unit tests re-run by the docs-keeper; integration
+tests, lint, typecheck, and build as reported by the coordinator. **Not applied**: the Phase 5 and
+Phase 6 migrations on the development database, which holds a stray
+`20261018090000_phase5_offline_sync` from lost work; the owner must run `pnpm db:reset`. Earlier
 (Phase 4): storage against the real MinIO, a live in-app notification, push token removal on
 sign-out. **Not verified**: real Expo push delivery, any provider other than MinIO.
 
@@ -112,17 +145,23 @@ src/
                           decision.ts, visibility.ts, rules/*.rules.ts,
                           operations-request-authorizer.ts, operations-auth-profile.provider.ts,
                           access.module.ts (global), clock.ts, testing.ts
-    common/               ChangeRecorder, references.ts, concurrency.ts (NEXT_VERSION,
-                          assertExpectedVersion), hierarchy.ts, db.ts
+    common/               ChangeRecorder (record, recordAccess), references.ts, concurrency.ts
+                          (NEXT_VERSION, assertExpectedVersion), names.ts, org-time-zone.ts,
+                          hierarchy.ts, db.ts
     sync/                 GET /sync/pull: sync.service.ts, sync.controller.ts, sync-cursor.ts
+    dashboard/            GET /dashboard/overview, GET /directory (Phase 6)
+    exports/              GET /exports/work-logs.csv, /exports/tasks.csv (audited)
+    reports/              GET /reports/work-logs
+    history/              record histories for GET /work-logs/:id/history, /tasks/:id/history
     organization/ users/ memberships/ sites/ teams/ log-types/ tasks/ work-logs/ attachments/
                           each: *.controller.ts, *.service.ts, *.module.ts
     memberships/admin-guard.ts   last-admin check under an advisory lock
     attachments/          attachments.service.ts (upload flow, signed URLs, rate limits),
                           attachment-cleanup.service.ts (hourly expiry and purge)
-    notifications/        notification-rules.ts (pure), notification-messages.ts (English
-                          catalogue, generic push text), operations-notifications.service.ts
-                          (registers the outbox handlers), module
+    notifications/        notification-rules.ts (pure), notification-messages.ts (catalogue per
+                          locale, English complete, generic push text),
+                          operations-notifications.service.ts (registers the outbox handlers,
+                          renders per recipient locale), module
     scope/                resolve-scope.ts (pure), scope.service.ts, scope.controller.ts
     seed/                 demo-seed.ts (DEV_PASSWORDS)
   generated/              Prisma client. Git-ignored. Never edit
@@ -130,7 +169,7 @@ prisma/
   schema.prisma
   migrations/             20261013112952_init, 20261013150000_attachment_storage_key_per_org,
                           20261014090000_auth, 20261017090000_phase4_mobile,
-                          20261027090000_phase5_offline_sync
+                          20261027090000_phase5_offline_sync, 20261028090000_phase6_dashboard
   seed.ts                 entry point of the seed
 test/
   *.int-spec.ts           integration suites
@@ -157,7 +196,7 @@ test/
 | `src/platform/auth/auth.guard.ts`                          | The one global guard: development-only 404, public, authenticate (bearer or cookie, database check), CSRF, actor, policy. Order in its header comment.                                        |
 | `src/platform/auth/auth.service.ts`                        | Login (slug rule, lockout, generic failure), refresh, logout, sessions, set-password, change-password, the security audit events.                                                             |
 | `src/platform/auth/sessions.ts`                            | Session creation, refresh rotation with the race and reuse rule, revocation, and the `onSessionsEnded` hook (push tokens go with the session).                                                |
-| `src/platform/auth/auth-admin.service.ts`                  | The contract for business modules: `issueOneTimeCode`, `revokeUserSessions`, `setPasswordForSeed`, `isActivated`, `activatedUserIds`.                                                         |
+| `src/platform/auth/auth-admin.service.ts`                  | The contract for business modules: `issueOneTimeCode`, `revokeUserSessions`, `listUserSessions`, `setPasswordForSeed`, `isActivated`, `activatedUserIds`.                                     |
 | `src/platform/auth/auth-settings.ts`                       | Every auth setting and the default rate limits.                                                                                                                                               |
 | `src/platform/authz/policy.decorator.ts`                   | `@Policy`, `@Authenticated`, `@DevelopmentOnly`.                                                                                                                                              |
 | `src/platform/http/api-exception.filter.ts`                | Standard error body; maps Prisma `P2002` to 409, `P2003` to 422, `P2025` to 404; sets `Retry-After`.                                                                                          |
@@ -166,7 +205,7 @@ test/
 | `src/operations/access/access.service.ts`                  | `context()` (per-request cached access context) and `runAsSystem()`.                                                                                                                          |
 | `src/operations/access/visibility.ts`                      | `Visibility` values, `isVisible()`, `visibilityWhere()`.                                                                                                                                      |
 | `src/operations/access/rules/`                             | Pure rules per resource returning a `Decision`; `decision.ts` `enforce()` turns it into 404, 403, or 409.                                                                                     |
-| `src/operations/common/change-recorder.ts`                 | `record(tx, change)`: the audit event and the outbox event of one change (`auditMetadata` for dropped references).                                                                            |
+| `src/operations/common/change-recorder.ts`                 | `record(tx, change)`: the audit event and the outbox event of one change (`auditMetadata` for dropped references); `recordAccess`: audit only (exports).                                      |
 | `src/operations/common/concurrency.ts`                     | `NEXT_VERSION` and `assertExpectedVersion` (409 `version_conflict`). ADR-0008 section 1.                                                                                                      |
 | `src/platform/idempotency/idempotency.service.ts`          | `Idempotency-Key` claim, replay, take-over after the 60 s lock, release of non-final answers, hourly deletion after 14 days. Header comment: why it is safe outside the business transaction. |
 | `src/operations/sync/sync.service.ts`                      | `GET /sync/pull`: the caller's slice through the visibility filters, `upserts` since the cursor minus 60 s, complete `ids` per resource.                                                      |
@@ -259,11 +298,14 @@ needed.
 - The seed compiles the API with `tsc` into `node_modules/.cache/ops-seed` (decorator metadata;
   `dist/` belongs to a running dev server).
 - The development database holds the Phase 3 seed with the Phase 4 migration applied, plus a
-  stray Phase 5 migration from lost work; it needs the owner's `pnpm db:reset` (2026-10-28).
+  stray Phase 5 migration from lost work, and lacks the Phase 5 and Phase 6 migrations; it needs
+  the owner's `pnpm db:reset` (2026-10-28). The organization's settings get `timeZone`
+  `Europe/Istanbul` (and a free `locale: 'en'` key); users keep the default `locale` `en`.
 
 ## Tests
 
-- **Unit** (`pnpm --filter @ops/api test`): `src/**/*.spec.ts`, 24 suites, 513 tests (2026-10-27).
+- **Unit** (`pnpm --filter @ops/api test`): `src/**/*.spec.ts`, 25 suites, 527 tests (2026-10-28;
+  Phase 6 added `operations/dashboard/phase6.spec.ts`).
   No database, no `.env`. Covers the environment schema, health, `ZodPipe`, the platform modules,
   auth (tokens, cookies, CSRF, codes, policy, identifiers, rate limiter), `AuthAdminService`, scope
   resolution, the access rules (including `attachment.rules.spec.ts` and the Phase 5
@@ -271,14 +313,15 @@ needed.
   (`storage.spec.ts`), notifications and Expo push, the outbox consumer, the notification rules,
   and `route-policies.spec.ts`. Running it at the same time as other packages' test runners once
   failed four suites to load on 2026-10-17; a rerun alone passed.
-- **Integration** (`pnpm test:integration`): `test/*.int-spec.ts`, 19 suites, 1,416 tests (as
-  reported 2026-10-27), about 3 minutes. Suites: `harness`, `auth-and-errors`, `auth-login`,
+- **Integration** (`pnpm test:integration`): `test/*.int-spec.ts`, 21 suites, 1,534 tests (as
+  reported 2026-10-28), a few minutes. Suites: `harness`, `auth-and-errors`, `auth-login`,
   `auth-sessions`, `secrets`, `org-structure`, `log-types`, `tasks`, `work-logs`,
   `audit-outbox-transaction`, `audit-outbox-read`, `tenant-isolation`, `permissions-matrix` (every
   cell, fixture in `support/matrix-world.ts`), `permissions-cases`, and from Phase 4 `uploads`,
   `storage-minio` (the real MinIO, bucket `hz-attachments-test`), `worker-app`, `notifications`,
-  and from Phase 5 `offline-sync` (versions, codes, idempotency, offline creates, late photos, the
-  pull).
+  from Phase 5 `offline-sync` (versions, codes, idempotency, offline creates, late photos, the
+  pull), and from Phase 6 `dashboard` and `dashboard-scope` (every new route per role, changed ids
+  and query parameters, bulk review, exports, histories, locales, sessions).
 - The harness binds an in-memory `FileStorage` (`support/fake-file-storage.ts`) and a fake Expo
   client; the outbox consumer and push are off, and tests call `processPending()`.
 - The harness authenticates for real: `as(userId)` opens a `mobile` session through
@@ -342,8 +385,10 @@ needed.
 - Approved logs can still receive declared photos for 30 days (ADR-0008). An edit resent after
   its idempotency key expired, on a log approved meanwhile, is refused although it took effect.
 - The idempotency cleanup, like the attachment cleanup, runs in every API process.
-- **Push receipts are in memory**; push-token rebinding is accepted; notification text is English
-  only (ADR-0007).
+- **Push receipts are in memory**; push-token rebinding is accepted (ADR-0007). Notification text
+  follows `User.locale`, but only the English catalogue exists (fallback key by key).
+- Exports are synchronous and capped at 10,000 rows; the directory is capped at 5,000 entries
+  per kind; overview counts are computed on read (ADR-0009).
 - The cleanup and the Expo receipt checks run in every API process (harmless, each claims rows
   conditionally).
 - **One-time codes are only logged, in development.** Production delivers nothing until a real
@@ -358,7 +403,8 @@ needed.
 - Scope resolution loads every membership, site, and team of the organization once per request;
   every authenticated request also reads the session and the user.
 - Old log type definitions are recoverable only from the audit log.
-- Memberships, log types, tasks, work logs, and attachments have no restore endpoint.
+- Memberships, log types, tasks, work logs, and attachments have no restore endpoint (the
+  dashboard cannot restore an archived log type).
 - Tenancy and scope are enforced in application code only.
 - `/health` logs an error on every call while the database is down, is public, and reveals
   whether the database is up. It does not report the storage.

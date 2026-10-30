@@ -21,6 +21,8 @@ export interface AuthUserRow {
   phone: string | null;
   username: string | null;
   displayName: string;
+  /** The user's language (Phase 6); optional so a host without the column still fits. */
+  locale?: string | null;
   archivedAt: Date | null;
 }
 

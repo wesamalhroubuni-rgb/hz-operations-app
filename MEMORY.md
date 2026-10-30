@@ -5,15 +5,21 @@ file at the end of every session. Newest session log entry goes first. Last upda
 
 ## Current phase
 
-**Phase 5 (Offline mode & sync) is code complete, tested, and reviewed (2026-10-27), and is about
-to be committed by the coordinator as "Phase 5: ..." and pushed.** The owner's emulator or phone
-test is pending (README section 6). `main` has Phase 1 (`d03c843`), Phase 2 (`1fd2988`), Phase 3
-(`8c8283a`), Phase 4 (`280c50a`), and the restore note (`924446e`). **Phase 6 (Web manager
-dashboard) is next.** Phases are defined in [ROADMAP.md](ROADMAP.md).
+**Phase 6 (Web manager dashboard) is code complete, tested, and reviewed (2026-10-28), and is about
+to be committed and pushed by the coordinator as "Phase 6: ...".** Nobody has used the dashboard
+in a browser with data yet (it needs the owner's `pnpm db:reset` first). `main` has Phase 1
+(`d03c843`), Phase 2 (`1fd2988`), Phase 3 (`8c8283a`), Phase 4 (`280c50a`), the restore note
+(`924446e`), and Phase 5 (`2cf5a01`, pushed). The Phase 5 emulator and phone tests are still open.
+**Phase 7 (Intelligent layer v1) is next.** Phases are defined in [ROADMAP.md](ROADMAP.md).
 
-**Before using the app the owner must run `pnpm db:reset` once**: the development database
-`operations_app` holds a stray migration `20261018090000_phase5_offline_sync` from the lost work;
-the repository's migration is `20261027090000_phase5_offline_sync`. Agents may not run it.
+**Before using the apps the owner must run `pnpm db:reset` once**: the development database
+`operations_app` holds a stray migration `20261018090000_phase5_offline_sync` from the lost work
+and lacks the repository's `20261027090000_phase5_offline_sync` and
+`20261028090000_phase6_dashboard`. Agents may not run it.
+
+**On this PC port 3000 is used by another project.** To open the dashboard, set `WEB_PORT` (for
+example 3100) in `.env`, add that origin (`http://localhost:3100`) to `CORS_ORIGINS` and use it as
+`WEB_APP_URL`, then restart `pnpm dev` (README section 3).
 
 **The owner's local copy was lost and restored from GitHub on 2026-10-27** (folder
 `Operations_App_restored`). The first Phase 5 attempt (after 2026-10-17) was never pushed and is
@@ -28,22 +34,22 @@ technical name of the folder, the packages, the API domain folder, and the datab
 
 ## What exists
 
-| Area              | State                                                                                                                                                                                                                                                                                                                                                                               |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Monorepo          | pnpm 12 workspaces + Turborepo 2. Root scripts: `dev`, `build`, `lint`, `typecheck`, `test`, `test:integration`, `format`, `format:check`, `db:up`, `db:down`, `db:logs`, `db:migrate`, `db:seed`, `db:reset`.                                                                                                                                                                      |
-| Docker Compose    | PostgreSQL 17 and, since Phase 4, MinIO (`alpine/minio`, pinned by digest) for photos. `pnpm db:up` starts both; both bind to `127.0.0.1` by default.                                                                                                                                                                                                                               |
-| `packages/config` | Shared ESLint 10 flat config, Prettier config, three tsconfig presets. Unchanged since Phase 1.                                                                                                                                                                                                                                                                                     |
-| `packages/shared` | Zod schemas and endpoint functions for every resource, `/auth/*`, `/notifications`, and `/sync/pull`; the offline headers and typed error codes; the transport (refresh once on a 401, per-call headers); `createAuthSessionManager`; the attachment upload helper; custom-field form logic and validation; design tokens.                                                          |
-| `apps/api`        | NestJS 12 API, 57 paths. Platform: sign-in and sessions, the policy seam, idempotency (`Idempotency-Key`), S3-compatible file storage, notifications, the outbox consumer, audit log (with offline metadata), outbox. Domain: the access layer on every route, row versions and typed conflict codes, the attachment upload flow and cleanup, notification rules, `GET /sync/pull`. |
-| `apps/web`        | Next.js 16.4: `/login`, `/activate`, and a protected `/` (name, role, organization, sign-out, API status card). Unchanged since Phase 3.                                                                                                                                                                                                                                            |
-| `apps/mobile`     | Expo SDK 57 worker app: Home, Tasks, Task detail, New/Edit log (custom fields, photos, location), Logs, Log detail, Notifications, Profile, Sync. Offline since Phase 5: per-user SQLite cache and write queue, photo store, sync engine (NetInfo, foreground, background task), sync indicator and screen, edit drafts. Never run on a phone or emulator.                          |
-| Database          | PostgreSQL in Docker on `127.0.0.1` (port 5433 on this PC). `operations_app` has the four committed migrations, the Phase 3 seed, and a stray `20261018090000_phase5_offline_sync` from lost work; the new `20261027090000_phase5_offline_sync` is not applied to it (needs `pnpm db:reset`). `operations_app_test` is rebuilt by the integration tests.                            |
-| Docs              | `AGENTS.md`, this file, `ARCHITECTURE.md` (with the permissions matrix), `ROADMAP.md`, `README.md` (including "Test on my phone" and "Test offline mode in the Android emulator"), ADR-0001 to ADR-0008, a `memory.md` in each app and package, the phase prompts in `docs/prompts/`, the coordinator's `docs/reports/phase-5.md`, the logo files in `docs/brand/`.                 |
-| Subagents         | `reviewer`, `docs-keeper`, `test-writer` in `.claude/agents/`.                                                                                                                                                                                                                                                                                                                      |
+| Area              | State                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Monorepo          | pnpm 12 workspaces + Turborepo 2. Root scripts: `dev`, `build`, `lint`, `typecheck`, `test`, `test:integration`, `format`, `format:check`, `db:up`, `db:down`, `db:logs`, `db:migrate`, `db:seed`, `db:reset`.                                                                                                                                                                                                                                                                                                                                                  |
+| Docker Compose    | PostgreSQL 17 and, since Phase 4, MinIO (`alpine/minio`, pinned by digest) for photos. `pnpm db:up` starts both; both bind to `127.0.0.1` by default.                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `packages/config` | Shared ESLint 10 flat config, Prettier config, three tsconfig presets. Unchanged since Phase 1.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `packages/shared` | Zod schemas and endpoint functions for every resource, `/auth/*`, `/notifications`, `/sync/pull`, and since Phase 6 the dashboard, directory, map, histories, exports, report, and user sessions; the offline headers and typed error codes; the transport (refresh once on a 401, per-call headers, text responses); `createAuthSessionManager`; the upload helper; custom-field forms; time-zone, CSV, and locale helpers; the translation core; design tokens.                                                                                               |
+| `apps/api`        | NestJS 12 API, 68 paths. Platform: sign-in and sessions, the policy seam, idempotency (`Idempotency-Key`), S3-compatible file storage, notifications, the outbox consumer, audit log (with offline metadata), outbox. Domain: the access layer on every route, row versions and typed conflict codes, the attachment upload flow and cleanup, notification rules rendered in each recipient's `User.locale`, `GET /sync/pull`, and since Phase 6 the overview, directory, bulk review, map, histories, audited CSV exports, report, and session administration. |
+| `apps/web`        | Next.js 16.4.3 manager dashboard (Phase 6): `/login`, `/activate`, and behind sign-in an app shell with Overview (`/`), Work logs (list, detail, report), Tasks (list and board, detail), Map, People, Structure (sites, teams, log-type editor), Audit log, Settings; navigation by role; TanStack Query and Table, Leaflet, an i18n layer (English), times in the organization's time zone. Never used in a browser with data.                                                                                                                                |
+| `apps/mobile`     | Expo SDK 57 worker app: Home, Tasks, Task detail, New/Edit log (custom fields, photos, location), Logs, Log detail, Notifications, Profile, Sync. Offline since Phase 5: per-user SQLite cache and write queue, photo store, sync engine (NetInfo, foreground, background task), sync indicator and screen, edit drafts. Unchanged in Phase 6 except that the translation core now comes from `@ops/shared`. Never run on a phone or emulator.                                                                                                                  |
+| Database          | PostgreSQL in Docker on `127.0.0.1` (port 5433 on this PC). `operations_app` has the four migrations up to Phase 4, the Phase 3 seed, and a stray `20261018090000_phase5_offline_sync` from lost work; `20261027090000_phase5_offline_sync` and `20261028090000_phase6_dashboard` are not applied to it (needs `pnpm db:reset`). `operations_app_test` is rebuilt by the integration tests.                                                                                                                                                                     |
+| Docs              | `AGENTS.md`, this file, `ARCHITECTURE.md` (with the permissions matrix), `ROADMAP.md`, `README.md` (including the web dashboard, "Test on my phone", and "Test offline mode in the Android emulator"), ADR-0001 to ADR-0009, a `memory.md` in each app and package, the phase prompts in `docs/prompts/`, the coordinator's `docs/reports/phase-5.md` and `phase-6.md`, the logo files in `docs/brand/`.                                                                                                                                                        |
+| Subagents         | `reviewer`, `docs-keeper`, `test-writer` in `.claude/agents/`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
-Not built yet: activation deep links into the app, any web feature screen (Phase 6), real email
-or SMS delivery of codes, encryption of the phone's local database, and the AI layer. See
-[ARCHITECTURE.md](ARCHITECTURE.md).
+Not built yet: activation deep links into the app, photo upload from the browser (deferred to
+Phase 8), Turkish and Arabic catalogues, real email or SMS delivery of codes, encryption of the
+phone's local database, and the AI layer. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Signing in
 
@@ -55,14 +61,35 @@ or SMS delivery of codes, encryption of the phone's local database, and the AI l
 - New users get a one-time activation code from an admin (`POST /users`); in development the code
   and link are in the response and the API log. Reset codes: `POST /users/:id/password-reset`.
 - The development database has the Phase 3 seed (the owner ran `pnpm db:reset` before
-  2026-10-17), but its migration history diverges (see Current phase), so the Phase 5 API needs
-  the owner's `pnpm db:reset` first. The seed has no photos and no notifications.
+  2026-10-17), but its migration history diverges (see Current phase), so the Phase 5 and Phase 6
+  API needs the owner's `pnpm db:reset` first. The seed has no photos and no notifications.
+- The dashboard is for supervisors, managers, and admins; a worker who signs in on the web sees
+  "use the mobile app". Admins (`aylin`) manage people, the audit log, and settings; managers
+  (`murat`) see everything read-only in People; supervisors (`selin`, `emre`) see their scope.
 
 ## Verified
 
 **Phase 3 acceptance (owner, reported 2026-10-17)**: `pnpm db:reset` ran; sign-in works in a real
 browser for `aylin`, `selin`, and `deniz`; Phase 3 committed (`8c8283a`). The rest of the Phase 3
 manual list (Swagger per role, activation, lockout, sign-out everywhere) is not recorded as run.
+
+**In the Phase 6 session (2026-10-28)**, as reported by the coordinator unless a line says
+otherwise:
+
+- Unit tests (re-run by the docs-keeper with `pnpm test` on 2026-10-28, all pass): 743
+  `@ops/shared` (17 files), 527 `@ops/api` (25 suites), 174 `@ops/web` (11 files), 305
+  `@ops/mobile` (26 suites).
+- Integration tests: 1,534 in 21 suites (new: `dashboard`, `dashboard-scope`). Not re-run by the
+  docs-keeper.
+- `pnpm build`, `lint`, `typecheck`, `test:integration`, and `format:check` pass.
+- The test-writer's 58 new tests found no bug. They cover scope for supervisor, manager, and admin
+  on every new data source (changed ids and query parameters, foreign records 404), no
+  self-approval single and bulk, exports equal to the lists and audited, log-type versioning, CSV
+  injection, time zones (half-hour offsets, daylight-saving days, the organization's "today"),
+  per-user languages with English fallback, sessions admin only.
+- The reviewer's "pass with fixes", nothing blocking; the fixes are in the session log.
+- A smoke test only of the web app (every route answers, security headers present); no browser
+  session with data.
 
 **In the Phase 5 session (2026-10-27)**, as reported by the coordinator unless a line says
 otherwise:
@@ -107,15 +134,19 @@ agents unless a line says otherwise:
    SecureStore, push, and all of Phase 5 on a device (SQLite, the file system, NetInfo, the
    background task, airplane mode, the conflict case). Only test fakes cover them. The owner can
    use the emulator `hz_pixel` (README section 6) or the phone's hotspot (README section 5).
-2. **The Phase 5 migration on the development database** (after the owner's `pnpm db:reset`).
-3. **A development build**: configured (`expo-dev-client`, `apps/mobile/eas.json`), never built
+2. **The Phase 5 and Phase 6 migrations on the development database** (after the owner's
+   `pnpm db:reset`).
+3. **The web dashboard in a real browser** with the seed data, as `aylin` (admin), `selin`
+   (supervisor), and `murat` (manager): the manual list in `docs/reports/phase-6.md`, phone and
+   desktop widths, keyboard use, print preview of the report, a CSV opened in Excel, the map
+   tiles.
+4. **A development build**: configured (`expo-dev-client`, `apps/mobile/eas.json`), never built
    or installed. It needs the owner's Expo account and `eas init`. Push and background sync need
    it.
-4. **Real push delivery through Expo** (only a fake Expo client in tests).
-5. **AWS S3 or any provider other than MinIO.**
-6. **The full `pnpm dev` with MinIO and the web app in a browser** after Phase 5 (not recorded by
-   the docs-keeper).
-7. The web status card's automatic recovery, watched by a person (unit tested).
+5. **Real push delivery through Expo** (only a fake Expo client in tests).
+6. **AWS S3 or any provider other than MinIO.**
+7. The web "API status" card's automatic recovery, watched by a person (the card is on the
+   Settings page since Phase 6).
 
 ## Machine and repository state
 
@@ -131,15 +162,17 @@ agents unless a line says otherwise:
   2026-10-27 (the old `.env` was lost with the local copy).
 - **The development database `operations_app` still holds a migration from the lost Phase 5 work
   (`20261018090000_phase5_offline_sync`) that is not in the repo, and lacks
-  `20261027090000_phase5_offline_sync`** (`prisma migrate status`, 2026-10-28). It needs the
-  owner's `pnpm db:reset` (agents may not run it). The test database is rebuilt by the
-  integration tests.
+  `20261027090000_phase5_offline_sync`** (`prisma migrate status`, 2026-10-28) **and
+  `20261028090000_phase6_dashboard`**. It needs the owner's `pnpm db:reset` (agents may not run
+  it). The test database is rebuilt by the integration tests.
+- **Port 3000 on this PC is taken** by another project. Run the dashboard on another `WEB_PORT`
+  (for example 3100) with that origin in `CORS_ORIGINS` and `WEB_APP_URL` (README section 3).
 - Android SDK under `%LOCALAPPDATA%\Android\Sdk` with the emulator and `adb`; the virtual device
   `hz_pixel` (Android 35, Google APIs, x86_64) exists. `ANDROID_HOME` is not set system-wide
   (README section 6 sets it in the Expo terminal). Never started for this project yet.
-- Branch `main`, five commits up to `924446e`, in sync with `origin/main` (private GitHub
-  repository `wesamalhroubuni-rgb/hz-operations-app`); the Phase 5 work is uncommitted at the time
-  of writing.
+- Branch `main`, six commits up to `2cf5a01` (Phase 5), in sync with `origin/main` (private GitHub
+  repository `wesamalhroubuni-rgb/hz-operations-app`); the Phase 6 work is uncommitted at the time
+  of writing (2026-10-28).
 - The local `.env` (git-ignored) was recreated from `.env.example` on 2026-10-27 (development
   placeholders). `EXPO_PUBLIC_EAS_PROJECT_ID` is empty until the owner runs `eas init`.
 - User ids are generated, so they change on every reset. Sign in with identifiers instead.
@@ -188,7 +221,17 @@ Behaviour
   another user on the phone keeps their queue until they sign in again (never swept
   automatically). Background sync is best effort and needs the development build. Logs older
   than 30 days and photos already on the server need a connection.
-- **Notification text is English only**, rendered on the server; the push shows generic text.
+- **Notification text** is rendered on the server in the recipient's `User.locale` (`en`, `tr`,
+  `ar` allowed), but only the English catalogue exists: other languages fall back to English key
+  by key. The push shows generic text. The dashboard itself is English only (`LOCALE` fixed).
+- **Dashboard (ADR-0009)**: photos cannot be uploaded from the browser (deferred to Phase 8: a
+  CORS rule on the bucket). The directory is capped at 5,000 entries per kind; exports are
+  synchronous and capped at 10,000 rows (422 `export_too_large`); the report covers at most 92
+  days; overview aggregates are computed on read. The API accepts a changed log-type field key;
+  only the editor prevents it. Log types cannot be restored once archived. Requiring a site or
+  team for worker and supervisor memberships is a dashboard rule only. The map uses the public
+  OpenStreetMap tiles unless `NEXT_PUBLIC_MAP_TILE_URL` is set (their usage policy forbids heavy
+  use). The CSP still has no `img-src` / `connect-src`.
 - Redaction in audit and outbox events is by key name at any depth.
 - Old log type definitions are not kept; `logTypeVersion` resolves only through the audit log.
 - Row versions on tasks and work logs only; other resources are last-write-wins, and so are task
@@ -233,8 +276,8 @@ Clients and tooling
   database be encrypted (SQLCipher) before production?
 - Which deep-link scheme or universal link should activation links use, so they open the app, and
   in which phase?
-- Phase 6: which admin screens are needed for users, memberships, codes, and sessions? Where is a
-  user's language stored, for localised notifications?
+- Who translates the Turkish and Arabic catalogues (web, mobile, notifications), and when?
+- Before production: which map tile provider (`NEXT_PUBLIC_MAP_TILE_URL`)?
 - Before production: which object storage provider and region, what retention for photos, and
   who may erase them? Which email or SMS provider delivers one-time codes? Who in the client's
   organization holds the admin role?
@@ -258,7 +301,68 @@ refusals, the supervisor's change wins), row versions on tasks and work logs, an
 rule (an unreachable server never signs out; a refused refresh keeps the queue and asks to sign
 in again).
 
+Answered in Phase 6 (see [ADR-0009](docs/decisions/0009-web-dashboard-architecture.md)): the admin
+screens (People with invitations, codes shown once, memberships, sessions, archive and restore;
+Structure; Settings; Audit log) and where a user's language is stored (`User.locale`, default
+`en`, changed by the user or an admin).
+
 ## Session log
+
+### 2026-10-28: Phase 6 web manager dashboard
+
+- **What changed**
+  - Database: migration `20261028090000_phase6_dashboard` (`User.locale`, default `en`);
+    `settings.timeZone` in the organization settings JSON (IANA name, default
+    `Europe/Istanbul`), carried in the organization summary as `timeZone`.
+  - API: 11 new paths (68 in all): `GET /dashboard/overview`, `GET /directory`,
+    `GET /work-logs/map`, `POST /work-logs/bulk-status`, `GET /work-logs/:id/history`,
+    `GET /tasks/:id/history`, `GET /exports/work-logs.csv`, `GET /exports/tasks.csv`,
+    `GET /reports/work-logs`, `GET /users/:id/sessions`, `POST /users/:id/sessions/revoke`. Six
+    policies (supervisor, manager, admin): `dashboard.read`, `directory.read`, `work_log.review`,
+    `export.work_logs`, `export.tasks`, `report.read`. New modules `dashboard/`, `exports/`,
+    `reports/`, `history/`; one filter builder per resource (`work-log-query.ts`,
+    `task-query.ts`) used by the list, map, export, report, and overview; list filters `search`,
+    `hasPhotos`, `excludeOwn`, `open`, `overdue` and more sort fields; exports audited through the
+    audit-only `ChangeRecorder.recordAccess` (no outbox event), capped at 10,000 rows, safe
+    against formula injection; `AuthAdminService.listUserSessions`; `locale` on users (a user may
+    change their own `displayName` and `locale`); notifications rendered per recipient locale.
+  - `@ops/shared`: the schemas and endpoints above (`domain/dashboard.ts`, `directory.ts`,
+    `exports.ts`, `history.ts`, `reports.ts`), `common/time-zone.ts`, `common/csv.ts`,
+    `common/locale.ts`, the translation core moved from mobile (`src/i18n/translate.ts`), error
+    code `export_too_large` (422), transport `responseType: 'text'`.
+  - Web: the whole dashboard (see `apps/web/memory.md`). New dependencies at exact versions:
+    `@tanstack/react-query` 5.104.3, `@tanstack/react-table` 8.21.3, `leaflet` 1.9.4,
+    `react-leaflet` 5.0.0, `@types/leaflet` 1.9.22. Next.js and `eslint-config-next` updated from
+    16.4.0 to 16.4.3 (within the `~16.4` pin) after a security notice in the build. The
+    placeholder home page was deleted.
+  - Mobile: `src/i18n/translate.ts` re-exports the shared core; one catalogue key.
+  - Configuration: `NEXT_PUBLIC_MAP_TILE_URL` (optional; empty means the public OpenStreetMap
+    tiles) in `.env.example`, `apps/web/src/lib/env.ts`, and `turbo.json`.
+  - Docs: ADR-0009 (accepted, with an "as built" section); every document updated; the
+    coordinator wrote `docs/reports/phase-6.md` (with the browser test list).
+- **Why**: Phase 6 of the roadmap (`docs/prompts/phase-6.md`): supervisors, managers, and admins
+  run the operation from the browser, strictly within their Phase 3 scope.
+- **How it was built**: a contracts and foundation agent first (ADR-0009, the migration, the
+  shared contracts and helpers, the web shell, building blocks, and placeholder pages), then three
+  parallel agents: A (API), B (overview, work logs, map, report, exports), C (tasks, people,
+  structure, audit, settings); then the `test-writer`, the `reviewer`, and the `docs-keeper`.
+  - The test-writer added 58 tests and found no bug. Decision taken: the API does not refuse a
+    changed log-type field key (a rename cannot be told apart from remove plus add); the editor
+    locks saved keys and refuses a new field that reuses a saved key.
+  - The reviewer returned "pass with fixes", nothing blocking. Fixed: a photo refetch loop when
+    the storage is unreachable; formatting; the "unknown place" label; "awaiting approval"
+    counted the caller's own logs (new `excludeOwn` filter); reuse of a saved field key in the
+    editor; pages briefly rendered with the default time zone (the shell now waits for the
+    organization's time zone); `left` / `right` CSS on the login and activation pages (now
+    logical properties); dead code. Documented: browser photo upload deferred (Phase 8).
+- **Verified**: see "Verified" above (unit counts re-run by the docs-keeper; integration 1,534 in
+  21 suites as reported).
+- **Left to do**
+  - Owner: `pnpm db:reset`; the browser test (`docs/reports/phase-6.md`) on a free `WEB_PORT`
+    (port 3000 is taken on this PC); the Phase 5 emulator and phone tests.
+  - Coordinator: commit "Phase 6: ..." and push.
+  - Later: Turkish and Arabic catalogues and a per-user dashboard language; browser photo upload
+    and a nonce-based CSP with `img-src` (Phase 8); restoring archived log types.
 
 ### 2026-10-27: Phase 5 offline mode and sync
 

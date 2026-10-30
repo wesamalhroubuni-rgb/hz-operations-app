@@ -10,19 +10,40 @@ and wording that must behave the same on the server and in both apps, and the de
 
 ## Current state
 
-Six areas plus the health schema, all re-exported from `src/index.ts`.
+Seven areas plus the health schema, all re-exported from `src/index.ts`. Phase 6 (2026-10-28)
+added the dashboard contracts, the time-zone, CSV, and locale helpers, and `src/i18n/` (below).
 
 | Area              | Contents                                                                                                                                                                                                                                                                                                                       |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/health.ts`   | `healthResponseSchema` / `HealthResponse`.                                                                                                                                                                                                                                                                                     |
-| `src/common/`     | `apiErrorSchema`, `API_ERROR_CODES` with `API_ERROR_STATUS` and `RETRYABLE_API_ERROR_CODES` (Phase 5 typed codes); pagination, sort, id, date, and query-boolean schemas.                                                                                                                                                      |
-| `src/domain/`     | One file per resource (`organization`, `users`, `memberships`, `sites`, `teams`, `log-types`, `tasks`, `work-logs`, `attachments`, `scope`, and from Phase 5 `sync`), plus `enums.ts` (with `roleRank`, `rolesHighestFirst`), `custom-fields.ts`, and `shared.ts`.                                                             |
+| `src/common/`     | `apiErrorSchema`, `API_ERROR_CODES` with `API_ERROR_STATUS` and `RETRYABLE_API_ERROR_CODES`; pagination, sort, id, date, and query-boolean schemas; `time-zone.ts`, `csv.ts`, `locale.ts` (Phase 6).                                                                                                                           |
+| `src/domain/`     | One file per resource (`organization`, `users`, `memberships`, `sites`, `teams`, `log-types`, `tasks`, `work-logs`, `attachments`, `scope`, `sync`, and from Phase 6 `dashboard`, `directory`, `exports`, `history`, `reports`), plus `enums.ts` (with `roleRank`, `rolesHighestFirst`), `custom-fields.ts`, and `shared.ts`.  |
+| `src/i18n/`       | `translate.ts`: `createTranslator` (plurals by `Intl.PluralRules`, `{{name}}`, fallback catalogue then the key), `pickLanguage`, `isRtlLanguage`, catalogue types. Used by web and mobile (moved from mobile in Phase 6).                                                                                                      |
 | `src/platform/`   | `auth.ts` (the sign-in wire contract), `notifications.ts` (Phase 4), `offline-sync.ts` (Phase 5), `audit.ts`, `outbox.ts`. `AUDIT_REDACTED`.                                                                                                                                                                                   |
 | `src/forms/`      | `custom-field-form.ts` (Phase 4): form descriptors, initial values, reconciling with a changed log type, number parsing, conversion to wire values through `validateCustomFieldValues`, mapping API error details back to fields.                                                                                              |
 | `src/theme/`      | `tokens.ts`, `contrast.ts`, `css.ts`.                                                                                                                                                                                                                                                                                          |
 | `src/api-client/` | `client.ts` (transport with auth hooks and refresh-once, `ApiResult`, `CSRF_HEADER`, `REQUEST_ID_HEADER`), `create-api-client.ts` (`createApiClient`), `auth-session.ts` (`createAuthSessionManager`), `auth-text.ts`, `auth-forms.ts`, `attachment-upload.ts` (Phase 4), `health-monitor.ts`, `health-status.ts`, `index.ts`. |
 
-689 unit tests in 14 files, confirmed on 2026-10-27.
+743 unit tests in 17 files, confirmed on 2026-10-28 (new: `csv.test.ts`, `time-zone.test.ts`,
+`dashboard-contracts.test.ts`).
+
+## Phase 6 contract changes (ADR-0009, 2026-10-28)
+
+- **New areas**: `common/time-zone.ts` (`DEFAULT_TIME_ZONE`, `timeZoneSchema`, `timeZoneOf`,
+  `dayKeySchema`, `zonedParts`, `zonedDayKey`, `zonedDayStart`, `zonedDaysRange`,
+  `formatInTimeZone`, `formatDayKey`, `formatSortableInTimeZone`), `common/csv.ts` (`toCsv`,
+  `csvCell`, `neutralizeCsvFormula`, `CSV_BOM`), `common/locale.ts` (`SUPPORTED_LOCALES`,
+  `localeOf`, `localeDirection`), `i18n/translate.ts` (moved from mobile).
+- **New resources**: `domain/dashboard.ts` (overview, `listFilterSchema`), `domain/directory.ts`,
+  `domain/reports.ts`, `domain/exports.ts` (column lists, `EXPORT_MAX_ROWS`), `domain/history.ts`
+  (`recordHistorySchema`); client groups `dashboard`, `directory`, `reports`, `exports`.
+- **Changed**: `workLogFilterShape` / `taskFilterShape` shared by list, map and export
+  (`search`, `hasPhotos`, `excludeOwn` (leave out the caller's own logs; added after the review
+  for the overview's "awaiting approval"); `open`, `overdue`); work-log sort adds `updatedAt`, `status`;
+  `attachmentCount` (optional) on work logs; `workLogs.bulkChangeStatus`, `map`, `history`;
+  `tasks.history`; `users.sessions`, `users.revokeSessions`; `locale` on user create, update
+  and the full profile, optional on `authUserSchema`; `timeZone` in organization settings and
+  summary; error code `export_too_large` (422); transport `responseType: 'text'`.
 
 ## Phase 5 contract changes (ADR-0008)
 
@@ -117,7 +138,9 @@ put, onProgress, checkpoint })` runs start, PUT, and complete and returns an
 | `src/api-client/auth-text.ts`         | Every sign-in, activation, and sign-out sentence (`AUTH_TEXT`, `AUTH_FAILURE_MESSAGES`, `AUTH_NOTICE_MESSAGES`) and `roleLabel`.                                    |
 | `src/api-client/auth-forms.ts`        | `validateSignInForm`, `validateSetPasswordForm`, `newPasswordProblem`, `isFormValid`.                                                                               |
 | `src/api-client/attachment-upload.ts` | `uploadAttachment` (resumable start, PUT, complete) and the retry helpers.                                                                                          |
-| `src/forms/custom-field-form.ts`      | The custom-field form logic the mobile app (and later the web) generates forms from.                                                                                |
+| `src/forms/custom-field-form.ts`      | The custom-field form logic the mobile app generates forms from.                                                                                                    |
+| `src/common/time-zone.ts`             | Organization time-zone helpers (`zonedDaysRange`, `formatInTimeZone`, ...), DST-correct, no library.                                                                |
+| `src/common/csv.ts`                   | `toCsv`, `csvCell`, `neutralizeCsvFormula`, `CSV_BOM`: the one CSV and formula-injection rule.                                                                      |
 | `src/platform/notifications.ts`       | Notification and push-token schemas and endpoints.                                                                                                                  |
 | `src/platform/offline-sync.ts`        | Offline sync headers, clock skew helpers, idempotency constants, audit metadata schema (Phase 5).                                                                   |
 | `src/domain/sync.ts`                  | `GET /sync/pull` schemas, constants, and endpoint (Phase 5).                                                                                                        |
@@ -194,6 +217,8 @@ const logs = await session.client.workLogs.list({ sort: 'occurredAt:desc' });
   manager, the health monitor, the upload helper, the custom-field form logic). Authorization
   rules stay in the API.
 - `ATTACHMENT_STATUSES` and `PUSH_PLATFORMS` must match the Prisma enums, like `enums.ts`.
+- Catalogue keys of the translator: never a plural category name (`zero`, `one`, `two`, `few`,
+  `many`, `other`) as a plain key; an object holding `other` is read as plural forms.
 - No runtime dependency other than Zod. Only `fetch`, `AbortController`, and timers; no other DOM
   API, no Node API, no React, no React Native.
 - `src/common/`, `src/platform/`, `src/theme/`, the transport, the session manager, and the upload

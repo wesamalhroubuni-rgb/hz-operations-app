@@ -10,8 +10,9 @@ and get notifications, online or offline. Voice later.
 
 ## Current state
 
-Phase 4 committed (`280c50a`); Phase 5 (offline mode and sync, ADR-0008) code complete on
-2026-10-27, about to be committed. **Never run on a real phone or in the emulator** (Expo Go or a
+Phase 4 committed (`280c50a`); Phase 5 (offline mode and sync, ADR-0008) committed (`2cf5a01`).
+Phase 6 (2026-10-28) touched the app only to re-export the moved translation core and add one
+catalogue key; no screen changed. **Never run on a real phone or in the emulator** (Expo Go or a
 build): no screen, camera, location, SecureStore, SQLite, NetInfo, background task, or push
 behaviour has been seen on a device. The emulator test is in README section 6, the phone test in
 section 5.
@@ -92,7 +93,11 @@ section 5.
   Queued writes and their photos are never deleted by age (see the offline layer); a user's
   drafts and dropped-link notices are deleted with their offline data.
 - **i18n** (`src/i18n/`): every sentence comes from the typed catalogue `en.ts` through `t(key)`;
-  `authText.ts`, `errorText.ts`, and `roles.ts` map shared codes to keys. The language is picked
+  `authText.ts`, `errorText.ts`, and `roles.ts` map shared codes to keys. Since Phase 6
+  (2026-10-28, ADR-0009) the translation core (`createTranslator`, plurals, `{{name}}`,
+  `pickLanguage`, `isRtlLanguage`) lives in `@ops/shared` (`src/i18n/translate.ts`) and
+  `src/i18n/translate.ts` only re-exports it; `en.ts` gained the `export_too_large` error text
+  (the API error code list is typed, the phone never exports). The language is picked
   from the phone (`expo-localization`) with English as fallback. RTL: styles use `start` / `end`,
   `applyLayoutDirection()` at start-up, `extra.supportsRTL` in `app.config.ts`.
 - **Push** (`src/push/`): `pushSupport.ts` decides availability (no push in Expo Go on Android,

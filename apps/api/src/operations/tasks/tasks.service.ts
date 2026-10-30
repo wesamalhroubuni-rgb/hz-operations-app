@@ -11,6 +11,7 @@ import type { Prisma } from '../../generated/prisma/client';
 import { ApiException, orderByArgs, pageArgs, paginated } from '../../platform/http';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  AccessClock,
   AccessService,
   assignableUserWhere,
   authorOf,
@@ -26,8 +27,9 @@ import {
 } from '../access';
 import { ChangeRecorder } from '../common/change-recorder';
 import { assertExpectedVersion, lockRowForUpdate, NEXT_VERSION } from '../common/concurrency';
-import { activeUnless, contains, iso, isoOrNull, type Db } from '../common/db';
+import { iso, isoOrNull, type Db } from '../common/db';
 import { assertActiveReferences, ref } from '../common/references';
+import { taskWhere } from './task-query';
 
 /** A task is always read together with its assignees. */
 export const TASK_INCLUDE = {
@@ -80,33 +82,16 @@ export class TasksService {
     private readonly prisma: PrismaService,
     private readonly changes: ChangeRecorder,
     private readonly access: AccessService,
+    private readonly clock: AccessClock,
   ) {}
 
-  /** The tasks the caller may see. The filters asked for can only narrow that set. */
+  /**
+   * The tasks the caller may see. The filters asked for can only narrow that set (`taskWhere`,
+   * shared with the CSV export); `overdue` is judged by the server clock.
+   */
   async list(query: ListTasksQuery): Promise<Paginated<Task>> {
     const context = await this.access.context();
-    const where: Prisma.TaskWhereInput = {
-      organizationId: context.organizationId,
-      ...activeUnless(query.includeArchived),
-      AND: [taskVisibilityWhere(context) as Prisma.TaskWhereInput],
-      ...(query.status ? { status: query.status } : {}),
-      ...(query.priority ? { priority: query.priority } : {}),
-      ...(query.siteId ? { siteId: query.siteId } : {}),
-      ...(query.teamId ? { teamId: query.teamId } : {}),
-      ...(query.createdById ? { createdById: query.createdById } : {}),
-      ...(query.assigneeId ? { assignees: { some: { userId: query.assigneeId } } } : {}),
-      ...(query.dueFrom || query.dueTo
-        ? {
-            dueAt: {
-              ...(query.dueFrom ? { gte: new Date(query.dueFrom) } : {}),
-              ...(query.dueTo ? { lt: new Date(query.dueTo) } : {}),
-            },
-          }
-        : {}),
-      ...(query.search
-        ? { OR: [{ title: contains(query.search) }, { description: contains(query.search) }] }
-        : {}),
-    };
+    const where = taskWhere(context, query, this.clock.now());
     const [rows, total] = await Promise.all([
       this.prisma.task.findMany({
         where,

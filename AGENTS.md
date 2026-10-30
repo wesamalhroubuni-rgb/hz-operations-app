@@ -32,14 +32,14 @@ Naming: never hard-code a client name. The name shown in the apps comes from
 `NEXT_PUBLIC_BRAND_NAME` / `EXPO_PUBLIC_BRAND_NAME` through each app's brand module. "Operations"
 stays as the technical name (folder, `@ops/*`, `src/operations`, database `operations_app`).
 
-State on 2026-10-28: Phases 1 to 4 are committed (Phase 4: `280c50a`). Phase 5 (offline mode and
-sync, ADR-0008) is code complete, tested, and reviewed: the API (57 paths) adds row versions,
-typed conflict codes, `Idempotency-Key` handling, offline audit metadata, and `GET /sync/pull`;
-the mobile app keeps a per-user SQLite cache and write queue and syncs when the connection
-returns. **Nothing has run on a phone or in the emulator yet** (README section 6). The owner must
-run `pnpm db:reset` once (the development database holds a stray migration from lost work). The
-web app still has only login, activation, and a placeholder home. Phase 6 (web dashboard) is
-next. See [MEMORY.md](MEMORY.md).
+State on 2026-10-28: Phases 1 to 5 are committed (Phase 5 offline mode: `2cf5a01`). Phase 6 (web
+manager dashboard, ADR-0009) is done in code, tested, and reviewed, and is being committed: the
+API has 68 paths (overview, directory, map, histories, bulk review, audited CSV exports, report,
+session administration, organization time zone, per-user `locale` for notifications); the web app
+is the full dashboard. **Nothing has run on a phone or in the emulator, and the dashboard has not
+been used in a browser with data**; the owner's `pnpm db:reset` (the development database holds
+a stray migration and lacks the Phase 5 and 6 ones) and the browser test are open. Phase 7
+(Intelligent layer v1) is next. See [MEMORY.md](MEMORY.md).
 
 ## Engineering principles
 
@@ -321,13 +321,27 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   is `src/app/icon.png` (picked up by file name). The session lives in httpOnly cookies the page
   cannot read; only the CSRF token is kept, in memory. The route guard in `auth-provider.tsx` is
   UX only. Security headers are in `next.config.ts` (no `script-src` CSP yet: needs nonces).
+- Web dashboard (Phase 6, ADR-0009): **every user-facing string goes through `t('...')`** from
+  `src/i18n`; the catalogue is one file per namespace in `src/i18n/en/` (add keys to your page's
+  file, `core.ts` only for shared words). **Never use a plural category name (`zero`, `one`,
+  `two`, `few`, `many`, `other`) as a plain key**: an object with `other` is read as plural forms.
+  **Logical CSS only** (`margin-inline-start`, `inset-inline-end`, `text-align: start`), never
+  `left` / `right`. Server data through TanStack Query (`src/lib/api/query.ts`, the `queryKeys`
+  factory; invalidate after writes), tables with TanStack Table in manual mode, list state in the
+  URL (`useListParams`, names equal the API's query names). Leaflet is client-only
+  (`next/dynamic` with `ssr: false`, `src/components/map/`); never import it from a server
+  component. Show times only through `useOrgTime()` and filter days only through
+  `zonedDaysRange`: the shell renders pages only after the organization's time zone has loaded
+  (`orgTimeGate`). On the owner's PC port 3000 is taken: use `WEB_PORT` (for example 3100) and put
+  that origin in `CORS_ORIGINS` and `WEB_APP_URL`.
 - Mobile: no `metro.config.js` or `babel.config.js` (Expo defaults handle the pnpm layout). ESLint
   sets `settings.react.version` to `'19.2'` by hand; bump it when React changes. No `build` script
   by design. Expo config is `app.config.ts` (there is no `app.json`); it repeats the brand-name
   fallback from `src/config/env.ts` because it cannot import it. Expo Go shows its own icon and
   splash. A phone cannot reach `localhost`: a phone test needs `API_HOST=0.0.0.0`,
   `MINIO_BIND_HOST=0.0.0.0`, and the PC's address in `EXPO_PUBLIC_API_URL` and
-  `STORAGE_PUBLIC_ENDPOINT` (README section 5). No phone test has been done yet.
+  `STORAGE_PUBLIC_ENDPOINT` (README section 5). No phone test has been done yet. The translation
+  core comes from `@ops/shared` (`src/i18n/translate.ts` only re-exports it).
 - Mobile rules: **every write goes through `src/data/repositories.ts` → the user's write queue**
   (`src/offline/writeQueue.ts`); the sync engine sends it. Screens never call `apiClient`, the
   queue, or the engine to change data; reads come from the local store through

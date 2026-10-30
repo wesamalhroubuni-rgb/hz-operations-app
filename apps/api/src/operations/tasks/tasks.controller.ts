@@ -16,6 +16,7 @@ import {
   createTaskSchema,
   idSchema,
   listTasksQuerySchema,
+  recordHistorySchema,
   setTaskAssigneesSchema,
   taskListSchema,
   taskSchema,
@@ -24,6 +25,7 @@ import {
   type CreateTask,
   type ListTasksQuery,
   type Paginated,
+  type RecordHistory,
   type SetTaskAssignees,
   type Task,
   type UpdateTask,
@@ -31,6 +33,7 @@ import {
 import { Policy } from '../../platform/authz';
 import { ApiDocs, ZodPipe } from '../../platform/http';
 import { Idempotent } from '../../platform/idempotency';
+import { RecordHistoryService } from '../history/record-history.service';
 import { TasksService } from './tasks.service';
 
 const CHANGE_ERRORS = [
@@ -48,7 +51,10 @@ const MANAGE =
 @ApiTags('tasks')
 @Controller('tasks')
 export class TasksController {
-  constructor(private readonly tasks: TasksService) {}
+  constructor(
+    private readonly tasks: TasksService,
+    private readonly histories: RecordHistoryService,
+  ) {}
 
   @Get()
   @Policy('task.read')
@@ -56,13 +62,29 @@ export class TasksController {
     summary: 'List the tasks the caller may see',
     description:
       'A worker sees the tasks assigned to them; a supervisor also those of their scope and ' +
-      'their people; a manager or admin every task.',
+      'their people; a manager or admin every task. `open` keeps todo, in_progress and ' +
+      'blocked tasks (false: done and cancelled); `overdue` keeps open tasks due before now.',
     query: listTasksQuerySchema,
     response: taskListSchema,
     errors: [HttpStatus.FORBIDDEN],
   })
   list(@Query(new ZodPipe(listTasksQuerySchema)) query: ListTasksQuery): Promise<Paginated<Task>> {
     return this.tasks.list(query);
+  }
+
+  @Get(':id/history')
+  @Policy('task.read')
+  @ApiDocs({
+    summary: "A task's history",
+    description:
+      'The audit events of the task, oldest first, at most 200: the action, the time, who (a ' +
+      'name only for users the caller may see), the changed fields among a fixed list, and ' +
+      'whether it came from the offline queue. A task the caller may not see answers 404.',
+    response: recordHistorySchema,
+    errors: [HttpStatus.FORBIDDEN, HttpStatus.NOT_FOUND],
+  })
+  history(@Param('id', new ZodPipe(idSchema)) id: string): Promise<RecordHistory> {
+    return this.histories.task(id);
   }
 
   @Get(':id')

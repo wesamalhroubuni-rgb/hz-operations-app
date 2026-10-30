@@ -14,7 +14,9 @@ import {
   createdUserSchema,
   createUserSchema,
   idSchema,
+  authSessionListSchema,
   issuedCodeSchema,
+  revokedSessionsSchema,
   listUsersQuerySchema,
   updateUserSchema,
   userFullSchema,
@@ -22,7 +24,9 @@ import {
   userSchema,
   type CreatedUser,
   type CreateUser,
+  type AuthSession,
   type IssuedCode,
+  type RevokedSessions,
   type ListUsersQuery,
   type Paginated,
   type UpdateUser,
@@ -93,7 +97,7 @@ export class UsersController {
     summary: 'Update a user',
     description:
       'An admin changes any field of any user. Everyone else may change only their own ' +
-      '`displayName` (403 for any other field or user).',
+      '`displayName` and `locale` (403 for any other field or user).',
     body: updateUserSchema,
     response: userFullSchema,
     errors: [HttpStatus.FORBIDDEN, HttpStatus.NOT_FOUND, HttpStatus.CONFLICT],
@@ -161,5 +165,34 @@ export class UsersController {
   })
   issuePasswordReset(@Param('id', new ZodPipe(idSchema)) id: string): Promise<IssuedCode> {
     return this.users.issuePasswordReset(id);
+  }
+  @Get(':id/sessions')
+  @Policy('user.manage')
+  @ApiDocs({
+    summary: "A user's active sessions",
+    description:
+      'Admins only. The devices the user is signed in on, most recently used first: client, ' +
+      'device name, user agent and times. Never a token or an IP address; `current` is ' +
+      'always false.',
+    response: authSessionListSchema,
+    errors: [HttpStatus.FORBIDDEN, HttpStatus.NOT_FOUND],
+  })
+  sessions(@Param('id', new ZodPipe(idSchema)) id: string): Promise<{ items: AuthSession[] }> {
+    return this.users.sessions(id);
+  }
+
+  @Post(':id/sessions/revoke')
+  @Policy('user.manage')
+  @HttpCode(HttpStatus.OK)
+  @ApiDocs({
+    summary: 'Sign a user out everywhere',
+    description:
+      'Admins only. Ends every session of the user and removes their push tokens; audited ' +
+      '(`auth.session_revoked`, reason `admin_revoked`). Answers how many sessions ended.',
+    response: revokedSessionsSchema,
+    errors: [HttpStatus.FORBIDDEN, HttpStatus.NOT_FOUND],
+  })
+  revokeSessions(@Param('id', new ZodPipe(idSchema)) id: string): Promise<RevokedSessions> {
+    return this.users.revokeSessions(id);
   }
 }

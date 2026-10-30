@@ -8,6 +8,7 @@ import {
 } from '../common/pagination.js';
 import { idSchema, isoDateTimeSchema, queryBooleanSchema } from '../common/primitives.js';
 import { taskPrioritySchema, taskStatusSchema } from './enums.js';
+import { recordHistorySchema, type RecordHistory } from './history.js';
 import {
   AT_LEAST_ONE_FIELD,
   atLeastOneField,
@@ -109,9 +110,18 @@ export type SetTaskAssignees = z.infer<typeof setTaskAssigneesSchema>;
 
 export const TASK_SORT_FIELDS = ['createdAt', 'dueAt', 'priority', 'status', 'updatedAt'] as const;
 
-/** `dueFrom` is inclusive, `dueTo` is exclusive. */
-export const listTasksQuerySchema = paginationQuerySchema.extend({
-  sort: sortQuerySchema(TASK_SORT_FIELDS, { field: 'createdAt', direction: 'desc' }),
+/** Statuses counted as "open": not finished and not cancelled. */
+export const OPEN_TASK_STATUSES = ['todo', 'in_progress', 'blocked'] as const;
+
+/**
+ * The filters the task list, the CSV export and the dashboard links share (Phase 6, ADR-0009),
+ * each a query parameter of the same name, used unchanged in the dashboard's page URLs. Every
+ * filter only narrows the caller's visibility. `dueFrom` is inclusive, `dueTo` exclusive.
+ *
+ * Phase 6 added `open` (true: status in {@link OPEN_TASK_STATUSES}; false: done or cancelled)
+ * and `overdue` (true: open with `dueAt` before the server clock; false: not that).
+ */
+export const taskFilterShape = {
   search: searchQuerySchema,
   status: taskStatusSchema.optional(),
   priority: taskPrioritySchema.optional(),
@@ -121,11 +131,42 @@ export const listTasksQuerySchema = paginationQuerySchema.extend({
   createdById: idSchema.optional(),
   dueFrom: isoDateTimeSchema.optional(),
   dueTo: isoDateTimeSchema.optional(),
+  open: queryBooleanSchema.optional(),
+  overdue: queryBooleanSchema.optional(),
   includeArchived: queryBooleanSchema.default(false),
+};
+
+export type TaskFilterKey = keyof typeof taskFilterShape;
+export const TASK_FILTER_KEYS = Object.keys(taskFilterShape) as TaskFilterKey[];
+
+/** `sort` of the task list and export: `createdAt:desc` by default. */
+export const taskSortSchema = sortQuerySchema(TASK_SORT_FIELDS, {
+  field: 'createdAt',
+  direction: 'desc',
+});
+
+export const listTasksQuerySchema = paginationQuerySchema.extend({
+  sort: taskSortSchema,
+  ...taskFilterShape,
 });
 export type ListTasksQuery = z.infer<typeof listTasksQuerySchema>;
 
 export const taskListSchema = paginatedSchema(taskSchema);
+
+/** The fields of a task whose changes its history shows (`GET /tasks/:id/history`, Phase 6). */
+export const TASK_HISTORY_FIELDS = [
+  'title',
+  'description',
+  'status',
+  'statusReason',
+  'priority',
+  'siteId',
+  'teamId',
+  'assigneeIds',
+  'dueAt',
+  'completedAt',
+  'archivedAt',
+] as const;
 
 export function tasksEndpoints(transport: ApiTransport) {
   return {
@@ -171,6 +212,10 @@ export function tasksEndpoints(transport: ApiTransport) {
         path: `/tasks/${id}/archive`,
         schema: taskSchema,
       });
+    },
+    /** Phase 6. The task's audit trail, oldest first, role-shaped. */
+    history(id: string): Promise<ApiResult<RecordHistory>> {
+      return transport.request({ path: `/tasks/${id}/history`, schema: recordHistorySchema });
     },
   };
 }

@@ -32,7 +32,20 @@ export const env = {
    * API as soon as more than one organization exists; null when not configured.
    */
   organizationSlug: process.env.NEXT_PUBLIC_ORGANIZATION_SLUG?.trim() || null,
+  /**
+   * Map tile URL template (`https://.../{z}/{x}/{y}.png`), or null for the public OpenStreetMap
+   * tiles (`src/lib/map.ts`). Only https (or http for a local tile server) templates are used.
+   */
+  mapTileUrl: readTileUrl(process.env.NEXT_PUBLIC_MAP_TILE_URL),
 } as const;
+
+function readTileUrl(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed || !/^https?:\/\//.test(trimmed) || !trimmed.includes('{z}')) {
+    return null;
+  }
+  return trimmed;
+}
 
 export const MISSING_API_URL_MESSAGE =
   'NEXT_PUBLIC_API_URL is not set to an http(s) URL. Add it to the root .env file (see .env.example) and restart the dev server.';

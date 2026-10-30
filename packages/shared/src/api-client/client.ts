@@ -40,6 +40,11 @@ export interface ApiRequest<Schema extends z.ZodType> {
   headers?: Record<string, string>;
   /** Schema of the success body. The body is validated before it reaches the caller. */
   schema: Schema;
+  /**
+   * `text`: a success body is passed to `schema` as the raw text instead of parsed JSON (CSV
+   * exports, Phase 6). Error bodies are still the JSON error body. Default `json`.
+   */
+  responseType?: 'json' | 'text';
   /** Non-2xx statuses whose body is still a valid success body (GET /health answers 503). */
   alsoAccept?: readonly number[];
   timeoutMs?: number;
@@ -176,7 +181,10 @@ export function createApiTransport(options: ApiClientOptions): ApiTransport {
       let text: string;
       try {
         const headers: Record<string, string> = {
-          Accept: 'application/json',
+          Accept:
+            request.responseType === 'text'
+              ? 'text/csv, text/plain, application/json'
+              : 'application/json',
           ...(await options.getHeaders?.()),
           ...request.headers,
         };
@@ -211,6 +219,20 @@ export function createApiTransport(options: ApiClientOptions): ApiTransport {
           : { ok: false, failure: { kind: 'network', message: messageOf(error) } };
       } finally {
         clearTimeout(timer);
+      }
+
+      if (request.responseType === 'text' && (ok || request.alsoAccept?.includes(status))) {
+        const parsedText = request.schema.safeParse(text);
+        return parsedText.success
+          ? { ok: true, status, data: parsedText.data }
+          : {
+              ok: false,
+              failure: {
+                kind: 'invalid-response',
+                status,
+                message: 'The response body does not match the expected shape',
+              },
+            };
       }
 
       let body: unknown;

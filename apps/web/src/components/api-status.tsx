@@ -1,7 +1,8 @@
 'use client';
 
 import { useApiHealth } from '@/hooks/use-api-health';
-import { CHECK_AGAIN_LABEL, describeHealth } from '@ops/shared';
+import { describeHealth } from '@ops/shared';
+import { t } from '@/i18n';
 import { env, MISSING_API_URL_MESSAGE } from '@/lib/env';
 
 import styles from './api-status.module.css';
@@ -15,7 +16,7 @@ export function ApiStatus() {
   return (
     <section className={styles.card} aria-labelledby="api-status-heading">
       <h2 id="api-status-heading" className={styles.heading}>
-        API status
+        {t('settings.apiStatus')}
       </h2>
 
       <div className={styles.status} role="status" aria-live="polite">
@@ -31,10 +32,10 @@ export function ApiStatus() {
 
       <div className={styles.footer}>
         <code className={styles.url}>
-          {env.apiUrl === null ? 'No API URL' : `${env.apiUrl}/health`}
+          {env.apiUrl === null ? t('settings.noApiUrl') : `${env.apiUrl}/health`}
         </code>
         <button type="button" className={styles.button} disabled={cannotCheck} onClick={check}>
-          {CHECK_AGAIN_LABEL}
+          {t('settings.checkAgain')}
         </button>
       </div>
     </section>

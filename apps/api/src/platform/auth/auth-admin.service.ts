@@ -7,7 +7,7 @@
  * transaction passed as `tx`.
  */
 import { Inject, Injectable } from '@nestjs/common';
-import type { AuthCodePurpose, IssuedCode } from '@ops/shared';
+import type { AuthCodePurpose, AuthSession, IssuedCode } from '@ops/shared';
 import { AuditService } from '../audit/audit.service';
 import { ApiException } from '../http/api-exception';
 import { NOTIFICATION_SENDER, type NotificationSender } from '../notifications/notification-sender';
@@ -145,6 +145,31 @@ export class AuthAdminService {
       });
     }
     return count;
+  }
+
+  /**
+   * The user's sessions that can still be used, most recently used first, for an admin's view
+   * of someone else's devices (Phase 6). Never a token or its hash, never the IP address;
+   * `current` is always false because the caller is not that session.
+   */
+  async listUserSessions(
+    tx: AuthDb,
+    input: { userId: string; organizationId: string },
+  ): Promise<AuthSession[]> {
+    const db = tx as AuthTx;
+    const sessions = await this.sessions.listActive(db, input.userId);
+    return sessions
+      .filter((session) => session.organizationId === input.organizationId)
+      .map((session) => ({
+        id: session.id,
+        client: session.client,
+        deviceName: session.deviceName,
+        userAgent: session.userAgent,
+        createdAt: session.createdAt.toISOString(),
+        lastUsedAt: session.lastUsedAt.toISOString(),
+        expiresAt: session.expiresAt.toISOString(),
+        current: false,
+      }));
   }
 
   /**

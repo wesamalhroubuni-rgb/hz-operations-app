@@ -43,11 +43,14 @@ export const POLICIES = {
   },
   'user.update': {
     roles: EVERYONE,
-    description: 'Change a user: an admin any field of anyone, everyone else their own name.',
+    description:
+      'Change a user: an admin any field of anyone, everyone else their own name and language.',
   },
   'user.manage': {
     roles: ADMINS,
-    description: 'Create, archive and restore users; issue activation and password-reset codes.',
+    description:
+      'Create, archive and restore users; issue activation and password-reset codes; list and ' +
+      "end a user's sessions.",
   },
   'user.read_scope': {
     roles: ADMINS,
@@ -124,6 +127,46 @@ export const POLICIES = {
   'attachment.archive': {
     roles: EVERYONE,
     description: 'Archive an attachment, under the same rule as archiving its work log.',
+  },
+
+  // Phase 6: the web dashboard (ADR-0009). Each reads or acts only inside the caller's
+  // visibility, exactly like the lists it summarises.
+  'work_log.review': {
+    roles: SUPERVISORS_UP,
+    description:
+      'Approve or reject many work logs at once: each item under the same rule as a single ' +
+      'status change (visible to the caller, never their own log), with per-item results.',
+  },
+  'dashboard.read': {
+    roles: SUPERVISORS_UP,
+    description:
+      "Read the overview of the caller's scope: today's logs (in the organization's time " +
+      'zone), the review queue, open, overdue and blocked tasks, activity per site and team, ' +
+      'and the workers without activity.',
+  },
+  'directory.read': {
+    roles: SUPERVISORS_UP,
+    description:
+      'Read the names behind ids (users in the basic shape, sites, teams, log types) for the ' +
+      'records the caller may see.',
+  },
+  'export.work_logs': {
+    roles: SUPERVISORS_UP,
+    description:
+      'Export the visible work logs matching the list filters as CSV (at most 10,000 rows). ' +
+      'Every export is audited.',
+  },
+  'export.tasks': {
+    roles: SUPERVISORS_UP,
+    description:
+      'Export the visible tasks matching the list filters as CSV (at most 10,000 rows). Every ' +
+      'export is audited.',
+  },
+  'report.read': {
+    roles: SUPERVISORS_UP,
+    description:
+      'Read the printable work-log report (totals and groupings) of the visible logs for a ' +
+      'range of at most 92 days.',
   },
 
   'sync.pull': {

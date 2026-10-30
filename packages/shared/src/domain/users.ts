@@ -7,7 +7,13 @@ import {
   type Paginated,
 } from '../common/pagination.js';
 import { idSchema, isoDateTimeSchema, queryBooleanSchema } from '../common/primitives.js';
-import { issuedCodeSchema, type IssuedCode } from '../platform/auth.js';
+import { localeSchema } from '../common/locale.js';
+import {
+  authSessionListSchema,
+  issuedCodeSchema,
+  type AuthSession,
+  type IssuedCode,
+} from '../platform/auth.js';
 import { roleSchema } from './enums.js';
 import { membershipSummarySchema } from './memberships.js';
 import {
@@ -59,6 +65,8 @@ export const userFullSchema = z.object({
   username: z.string().nullable(),
   memberships: z.array(membershipSummarySchema),
   activated: z.boolean(),
+  /** The language the user reads the apps and their notifications in (Phase 6). */
+  locale: localeSchema,
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
   archivedAt: nullableIsoDateTimeSchema,
@@ -148,6 +156,8 @@ export const createUserSchema = z
     email: emailSchema.nullable().optional(),
     phone: phoneSchema.nullable().optional(),
     username: usernameSchema.nullable().optional(),
+    /** Defaults to `en`. */
+    locale: localeSchema.optional(),
   })
   .refine(hasLoginIdentifier, AT_LEAST_ONE_IDENTIFIER);
 export type CreateUser = z.infer<typeof createUserSchema>;
@@ -156,7 +166,7 @@ export type CreateUserInput = z.input<typeof createUserSchema>;
 /**
  * A field left out is unchanged; `null` clears an identifier (at least one must remain). An
  * admin may change every field of any user; everyone else may change only their own
- * `displayName`.
+ * `displayName` and `locale` (Phase 6).
  */
 export const updateUserSchema = z
   .strictObject({
@@ -164,6 +174,7 @@ export const updateUserSchema = z
     email: emailSchema.nullable().optional(),
     phone: phoneSchema.nullable().optional(),
     username: usernameSchema.nullable().optional(),
+    locale: localeSchema.optional(),
   })
   .refine(atLeastOneField, AT_LEAST_ONE_FIELD);
 export type UpdateUser = z.infer<typeof updateUserSchema>;
@@ -188,6 +199,10 @@ export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;
 
 export const userListSchema = paginatedSchema(userSchema);
 
+/** The answer to ending every session of a user (admin). */
+export const revokedSessionsSchema = z.object({ revoked: z.number().int().min(0) });
+export type RevokedSessions = z.infer<typeof revokedSessionsSchema>;
+
 export function usersEndpoints(transport: ApiTransport) {
   return {
     list(
@@ -207,7 +222,7 @@ export function usersEndpoints(transport: ApiTransport) {
         schema: createdUserSchema,
       });
     },
-    /** An admin changes any field; anyone else only their own `displayName`. */
+    /** An admin changes any field; anyone else only their own `displayName` and `locale`. */
     update(id: string, body: UpdateUserInput): Promise<ApiResult<UserFull>> {
       return transport.request({
         method: 'PATCH',
@@ -236,6 +251,24 @@ export function usersEndpoints(transport: ApiTransport) {
         method: 'POST',
         path: `/users/${id}/activation-code`,
         schema: issuedCodeSchema,
+      });
+    },
+    /**
+     * Admins only (Phase 6). The user's active sessions (devices), never a token; `current` is
+     * always false. GET /users/:id/sessions [user.manage].
+     */
+    sessions(id: string): Promise<ApiResult<{ items: AuthSession[] }>> {
+      return transport.request({ path: `/users/${id}/sessions`, schema: authSessionListSchema });
+    },
+    /**
+     * Admins only (Phase 6). Ends every session of the user (signs them out everywhere) and
+     * removes their push tokens. POST /users/:id/sessions/revoke [user.manage].
+     */
+    revokeSessions(id: string): Promise<ApiResult<RevokedSessions>> {
+      return transport.request({
+        method: 'POST',
+        path: `/users/${id}/sessions/revoke`,
+        schema: revokedSessionsSchema,
       });
     },
     /** Admins only. A password-reset code for a user who has already been activated. */

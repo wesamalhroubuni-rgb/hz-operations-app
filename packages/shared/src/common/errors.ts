@@ -28,6 +28,8 @@ export const API_ERROR_CODES = [
   'attachment_not_declared',
   'idempotency_key_reused',
   'request_in_progress',
+  // Phase 6 (ADR-0009)
+  'export_too_large',
 ] as const;
 
 export const apiErrorCodeSchema = z.enum(API_ERROR_CODES);
@@ -52,6 +54,8 @@ export type ApiErrorCode = z.infer<typeof apiErrorCodeSchema>;
  * - `idempotency_key_reused` (422): an `Idempotency-Key` sent again with a different request.
  * - `request_in_progress` (409): the first request with this `Idempotency-Key` is still running.
  *   The only one of these codes worth retrying as it is.
+ * - `export_too_large` (422, Phase 6): a CSV export would hold more than `EXPORT_MAX_ROWS`
+ *   rows; narrow the filters.
  */
 export const API_ERROR_STATUS: Readonly<Record<ApiErrorCode, number>> = {
   validation_failed: 400,
@@ -73,6 +77,7 @@ export const API_ERROR_STATUS: Readonly<Record<ApiErrorCode, number>> = {
   attachment_not_declared: 403,
   idempotency_key_reused: 422,
   request_in_progress: 409,
+  export_too_large: 422,
 };
 
 /**
