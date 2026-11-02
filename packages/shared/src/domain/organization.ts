@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { ApiResult, ApiTransport } from '../api-client/client.js';
 import { idSchema, isoDateTimeSchema } from '../common/primitives.js';
 import { timeZoneSchema } from '../common/time-zone.js';
+import { organizationAiFeaturesSchema, organizationAiSettingsSchema } from './ai-settings.js';
 import {
   AT_LEAST_ONE_FIELD,
   atLeastOneField,
@@ -45,6 +46,11 @@ export const organizationSettingsSchema = z.looseObject({
    * read it with `timeZoneOf`.
    */
   timeZone: timeZoneSchema.optional(),
+  /**
+   * The intelligent layer's switches and limits (Phase 7, ADR-0010): every feature off by default.
+   * Read it with `aiSettingsOf`.
+   */
+  ai: organizationAiSettingsSchema.optional(),
 });
 export type OrganizationSettings = z.infer<typeof organizationSettingsSchema>;
 
@@ -92,6 +98,11 @@ const organizationSummaryShape = {
   offlineMaxBackdateDays: z.number().int(),
   /** The time zone in force (the default when the organization has not set one). */
   timeZone: z.string(),
+  /**
+   * Phase 7: which AI features are on (`settings.ai`). Always sent by a Phase 7 API; optional so
+   * an older cached summary still parses (read it with `aiFeaturesOf`).
+   */
+  aiFeatures: organizationAiFeaturesSchema.optional(),
 };
 
 /** What every signed-in user of the organization sees. */

@@ -18,6 +18,8 @@ export const OFFLINE_TABLES = [
   'meta',
   /** The write queue (`QueueItem` documents). */
   'queue',
+  /** Phase 7: smart captures waiting for review (`LocalSmartCapture`, key: captureClientId). */
+  'smart_captures',
 ] as const;
 export type OfflineTable = (typeof OFFLINE_TABLES)[number];
 

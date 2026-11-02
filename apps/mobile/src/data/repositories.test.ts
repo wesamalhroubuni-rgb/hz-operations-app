@@ -43,6 +43,8 @@ function setup(options: { limitBytes?: number } = {}) {
     store: layer.store,
     queue: layer.queue,
     photos: layer.photos,
+    audio: layer.audio,
+    captures: layer.captures,
     client: client as never,
     newId: layer.newId,
     clock: () => now,

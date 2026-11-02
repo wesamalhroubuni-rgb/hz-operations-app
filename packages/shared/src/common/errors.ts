@@ -30,6 +30,10 @@ export const API_ERROR_CODES = [
   'request_in_progress',
   // Phase 6 (ADR-0009)
   'export_too_large',
+  // Phase 7 (ADR-0010)
+  'ai_disabled',
+  'ai_limit_reached',
+  'ai_unavailable',
 ] as const;
 
 export const apiErrorCodeSchema = z.enum(API_ERROR_CODES);
@@ -56,6 +60,16 @@ export type ApiErrorCode = z.infer<typeof apiErrorCodeSchema>;
  *   The only one of these codes worth retrying as it is.
  * - `export_too_large` (422, Phase 6): a CSV export would hold more than `EXPORT_MAX_ROWS`
  *   rows; narrow the filters.
+ * - `ai_disabled` (403, Phase 7, ADR-0010): the organization has switched this AI feature off
+ *   (`settings.ai`). Final: the worker fills the form by hand.
+ * - `ai_limit_reached` (429, Phase 7): the organization's daily AI request or cost limit is used
+ *   up (UTC day). Final for that request: fill the form by hand. A user's per-minute AI rate
+ *   limit is the ordinary, retryable `rate_limited` with `Retry-After`.
+ * - `ai_unavailable` (503, Phase 7): the AI provider failed or timed out; the capture is kept
+ *   and may be processed again later. Retryable.
+ *
+ * Unusable model output is not an error code: the capture answers 200 with status `failed`,
+ * `failureReason: 'output_invalid'` and the transcript kept (ADR-0010).
  */
 export const API_ERROR_STATUS: Readonly<Record<ApiErrorCode, number>> = {
   validation_failed: 400,
@@ -78,6 +92,9 @@ export const API_ERROR_STATUS: Readonly<Record<ApiErrorCode, number>> = {
   idempotency_key_reused: 422,
   request_in_progress: 409,
   export_too_large: 422,
+  ai_disabled: 403,
+  ai_limit_reached: 429,
+  ai_unavailable: 503,
 };
 
 /**
@@ -90,6 +107,7 @@ export const RETRYABLE_API_ERROR_CODES: readonly ApiErrorCode[] = [
   'service_unavailable',
   'internal_error',
   'request_in_progress',
+  'ai_unavailable',
 ];
 
 export function isRetryableApiErrorCode(code: ApiErrorCode): boolean {

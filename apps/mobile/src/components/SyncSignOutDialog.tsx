@@ -8,19 +8,24 @@ import { Button } from './Button';
 import { Message } from './Message';
 
 /**
- * Asked at sign-out when changes are still on the phone (ADR-0008, section 8): sync first, keep
- * them for the next sign-in, or discard them (confirmed once more), or cancel.
+ * Asked at sign-out when changes are still on the phone (ADR-0008, section 8), or smart captures
+ * wait for the worker's review (Phase 7): sync first, keep them for the next sign-in, or discard
+ * them (confirmed once more), or cancel.
  */
 export function SyncSignOutDialog({
   visible,
   pendingCount,
+  captureCount = 0,
   stillPending,
   busy,
   onChoose,
   onCancel,
 }: Readonly<{
   visible: boolean;
+  /** Queued writes not sent yet. */
   pendingCount: number;
+  /** Smart captures waiting for review (syncing does not finish them). */
+  captureCount?: number;
   /** After a "Sync first" that could not send everything: how many are left. */
   stillPending: number | null;
   busy: boolean;
@@ -42,9 +47,16 @@ export function SyncSignOutDialog({
       <View style={styles.backdrop}>
         <View style={styles.dialog} accessibilityViewIsModal>
           <AppText variant="heading">{t('sync.signOut.title')}</AppText>
-          <AppText variant="secondary">
-            {t('sync.signOut.message', { count: pendingCount })}
-          </AppText>
+          {pendingCount > 0 ? (
+            <AppText variant="secondary">
+              {t('sync.signOut.message', { count: pendingCount })}
+            </AppText>
+          ) : null}
+          {captureCount > 0 ? (
+            <AppText variant="secondary">
+              {t('sync.signOut.captures', { count: captureCount })}
+            </AppText>
+          ) : null}
           {stillPending !== null ? (
             <Message tone="notice" text={t('sync.signOut.stillPending', { count: stillPending })} />
           ) : null}

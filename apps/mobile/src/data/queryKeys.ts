@@ -18,4 +18,6 @@ export const queryKeys = {
   queueCounts: ['offline', 'queue', 'counts'] as const,
   syncMeta: ['offline', 'syncMeta'] as const,
   photoStorage: ['offline', 'photoStorage'] as const,
+  // Smart capture (Phase 7): the captures kept on the phone, with their queue state.
+  captures: ['offline', 'captures'] as const,
 };

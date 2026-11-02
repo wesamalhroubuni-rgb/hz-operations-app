@@ -1,4 +1,5 @@
 import {
+  aiFeaturesOf,
   workLogEditWindowHoursOf,
   type ApiResult,
   type AppNotification,
@@ -18,7 +19,13 @@ import { useSyncExternalStore } from 'react';
 
 import { findWorkLog, viewTasks, viewWorkLogs } from '../offline/localView';
 import type { AppOfflineSession } from '../offline/session';
-import type { PhotoStorageUsage, QueueItem, QueueItemState, SyncMeta } from '../offline/types';
+import type {
+  LocalSmartCapture,
+  PhotoStorageUsage,
+  QueueItem,
+  QueueItemState,
+  SyncMeta,
+} from '../offline/types';
 import { useData } from './DataProvider';
 import { queryKeys } from './queryKeys';
 import { ReadError, toWriteError, type WriteError } from './results';
@@ -259,6 +266,50 @@ export function useOrganization() {
     queryFn: async () =>
       (await offline.store.getSyncMeta()).organization ?? unwrap(client.organization.get()),
   });
+}
+
+/** Whether the organization switched smart capture on (Phase 7): "Speak" and "Snap" show only then. */
+export function useSmartCaptureEnabled(): boolean {
+  const organization = useOrganization();
+  return aiFeaturesOf(organization.data ?? null).smartCapture;
+}
+
+/** A capture kept on the phone, with its queue item (null once it left the queue). */
+export interface CaptureView {
+  local: LocalSmartCapture;
+  item: QueueItem | null;
+}
+
+/** The smart captures on the phone, newest first, with their queue state. */
+export function useSmartCaptures() {
+  const { offline } = useData();
+  return useQuery<CaptureView[]>({
+    queryKey: queryKeys.captures,
+    queryFn: async () => {
+      const items = await offline.queue.list();
+      return (await offline.captures.list()).map((local) => ({
+        local,
+        item:
+          items.find(
+            (item) =>
+              item.mutation.kind === 'smartCapture' &&
+              item.mutation.captureClientId === local.captureClientId,
+          ) ?? null,
+      }));
+    },
+  });
+}
+
+/** One capture of the phone by its clientId, or null when it is gone (confirmed, discarded). */
+export function useSmartCapture(captureClientId: string | undefined) {
+  const captures = useSmartCaptures();
+  return {
+    ...captures,
+    data:
+      captures.data && captureClientId !== undefined
+        ? (captures.data.find((view) => view.local.captureClientId === captureClientId) ?? null)
+        : undefined,
+  };
 }
 
 /** The organization's edit window in hours (the default until the organization has loaded). */

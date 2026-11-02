@@ -18,7 +18,13 @@ export function useOfflineSessionForSync(): OfflineSession | null {
 
 export type SignOutWithChoiceResult =
   | { ok: true }
-  | { ok: false; reason: 'needsChoice' | 'notEmpty'; pending: number }
+  | {
+      ok: false;
+      reason: 'needsChoice' | 'notEmpty';
+      /** Queued writes plus `captures` (smart captures waiting for review). */
+      pending: number;
+      captures: number;
+    }
   | { ok: false; reason: 'auth' | 'unexpected' };
 
 /** Sign-out that carries the worker's decision about unsent changes (`useSignOut`). */
@@ -36,7 +42,12 @@ export function useSignOutWithChoice(): {
       if (outcome === null) return { ok: false, reason: 'unexpected' };
       if (outcome.ok) return { ok: true };
       if (outcome.reason === 'auth') return { ok: false, reason: 'auth' };
-      return { ok: false, reason: outcome.reason, pending: outcome.pending };
+      return {
+        ok: false,
+        reason: outcome.reason,
+        pending: outcome.pending,
+        captures: outcome.captures,
+      };
     },
   };
 }

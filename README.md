@@ -1,23 +1,28 @@
 # HZ
 
 Workers log their work from their phones. Supervisors and managers monitor it on a web dashboard.
-A later AI layer will summarise the work, flag anomalies, and propose actions for a human to
-approve.
+An AI layer turns a worker's voice note, photo, or typed note into a proposed work log for the
+worker to check and save, and writes each supervisor and manager a daily summary of their scope
+with unusual items flagged. The AI only proposes; a person decides.
 
 **HZ** is the client's product. It is built and powered by Kaneri.ai. The repository folder
 (`Operations_App`), the package names (`@ops/*`), and the database (`operations_app`) keep the
 technical name "Operations". The name shown in the apps comes from configuration, so the same code
 can be deployed for another client.
 
-**Status (2026-10-28)**: Phase 6, the web manager dashboard, code complete and tested; nobody has
-used it in a browser with data yet. Workers sign in on the phone, see and update their tasks, and
-create work logs with text, photos, location, and custom fields, with or without a connection
-(Phase 5; not yet run on a phone or in the emulator). They get in-app (and, in a development
-build, push) notifications when a task is assigned or a log is approved or rejected. Supervisors,
-managers, and admins use the web dashboard: an overview of the day, work logs with review and
-approval, tasks, a map, CSV exports and a printable report, and for admins people, structure,
-the audit log, and settings. Photos are stored in S3-compatible storage (MinIO in development).
-See [ROADMAP.md](ROADMAP.md).
+**Status (2026-11-02)**: Phase 7, the intelligent layer (smart capture and daily summaries), code
+complete and tested with built-in fake AI providers; no real AI key has been used yet (section
+11). Workers sign in on the phone, see and update their tasks, and create work logs with text,
+photos, location, and custom fields, with or without a connection, or let the AI propose one from
+a voice note, photo, or typed note (not yet run on a phone or in the emulator). They get in-app
+(and, in a development build, push) notifications when a task is assigned or a log is approved or
+rejected. Supervisors, managers, and admins use the web dashboard: an overview of the day with
+their daily summary and unusual items, work logs with review and approval, tasks, a map, CSV
+exports and a printable report, and for admins people, structure, the audit log, settings
+(including the AI switches), and AI usage. Nobody has used the dashboard in a browser with data
+yet. Photos are stored in S3-compatible storage (MinIO in development). See
+[ROADMAP.md](ROADMAP.md); the full manual test of Phases 4 to 7 is in
+[docs/reports/phase-7.md](docs/reports/phase-7.md).
 
 This guide is for a developer on Windows 11 using PowerShell.
 
@@ -130,6 +135,22 @@ pnpm lint
 pnpm typecheck
 pnpm test
 ```
+
+### Updating an existing checkout to Phase 7
+
+Phase 7 added the AI layer (smart capture, daily summaries).
+
+1. Run `pnpm install` (new packages: `@anthropic-ai/sdk` in the API, `expo-audio` in the mobile
+   app).
+2. Optional: copy the "Intelligent layer" block of `.env.example` into `.env`. Every AI variable
+   has a default, and without keys the API uses its built-in fake providers in development, so
+   nothing else is needed to start. Section 11 says how to add real keys.
+3. Run `pnpm db:migrate` (migration `20261030090000_phase7_ai`: smart captures, daily summaries,
+   anomaly flags, AI traces). On the owner's PC the development database still holds a stray
+   Phase 5 migration: run `pnpm db:reset` once instead (it deletes all data and seeds again; an AI
+   agent cannot run it for you).
+4. Restart `pnpm dev`, and start Expo once with `--clear`.
+5. The AI features are off until an admin turns them on (section 11).
 
 ### Updating an existing checkout to Phase 6
 
@@ -250,16 +271,18 @@ pnpm --filter @ops/web dev
 Open <http://localhost:3000> (or the port in `WEB_PORT`) and sign in with a seeded user from
 section 4. What each role sees:
 
-| Role       | Sign in as         | Pages                                                                                             |
-| ---------- | ------------------ | ------------------------------------------------------------------------------------------------- |
-| admin      | `aylin`            | Overview, Work logs (review, report), Tasks, Map, People (manage), Structure, Audit log, Settings |
-| manager    | `murat`            | Overview, Work logs, Tasks, Map, People (read only), Structure                                    |
-| supervisor | `selin`, `emre`    | Overview, Work logs, Tasks, Map, limited to their scope                                           |
-| worker     | `deniz` and others | A message to use the mobile app                                                                   |
+| Role       | Sign in as         | Pages                                                                                                                  |
+| ---------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| admin      | `aylin`            | Overview, Work logs (review, report), Tasks, Map, Summaries, People (manage), Structure, Audit log, Settings, AI usage |
+| manager    | `murat`            | Overview, Work logs, Tasks, Map, Summaries, People (read only), Structure                                              |
+| supervisor | `selin`, `emre`    | Overview, Work logs, Tasks, Map, Summaries, limited to their scope                                                     |
+| worker     | `deniz` and others | A message to use the mobile app                                                                                        |
 
 Nobody approves their own work log. Times are shown in the organization's time zone (Settings,
 default Europe/Istanbul). The map loads its tiles from OpenStreetMap unless
-`NEXT_PUBLIC_MAP_TILE_URL` is set.
+`NEXT_PUBLIC_MAP_TILE_URL` is set. Summaries shows only your own daily summaries (an admin gets
+one only when the admin role is among the recipients); the Overview shows the latest one and the
+unusual items once daily summaries are switched on (section 11).
 
 **If port 3000 is taken** (on the owner's PC it is used by another project), pick another port
 and tell the API about the new address, then restart `pnpm dev`. In `.env`:
@@ -732,50 +755,59 @@ real sign-ins and sessions. They take about 3 minutes and are not part of `pnpm 
 All configuration is in the root `.env`. [.env.example](.env.example) lists every variable with a
 comment.
 
-| Variable                                                             | Used by           | Purpose                                                                                                                    |
-| -------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT` | Docker Compose    | The local PostgreSQL container                                                                                             |
-| `DATABASE_URL`                                                       | API               | Connection string. Must match the values above                                                                             |
-| `DATABASE_CONNECT_TIMEOUT_MS`                                        | API               | How long to wait for a database connection                                                                                 |
-| `API_HOST`                                                           | API               | `127.0.0.1` (this PC only, the default) or `0.0.0.0` (the network; only for a phone test)                                  |
-| `API_PORT`                                                           | API               | Port the API listens on                                                                                                    |
-| `CORS_ORIGINS`                                                       | API               | Browser origins allowed to call the API. Also the allow-list of the CSRF check: sign-in from any other origin is refused   |
-| `LOG_LEVEL`                                                          | API               | `verbose`, `debug`, `log`, `warn`, `error`, `fatal`                                                                        |
-| `TRUST_PROXY_HOPS`                                                   | API               | Number of reverse proxies in front of the API (0 locally). Set it exactly in production                                    |
-| `AUTH_ACCESS_TOKEN_SECRET`                                           | API               | Signs access tokens; at least 32 characters. Production refuses placeholder or weak values. Changing it signs everyone out |
-| `AUTH_ACCESS_TOKEN_TTL_SECONDS`                                      | API               | Access token lifetime (900)                                                                                                |
-| `AUTH_REFRESH_TOKEN_TTL_DAYS`, `AUTH_SESSION_ABSOLUTE_TTL_DAYS`      | API               | Session ends after 30 days without use, and after 90 days at the latest                                                    |
-| `AUTH_REFRESH_REUSE_GRACE_SECONDS`                                   | API               | A refresh token sent twice within this many seconds (two tabs) does not end the session (10)                               |
-| `AUTH_ACTIVATION_CODE_TTL_HOURS`, `AUTH_RESET_CODE_TTL_MINUTES`      | API               | One-time code validity (72 hours, 60 minutes)                                                                              |
-| `AUTH_MAX_FAILED_LOGINS`, `AUTH_LOCKOUT_MINUTES`                     | API               | Lockout after 5 failed sign-ins in a row, for 15 minutes                                                                   |
-| `AUTH_COOKIE_DOMAIN`                                                 | API               | Leave empty unless the web app and API are on different subdomains of one domain                                           |
-| `WEB_APP_URL`                                                        | API               | Address of the web app; activation and reset links point at it. `https://` in production                                   |
-| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`                             | Docker Compose    | MinIO's own login (development only)                                                                                       |
-| `MINIO_BIND_HOST`, `MINIO_PORT`, `MINIO_CONSOLE_PORT`                | Docker Compose    | Where MinIO listens: `127.0.0.1`, 9000, 9001. `MINIO_BIND_HOST=0.0.0.0` only for a phone test; the console stays local     |
-| `STORAGE_ENDPOINT`                                                   | API               | Where the API reaches the storage (`http://127.0.0.1:9000`)                                                                |
-| `STORAGE_PUBLIC_ENDPOINT`                                            | API               | Address written into signed photo URLs; must be reachable by the phone or browser. `https://` in production                |
-| `STORAGE_REGION`, `STORAGE_BUCKET`, `STORAGE_FORCE_PATH_STYLE`       | API               | `us-east-1`, `hz-attachments`, `true` (MinIO and most S3-compatible services)                                              |
-| `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`                 | API               | Storage credentials. In development the MinIO login; production refuses placeholder or weak secrets                        |
-| `UPLOAD_MAX_BYTES`                                                   | API               | Largest photo accepted (10485760 = 10 MiB; at most 25 MiB)                                                                 |
-| `UPLOAD_URL_TTL_SECONDS`, `DOWNLOAD_URL_TTL_SECONDS`                 | API               | Lifetime of signed upload and download URLs (300 each)                                                                     |
-| `PUSH_ENABLED`, `EXPO_ACCESS_TOKEN`                                  | API               | Send push notifications through Expo (`true`); the token is needed only with Expo's "enhanced push security"               |
-| `OUTBOX_CONSUMER_ENABLED`, `OUTBOX_POLL_INTERVAL_MS`                 | API               | Run the background reader that turns events into notifications (`true`, every 2000 ms)                                     |
-| `DATABASE_URL_TEST`                                                  | Integration tests | A separate database whose name ends in `_test`                                                                             |
-| `WEB_PORT`                                                           | Web               | Port of the dashboard                                                                                                      |
-| `NEXT_PUBLIC_API_URL`                                                | Web               | API address used by the browser                                                                                            |
-| `NEXT_PUBLIC_BRAND_NAME`                                             | Web               | Product name shown in the dashboard (`HZ`)                                                                                 |
-| `NEXT_PUBLIC_ORGANIZATION_SLUG`                                      | Web               | Organization this deployment serves, sent with every sign-in (`hz-demo`)                                                   |
-| `NEXT_PUBLIC_MAP_TILE_URL`                                           | Web               | Map tile URL template with `{z}/{x}/{y}`. Empty: public OpenStreetMap tiles (development and light use only)               |
-| `EXPO_PUBLIC_API_URL`                                                | Mobile            | API address used by the phone                                                                                              |
-| `EXPO_PUBLIC_BRAND_NAME`                                             | Mobile            | Product name shown in the app, and the app name on the device (`HZ`)                                                       |
-| `EXPO_PUBLIC_ORGANIZATION_SLUG`                                      | Mobile            | Same as the web variable, for the mobile app                                                                               |
-| `EXPO_PUBLIC_EAS_PROJECT_ID`                                         | Mobile            | EAS project id from `eas init`; needed for push. Empty: no push, the in-app list still works                               |
-| `EXPO_IOS_BUNDLE_IDENTIFIER`, `EXPO_ANDROID_PACKAGE`                 | Mobile            | App identifiers for builds; empty means `ai.kaneri.operations` (a placeholder until decided)                               |
+| Variable                                                             | Used by           | Purpose                                                                                                                              |
+| -------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT` | Docker Compose    | The local PostgreSQL container                                                                                                       |
+| `DATABASE_URL`                                                       | API               | Connection string. Must match the values above                                                                                       |
+| `DATABASE_CONNECT_TIMEOUT_MS`                                        | API               | How long to wait for a database connection                                                                                           |
+| `API_HOST`                                                           | API               | `127.0.0.1` (this PC only, the default) or `0.0.0.0` (the network; only for a phone test)                                            |
+| `API_PORT`                                                           | API               | Port the API listens on                                                                                                              |
+| `CORS_ORIGINS`                                                       | API               | Browser origins allowed to call the API. Also the allow-list of the CSRF check: sign-in from any other origin is refused             |
+| `LOG_LEVEL`                                                          | API               | `verbose`, `debug`, `log`, `warn`, `error`, `fatal`                                                                                  |
+| `TRUST_PROXY_HOPS`                                                   | API               | Number of reverse proxies in front of the API (0 locally). Set it exactly in production                                              |
+| `AUTH_ACCESS_TOKEN_SECRET`                                           | API               | Signs access tokens; at least 32 characters. Production refuses placeholder or weak values. Changing it signs everyone out           |
+| `AUTH_ACCESS_TOKEN_TTL_SECONDS`                                      | API               | Access token lifetime (900)                                                                                                          |
+| `AUTH_REFRESH_TOKEN_TTL_DAYS`, `AUTH_SESSION_ABSOLUTE_TTL_DAYS`      | API               | Session ends after 30 days without use, and after 90 days at the latest                                                              |
+| `AUTH_REFRESH_REUSE_GRACE_SECONDS`                                   | API               | A refresh token sent twice within this many seconds (two tabs) does not end the session (10)                                         |
+| `AUTH_ACTIVATION_CODE_TTL_HOURS`, `AUTH_RESET_CODE_TTL_MINUTES`      | API               | One-time code validity (72 hours, 60 minutes)                                                                                        |
+| `AUTH_MAX_FAILED_LOGINS`, `AUTH_LOCKOUT_MINUTES`                     | API               | Lockout after 5 failed sign-ins in a row, for 15 minutes                                                                             |
+| `AUTH_COOKIE_DOMAIN`                                                 | API               | Leave empty unless the web app and API are on different subdomains of one domain                                                     |
+| `WEB_APP_URL`                                                        | API               | Address of the web app; activation and reset links point at it. `https://` in production                                             |
+| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`                             | Docker Compose    | MinIO's own login (development only)                                                                                                 |
+| `MINIO_BIND_HOST`, `MINIO_PORT`, `MINIO_CONSOLE_PORT`                | Docker Compose    | Where MinIO listens: `127.0.0.1`, 9000, 9001. `MINIO_BIND_HOST=0.0.0.0` only for a phone test; the console stays local               |
+| `STORAGE_ENDPOINT`                                                   | API               | Where the API reaches the storage (`http://127.0.0.1:9000`)                                                                          |
+| `STORAGE_PUBLIC_ENDPOINT`                                            | API               | Address written into signed photo URLs; must be reachable by the phone or browser. `https://` in production                          |
+| `STORAGE_REGION`, `STORAGE_BUCKET`, `STORAGE_FORCE_PATH_STYLE`       | API               | `us-east-1`, `hz-attachments`, `true` (MinIO and most S3-compatible services)                                                        |
+| `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`                 | API               | Storage credentials. In development the MinIO login; production refuses placeholder or weak secrets                                  |
+| `UPLOAD_MAX_BYTES`                                                   | API               | Largest photo accepted (10485760 = 10 MiB; at most 25 MiB)                                                                           |
+| `UPLOAD_URL_TTL_SECONDS`, `DOWNLOAD_URL_TTL_SECONDS`                 | API               | Lifetime of signed upload and download URLs (300 each)                                                                               |
+| `PUSH_ENABLED`, `EXPO_ACCESS_TOKEN`                                  | API               | Send push notifications through Expo (`true`); the token is needed only with Expo's "enhanced push security"                         |
+| `OUTBOX_CONSUMER_ENABLED`, `OUTBOX_POLL_INTERVAL_MS`                 | API               | Run the background reader that turns events into notifications (`true`, every 2000 ms)                                               |
+| `ANTHROPIC_API_KEY`                                                  | API               | Claude key for proposals, photo understanding, and summary texts (section 11). Empty: fake in development, unavailable in production |
+| `OPENAI_API_KEY`                                                     | API               | OpenAI key for turning voice notes into text (section 11). Empty: fake in development, unavailable in production                     |
+| `AI_PROVIDER`                                                        | API               | `auto` (default: real where a key is set), `fake` (never calls out; refused in production), `real` (both keys required)              |
+| `AI_LLM_MODEL`, `AI_STT_MODEL`                                       | API               | `claude-opus-5-5` and `gpt-4o-transcribe`. Another model must be in the price table, or the cost limit does not count it             |
+| `AI_ANTHROPIC_REFUSAL_FALLBACK`                                      | API               | `false`. Anthropic's server-side refusal fallback; turn on only after checking it with a real key                                    |
+| `AI_REQUEST_TIMEOUT_MS`                                              | API               | Timeout of one provider call (30000)                                                                                                 |
+| `AI_DAILY_LIMIT_PER_ORG`, `AI_DAILY_COST_LIMIT_USD_PER_ORG`          | API               | Hard ceilings per organization per UTC day (500 calls, 10 US dollars); an admin can set lower limits in Settings                     |
+| `AI_RATE_LIMIT_PER_USER_PER_MINUTE`                                  | API               | Smart-capture calls one user may start per minute (6)                                                                                |
+| `AI_SUMMARY_SCHEDULER_ENABLED`, `AI_SUMMARY_POLL_INTERVAL_MS`        | API               | Run the daily-summary scheduler (`true`) and how often it checks (60000 ms)                                                          |
+| `DATABASE_URL_TEST`                                                  | Integration tests | A separate database whose name ends in `_test`                                                                                       |
+| `WEB_PORT`                                                           | Web               | Port of the dashboard                                                                                                                |
+| `NEXT_PUBLIC_API_URL`                                                | Web               | API address used by the browser                                                                                                      |
+| `NEXT_PUBLIC_BRAND_NAME`                                             | Web               | Product name shown in the dashboard (`HZ`)                                                                                           |
+| `NEXT_PUBLIC_ORGANIZATION_SLUG`                                      | Web               | Organization this deployment serves, sent with every sign-in (`hz-demo`)                                                             |
+| `NEXT_PUBLIC_MAP_TILE_URL`                                           | Web               | Map tile URL template with `{z}/{x}/{y}`. Empty: public OpenStreetMap tiles (development and light use only)                         |
+| `EXPO_PUBLIC_API_URL`                                                | Mobile            | API address used by the phone                                                                                                        |
+| `EXPO_PUBLIC_BRAND_NAME`                                             | Mobile            | Product name shown in the app, and the app name on the device (`HZ`)                                                                 |
+| `EXPO_PUBLIC_ORGANIZATION_SLUG`                                      | Mobile            | Same as the web variable, for the mobile app                                                                                         |
+| `EXPO_PUBLIC_EAS_PROJECT_ID`                                         | Mobile            | EAS project id from `eas init`; needed for push. Empty: no push, the in-app list still works                                         |
+| `EXPO_IOS_BUNDLE_IDENTIFIER`, `EXPO_ANDROID_PACKAGE`                 | Mobile            | App identifiers for builds; empty means `ai.kaneri.operations` (a placeholder until decided)                                         |
 
 `NODE_ENV` is not in `.env`. The scripts set it: `pnpm dev` runs the API in `development`, and
 `pnpm --filter @ops/api start` runs it in `production`, where the API refuses the placeholder
 secrets from `.env.example` (auth and storage), a non-https `WEB_APP_URL` or
-`STORAGE_PUBLIC_ENDPOINT`, and a missing bucket.
+`STORAGE_PUBLIC_ENDPOINT`, `AI_PROVIDER=fake`, and a missing bucket.
 
 The passwords and the secret in `.env.example` are for local development only. Never commit `.env`
 or real secrets.
@@ -828,3 +860,143 @@ or real secrets.
 | Errors about `src/generated/prisma` in the API                                            | Run `pnpm --filter @ops/api db:generate`.                                                                                                                                                                                                                                          |
 | "Filename too long" or path errors during install                                         | Enable long paths (section 1), then delete `node_modules` and run `pnpm install` again.                                                                                                                                                                                            |
 | To remove the database completely                                                         | `docker compose down -v` deletes the database and MinIO volumes (all photos too), including the test database. Then run `pnpm db:up`, `pnpm db:migrate`, and `pnpm db:seed`.                                                                                                       |
+| Speak, Snap, and Type a note do not appear on the phone                                   | Smart capture is off: as an admin, Settings, AI, turn on smart capture and save. Then pull down on Home or press "Sync now" so the phone learns it.                                                                                                                                |
+| A capture answers 403 "ai_disabled"                                                       | The admin switched that AI feature off. Turn it on in Settings, or fill in the log by hand.                                                                                                                                                                                        |
+| A capture answers 429 "ai_limit_reached"                                                  | The organization used up its AI calls or cost for the UTC day (`AI_DAILY_LIMIT_PER_ORG`, `AI_DAILY_COST_LIMIT_USD_PER_ORG`, or the lower limit in Settings). It resets at 00:00 UTC; the AI usage page shows the totals.                                                           |
+| Captures end "Couldn't understand, please fill in manually" with real keys                | Look in the API log for an error line with `status=rejected` (it names the provider, model, and error code): the key is wrong, has no credit, or `AI_LLM_MODEL` / `AI_STT_MODEL` names a model the account cannot use. Fix `.env` and restart the API.                             |
+| Captures stay "Waiting to be processed"                                                   | The provider is unreachable or timed out (503 `ai_unavailable`); the phone retries by itself. In production a missing key has the same effect.                                                                                                                                     |
+| The API log says `AI providers: llm=fake/... speechToText=fake/...` although keys are set | The API started before the keys were in `.env`, or `AI_PROVIDER=fake`. Set `AI_PROVIDER=auto` and restart the API.                                                                                                                                                                 |
+| No daily summary appears                                                                  | Daily summaries are off (Settings, AI), the summary time has not passed today in the organization's time zone, or `AI_SUMMARY_SCHEDULER_ENABLED=false`. An admin can generate one for a past day (section 11).                                                                     |
+
+## 11. AI features: keys, switches, and trying them
+
+Two features, both **off until an admin turns them on**
+([ADR-0010](docs/decisions/0010-ai-layer-architecture.md),
+[ADR-0011](docs/decisions/0011-daily-summaries-and-anomaly-rules.md)):
+
+- **Smart capture** (phone): "Speak" (a voice note of up to 2 minutes), "Snap" (a photo, with an
+  optional note), or "Type a note". The AI proposes a work log (type of work, fields, text, task,
+  site); the worker checks it in the normal log form, where the proposed fields are marked
+  "AI-suggested" with a confidence hint, changes what is wrong, and saves. Nothing is saved until
+  the worker saves. If the AI cannot make sense of it, the phone says "Couldn't understand,
+  please fill in manually" and keeps the transcript. Offline, the capture waits in the queue and
+  is processed when the phone is online again.
+- **Daily summaries** (web, plus a notification): at the summary time (default 18:00 in the
+  organization's time zone) each supervisor and manager gets a summary of their own scope: the
+  numbers (computed by the code, not the AI), a short text, and unusual items (a site with no
+  activity, a task taking much longer than similar ones, repeated rejections, a log far from its
+  site). They are suggestions only.
+
+### Turn them on
+
+As an admin (`aylin`) in the web dashboard: **Settings**, section **AI**: switch on smart capture
+and/or daily summaries, set the summary time, who receives summaries (supervisor, manager,
+admin), and optionally lower daily limits; **Save**. **AI usage** (admin) shows calls, outcomes,
+tokens, the estimated cost per day, and the limits in force. The phone shows Speak, Snap, and Type
+a note after its next sync (pull down on Home, or "Sync now").
+
+### Try them without keys (the fake providers)
+
+With no key in `.env` the API uses built-in fake providers in development (the API log at start
+says `AI providers: llm=fake/fake-llm-1 speechToText=fake/fake-stt-1`). They make no network call
+and cost nothing (an estimate is still counted, so limits can be tried).
+
+- A voice note becomes the transcript "Fake transcript" and an empty proposal: the form opens
+  with the transcript shown and nothing filled in. A typed note or a photo also gives an empty
+  proposal. That is enough to try the whole flow (capture, queue, review, save, discard).
+- A summary gets the text "Fake narrative." next to the real numbers.
+- For a filled-in proposal with the fakes, type a note that contains the test marker
+  `FAKE-LLM-JSON:` followed by the answer the fake should give. Example (paste it into "Type a
+  note"; it proposes a text and nothing else):
+
+  ```text
+  FAKE-LLM-JSON:{"logType":{"key":null,"customFields":{},"fieldConfidence":{}},"logTypeConfidence":null,"taskRef":null,"taskConfidence":null,"siteRef":null,"siteConfidence":null,"text":"Replaced the fuse in panel B.","textConfidence":"high","occurredAt":null}
+  ```
+
+  `FAKE-LLM-INVALID` in a note makes the fake answer nonsense twice, so the capture ends
+  "Couldn't understand"; `FAKE-LLM-FAIL` makes it fail like an outage, so the capture waits and
+  retries. These markers mean nothing to a real provider (there the note is plain data), and the
+  fakes never run in production.
+
+From PowerShell (signed in as `deniz` with `client = 'mobile'`, `$headers` as in section 4):
+
+```powershell
+$capture = @{
+  kind     = 'text'
+  clientId = [guid]::NewGuid().ToString()
+  context  = @{ capturedAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ') }
+  text     = 'Replaced the fuse in panel B at the North Depot.'
+} | ConvertTo-Json
+$started = Invoke-RestMethod "$api/ai/capture" -Method Post -Headers $headers -ContentType 'application/json' -Body $capture
+$result = Invoke-RestMethod "$api/ai/capture/$($started.capture.id)/process" -Method Post -Headers $headers
+$result | Format-List status, failureReason, transcript, proposal, confidence
+```
+
+A daily summary on demand (signed in as `aylin`; daily summaries must be on). Without `day` it
+generates the last due day: today once the summary time has passed, otherwise yesterday. Up to 7
+days back; it never writes a second summary for the same person and day.
+
+```powershell
+Invoke-RestMethod "$api/ai/summaries/generate" -Method Post -Headers $headers -ContentType 'application/json' -Body '{}'
+Invoke-RestMethod "$api/ai/summaries/generate" -Method Post -Headers $headers -ContentType 'application/json' -Body (@{ day = '2026-11-01' } | ConvertTo-Json)
+```
+
+Each recipient then finds the summary on the Overview and under Summaries, and a "Daily summary
+for <day>" notification in the app's Alerts tab (and, in a development build, a push saying "Your
+daily summary is ready."). The notification needs the outbox consumer, which `pnpm dev` runs.
+
+### Use real AI providers: which keys, and where
+
+You need two API keys. Both go into the **root `.env`** of the repository (never into a committed
+file, a document, or a chat), and the API must be **restarted** afterwards (`Ctrl+C`, then
+`pnpm dev` or `pnpm --filter @ops/api dev`).
+
+| Key                 | Where to get it                                                                                                                 | What it is used for                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `ANTHROPIC_API_KEY` | <https://console.anthropic.com>: create an account, add billing (credits), then Settings, API keys, "Create key". Copy it once. | Claude: the proposal from a transcript, note, or photo; the summary text |
+| `OPENAI_API_KEY`    | <https://platform.openai.com>: create an account, add billing, then API keys, "Create new secret key". Copy it once.            | Speech-to-text of voice notes (`gpt-4o-transcribe`)                      |
+
+In `.env`:
+
+```dotenv
+ANTHROPIC_API_KEY=<your Anthropic key>
+OPENAI_API_KEY=<your OpenAI key>
+AI_PROVIDER=auto
+```
+
+- `AI_PROVIDER=auto` (the default) uses the real provider for each key that is set and the fake
+  for the other, in development; so with only the Anthropic key, voice notes still get the fake
+  transcript. `real` refuses to start unless both keys are set. `fake` ignores the keys. In
+  production a missing key makes that feature "unavailable" (captures wait, summaries use a plain
+  template); the rest of the app keeps working.
+- After the restart, the API log says `AI providers: llm=anthropic/claude-opus-5-5
+speechToText=openai/gpt-4o-transcribe`.
+- **Models**: `AI_LLM_MODEL` (default `claude-opus-5-5`, about $4 / $20 per million input / output
+  tokens) and `AI_STT_MODEL` (default `gpt-4o-transcribe`, about $0.006 per minute). A cheaper
+  Claude model (for example `claude-haiku-5-5`) is one line in `.env`; a model that is not in
+  `apps/api/src/platform/ai/ai-prices.ts` is counted as $0 against the cost limit, so add its
+  price there first.
+- **Limits**: `AI_DAILY_LIMIT_PER_ORG` (500 calls) and `AI_DAILY_COST_LIMIT_USD_PER_ORG` (10 US
+  dollars) per organization per UTC day are hard ceilings; an admin can only set lower ones in
+  Settings. `AI_RATE_LIMIT_PER_USER_PER_MINUTE` (6) limits one user's captures;
+  `AI_REQUEST_TIMEOUT_MS` (30000) is the timeout of one provider call. Set a spending limit in each
+  provider's console as well.
+- `AI_ANTHROPIC_REFUSAL_FALLBACK` (default `false`): Anthropic's server-side fallback when Claude
+  declines a request. Leave it off until a capture with a real key has worked; then it may be
+  turned on and checked once.
+- Neither provider trains on API data by default; both keep request data for a limited period.
+  Before production, sign their data processing agreements and ask for zero data retention
+  (ADR-0010). What is sent: the voice audio (to OpenAI), the transcript or note, the photo
+  without metadata, the names of the log types, open tasks, and sites (to Anthropic); never
+  names, e-mail addresses, or phone numbers of people.
+
+### The microphone on the phone
+
+"Speak" asks for the microphone the first time. If it was refused, the app says so; allow it in
+the phone's settings (Apps, Expo Go or HZ, Permissions, Microphone), or fill in the form by hand.
+Expo Go shows its own permission text; the development build shows HZ's ("Voice notes you record
+are turned into a proposed work log that you review."). The app records only while the screen is
+open, never in the background. In the Android emulator the microphone is silent unless you turn
+on the host microphone (the emulator's "..." button, Microphone, "Virtual microphone uses host
+audio input"); with the fakes that does not matter, with the real speech-to-text a silent note
+ends "Couldn't understand".

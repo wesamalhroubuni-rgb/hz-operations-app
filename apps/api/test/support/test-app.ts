@@ -11,6 +11,7 @@ import {
 } from '@ops/shared';
 import { HealthModule } from '../../src/health/health.module';
 import { AccessClock } from '../../src/operations/access/clock';
+import { AiUsageLimiter } from '../../src/platform/ai/usage-limiter';
 import { OperationsModule } from '../../src/operations/operations.module';
 import {
   AccessTokenService,
@@ -472,6 +473,12 @@ export async function startTestApp(options: TestAppOptions = {}): Promise<TestAp
     OUTBOX_CONSUMER_ENABLED: false,
     OUTBOX_POLL_INTERVAL_MS: 200,
     PUSH_ENABLED: false,
+    // No AI key: the AI layer runs on the deterministic fakes (AI_PROVIDER auto, ADR-0010),
+    // and is unavailable in a test that sets NODE_ENV=production. Never a network call.
+    AI_REQUEST_TIMEOUT_MS: 5000,
+    AI_DAILY_LIMIT_PER_ORG: 500,
+    AI_DAILY_COST_LIMIT_USD_PER_ORG: 10,
+    AI_RATE_LIMIT_PER_USER_PER_MINUTE: 6,
     ...options.config,
   };
   if (config.DATABASE_URL !== target.url) {
@@ -618,6 +625,7 @@ export async function startTestApp(options: TestAppOptions = {}): Promise<TestAp
       notifications.clear();
       storage.clear();
       await rateLimiter.reset();
+      app.get(AiUsageLimiter, { strict: false }).reset();
       await truncateAll(prisma, target);
     },
     close: () => app.close(),

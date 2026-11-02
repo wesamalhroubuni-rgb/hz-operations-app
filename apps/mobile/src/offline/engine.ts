@@ -18,6 +18,7 @@ import {
   classifyUploadFailure,
   type ClassifiedFailure,
 } from './engineErrors';
+import { keepResult, sendDiscardSmartCapture, sendSmartCapture } from './smartCaptureSteps';
 import type {
   QueueItem,
   QueueItemState,
@@ -64,6 +65,11 @@ export type SyncLog = (event: string, details?: Record<string, unknown>) => void
 export interface SyncEngineOptions {
   /** The platform PUT of a local photo's bytes to a signed URL (expo-file-system on a phone). */
   put: (photo: LocalPhoto) => UploadPut;
+  /**
+   * The same for any local file (a smart capture's voice note or photo, Phase 7). Without one,
+   * `put` is used with the file's uri and local id.
+   */
+  putFile?: (uri: string, localId: string) => UploadPut;
   /** Without one, the app is taken to be in the foreground all the time. */
   foreground?: ForegroundSource;
   scheduler?: Scheduler;
@@ -357,8 +363,37 @@ export function createSyncEngine(deps: SyncEngineDeps, options: SyncEngineOption
           },
         };
       }
+      case 'smartCapture': {
+        const sent = await sendSmartCapture(captureDeps, item, mutation);
+        if (!sent.ok) return sent;
+        const input = mutation.input;
+        return {
+          ok: true,
+          // The result first (the review screen reads it), then the item leaves the queue.
+          apply: () => keepResult(deps.captures, mutation, sent.capture),
+          after: async () => {
+            // The server has the voice note now. A Snap photo stays for the review.
+            if (input.kind === 'voice') await deps.audio?.delete(input.audio.localId);
+          },
+        };
+      }
+      case 'discardSmartCapture': {
+        const sent = await sendDiscardSmartCapture(captureDeps, item, mutation);
+        return sent.ok ? { ok: true, apply: async () => undefined } : sent;
+      }
     }
   }
+
+  const captureDeps = {
+    api,
+    queue,
+    photos,
+    audio: deps.audio,
+    putFile:
+      options.putFile ??
+      ((uri: string, localId: string) => options.put({ uri, localId } as LocalPhoto)),
+    requestOptions,
+  };
 
   type UploadMutation = Extract<QueueItem['mutation'], { kind: 'uploadAttachment' }>;
 

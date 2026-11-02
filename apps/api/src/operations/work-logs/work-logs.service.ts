@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
   customFieldValuesSchema,
   WORK_LOG_EXCERPT_LENGTH,
@@ -23,6 +23,7 @@ import {
   type WorkLogLocationInput,
 } from '@ops/shared';
 import type { Prisma, WorkLog as WorkLogRow } from '../../generated/prisma/client';
+import { AI_RUNNER, type AiRunner } from '../../platform/ai';
 import {
   ApiException,
   describeKnownError,
@@ -48,6 +49,11 @@ import {
   type AccessContext,
   type WorkLogFacts,
 } from '../access';
+import {
+  markConfirmed,
+  prepareConfirmation,
+  type PreparedConfirmation,
+} from '../ai/capture/capture-confirmation';
 import { ChangeRecorder } from '../common/change-recorder';
 import { assertExpectedVersion, lockRowForUpdate, NEXT_VERSION } from '../common/concurrency';
 import { iso, isoOrNull, isUniqueViolation, type Db } from '../common/db';
@@ -252,6 +258,7 @@ export class WorkLogsService {
     private readonly changes: ChangeRecorder,
     private readonly access: AccessService,
     private readonly clock: AccessClock,
+    @Inject(AI_RUNNER) private readonly ai: AiRunner,
   ) {}
 
   /**
@@ -402,6 +409,11 @@ export class WorkLogsService {
    * task, site or team it refers to that is archived or no longer visible to the caller is stored
    * as null instead of refusing the log (the field names go into the audit metadata as
    * `droppedReferences`); an archived log type is accepted. Online creates keep the 422.
+   *
+   * Phase 7 (ADR-0010): with `source: 'ai_assisted'` and `aiProposalId` the log confirms the
+   * caller's smart capture (`../ai/capture/capture-confirmation.ts`): checked and locked in the
+   * same transaction (422 / 409), marked `confirmed`, and `aiMetadata` written by the API. The
+   * decision is stamped on the capture's traces after the commit.
    */
   async create(input: CreateWorkLog): Promise<CreateWorkLogResult> {
     const context = await this.access.context();
@@ -413,6 +425,8 @@ export class WorkLogsService {
       return { workLog: existing, created: false };
     }
     const offline = RequestContext.offlineSync();
+    const now = this.clock.now();
+    let confirmed: PreparedConfirmation | null = null;
 
     try {
       const workLog = await this.prisma.$transaction(async (tx) => {
@@ -450,6 +464,21 @@ export class WorkLogsService {
           input.logTypeId ?? null,
           input.customFields,
         );
+        const prepared =
+          input.source === 'ai_assisted' && input.aiProposalId
+            ? await prepareConfirmation(tx, {
+                organizationId,
+                authorId,
+                captureId: input.aiProposalId,
+                submitted: {
+                  logTypeId: input.logTypeId ?? null,
+                  ...placement,
+                  text: input.text ?? null,
+                  occurredAt: input.occurredAt,
+                  customFields: custom.customFields,
+                },
+              })
+            : null;
         const created = toWorkLog(
           await tx.workLog.create({
             data: {
@@ -462,6 +491,9 @@ export class WorkLogsService {
               text: input.text,
               status: input.status,
               source: input.source,
+              ...(prepared
+                ? { aiMetadata: prepared.aiMetadata as unknown as Prisma.InputJsonObject }
+                : {}),
               ...custom,
               ...locationColumns(input.location ?? null),
               submittedOffline: offline !== null,
@@ -479,8 +511,23 @@ export class WorkLogsService {
           after: created,
           ...(dropped.length > 0 ? { auditMetadata: { droppedReferences: dropped } } : {}),
         });
+        if (prepared) {
+          await markConfirmed(tx, this.changes, prepared, created.id, now);
+        }
+        confirmed = prepared;
         return created;
       });
+      const decided = confirmed as PreparedConfirmation | null;
+      if (decided) {
+        await this.ai
+          .recordDecision(decided.capture.traceIds, 'confirmed', authorId, now)
+          .catch((error: unknown) =>
+            this.logger.warn(
+              `Smart capture ${decided.capture.id}: could not stamp the decision on its traces: ` +
+                `${error instanceof Error ? error.name : 'error'}`,
+            ),
+          );
+      }
       return { workLog, created: true };
     } catch (error) {
       // Two identical requests arrived together: the other one won the unique index on

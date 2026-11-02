@@ -71,15 +71,20 @@ export function previousUserToKeep(
 export type SignOutOutcome =
   | { ok: true }
   /** Queued writes exist: ask the worker (sync first / keep for later / discard / cancel). */
-  | { ok: false; reason: 'needsChoice'; pending: number; failed: number }
+  | { ok: false; reason: 'needsChoice'; pending: number; failed: number; captures: number }
   /** "Sync first" ran but writes are still queued (offline, or refused ones). */
-  | { ok: false; reason: 'notEmpty'; pending: number; failed: number }
+  | { ok: false; reason: 'notEmpty'; pending: number; failed: number; captures: number }
   /** The server did not confirm (sign out everywhere): still signed in, nothing deleted. */
   | { ok: false; reason: 'auth'; failure: AuthActionFailure };
 
 export interface SignOutDeps {
   user: AuthUser;
   queue: Pick<WriteQueue, 'pendingCount' | 'counts'>;
+  /**
+   * Smart captures waiting for the worker's review (Phase 7): unfinished work like queued
+   * writes, but syncing does not finish them. Absent: none.
+   */
+  captures?: { unreviewedCount(): Promise<number> };
   engine: Pick<SyncEngine, 'syncNow'>;
   factory: Pick<OfflineSessionFactory, 'signOutCleanup'>;
   identity: OfflineIdentityStore;
@@ -89,16 +94,23 @@ export interface SignOutDeps {
   beforeEnd?: () => Promise<void>;
 }
 
+/** `pending` counts queued writes plus `captures` (smart captures waiting for review). */
 async function queueState(
-  queue: SignOutDeps['queue'],
-): Promise<{ pending: number; failed: number }> {
-  const counts = await queue.counts();
-  return { pending: await queue.pendingCount(), failed: counts.failed_permanent };
+  deps: Pick<SignOutDeps, 'queue' | 'captures'>,
+): Promise<{ pending: number; failed: number; captures: number }> {
+  const counts = await deps.queue.counts();
+  const captures = (await deps.captures?.unreviewedCount()) ?? 0;
+  return {
+    pending: (await deps.queue.pendingCount()) + captures,
+    failed: counts.failed_permanent,
+    captures,
+  };
 }
 
 /**
  * Signs out. With `choice` null and an empty queue it signs out and deletes the user's offline
- * data; with queued writes it answers `needsChoice` and changes nothing. With a choice:
+ * data; with queued writes or smart captures waiting for review it answers `needsChoice` and
+ * changes nothing. With a choice:
  * `syncFirst` syncs and signs out only if the queue is then empty; `keepForLater` keeps the
  * queue and photos for the same user's next sign-in (cache deleted); `discard` deletes all.
  */
@@ -106,13 +118,13 @@ export async function signOutWithChoice(
   deps: SignOutDeps,
   choice: SignOutChoice | null,
 ): Promise<SignOutOutcome> {
-  let state = await queueState(deps.queue);
+  let state = await queueState(deps);
   if (state.pending > 0 && choice === null) {
     return { ok: false, reason: 'needsChoice', ...state };
   }
   if (choice === 'syncFirst' && state.pending > 0) {
     await deps.engine.syncNow('manual');
-    state = await queueState(deps.queue);
+    state = await queueState(deps);
     if (state.pending > 0) return { ok: false, reason: 'notEmpty', ...state };
   }
   await deps.beforeEnd?.().catch(() => undefined);

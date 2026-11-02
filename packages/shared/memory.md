@@ -1,6 +1,6 @@
 # packages/shared memory
 
-Package `@ops/shared`. Last updated: 2026-10-28.
+Package `@ops/shared`. Last updated: 2026-11-02.
 
 ## Purpose
 
@@ -11,21 +11,58 @@ and wording that must behave the same on the server and in both apps, and the de
 ## Current state
 
 Seven areas plus the health schema, all re-exported from `src/index.ts`. Phase 6 (2026-10-28)
-added the dashboard contracts, the time-zone, CSV, and locale helpers, and `src/i18n/` (below).
+added the dashboard contracts, the time-zone, CSV, and locale helpers, and `src/i18n/`; Phase 7
+(2026-10-30 to 2026-11-02) the AI contracts (below).
 
-| Area              | Contents                                                                                                                                                                                                                                                                                                                       |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/health.ts`   | `healthResponseSchema` / `HealthResponse`.                                                                                                                                                                                                                                                                                     |
-| `src/common/`     | `apiErrorSchema`, `API_ERROR_CODES` with `API_ERROR_STATUS` and `RETRYABLE_API_ERROR_CODES`; pagination, sort, id, date, and query-boolean schemas; `time-zone.ts`, `csv.ts`, `locale.ts` (Phase 6).                                                                                                                           |
-| `src/domain/`     | One file per resource (`organization`, `users`, `memberships`, `sites`, `teams`, `log-types`, `tasks`, `work-logs`, `attachments`, `scope`, `sync`, and from Phase 6 `dashboard`, `directory`, `exports`, `history`, `reports`), plus `enums.ts` (with `roleRank`, `rolesHighestFirst`), `custom-fields.ts`, and `shared.ts`.  |
-| `src/i18n/`       | `translate.ts`: `createTranslator` (plurals by `Intl.PluralRules`, `{{name}}`, fallback catalogue then the key), `pickLanguage`, `isRtlLanguage`, catalogue types. Used by web and mobile (moved from mobile in Phase 6).                                                                                                      |
-| `src/platform/`   | `auth.ts` (the sign-in wire contract), `notifications.ts` (Phase 4), `offline-sync.ts` (Phase 5), `audit.ts`, `outbox.ts`. `AUDIT_REDACTED`.                                                                                                                                                                                   |
-| `src/forms/`      | `custom-field-form.ts` (Phase 4): form descriptors, initial values, reconciling with a changed log type, number parsing, conversion to wire values through `validateCustomFieldValues`, mapping API error details back to fields.                                                                                              |
-| `src/theme/`      | `tokens.ts`, `contrast.ts`, `css.ts`.                                                                                                                                                                                                                                                                                          |
-| `src/api-client/` | `client.ts` (transport with auth hooks and refresh-once, `ApiResult`, `CSRF_HEADER`, `REQUEST_ID_HEADER`), `create-api-client.ts` (`createApiClient`), `auth-session.ts` (`createAuthSessionManager`), `auth-text.ts`, `auth-forms.ts`, `attachment-upload.ts` (Phase 4), `health-monitor.ts`, `health-status.ts`, `index.ts`. |
+| Area              | Contents                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/health.ts`   | `healthResponseSchema` / `HealthResponse`.                                                                                                                                                                                                                                                                                                                                                                   |
+| `src/common/`     | `apiErrorSchema`, `API_ERROR_CODES` with `API_ERROR_STATUS` and `RETRYABLE_API_ERROR_CODES`; pagination, sort, id, date, and query-boolean schemas; `time-zone.ts`, `csv.ts`, `locale.ts` (Phase 6).                                                                                                                                                                                                         |
+| `src/domain/`     | One file per resource (`organization`, `users`, `memberships`, `sites`, `teams`, `log-types`, `tasks`, `work-logs`, `attachments`, `scope`, `sync`, from Phase 6 `dashboard`, `directory`, `exports`, `history`, `reports`, and from Phase 7 `ai-capture`, `ai-capture-output`, `ai-settings`, `ai-summaries`), plus `enums.ts` (with `roleRank`, `rolesHighestFirst`), `custom-fields.ts`, and `shared.ts`. |
+| `src/i18n/`       | `translate.ts`: `createTranslator` (plurals by `Intl.PluralRules`, `{{name}}`, fallback catalogue then the key), `pickLanguage`, `isRtlLanguage`, catalogue types. Used by web and mobile (moved from mobile in Phase 6).                                                                                                                                                                                    |
+| `src/platform/`   | `auth.ts` (the sign-in wire contract), `notifications.ts` (Phase 4), `offline-sync.ts` (Phase 5), `ai.ts` (Phase 7: usage report, trace enums), `audit.ts`, `outbox.ts`. `AUDIT_REDACTED`.                                                                                                                                                                                                                   |
+| `src/forms/`      | `custom-field-form.ts` (Phase 4): form descriptors, initial values, reconciling with a changed log type, number parsing, conversion to wire values through `validateCustomFieldValues`, mapping API error details back to fields.                                                                                                                                                                            |
+| `src/theme/`      | `tokens.ts`, `contrast.ts`, `css.ts`.                                                                                                                                                                                                                                                                                                                                                                        |
+| `src/api-client/` | `client.ts` (transport with auth hooks and refresh-once, `ApiResult`, `CSRF_HEADER`, `REQUEST_ID_HEADER`), `create-api-client.ts` (`createApiClient`), `auth-session.ts` (`createAuthSessionManager`), `auth-text.ts`, `auth-forms.ts`, `attachment-upload.ts` (Phase 4), `health-monitor.ts`, `health-status.ts`, `index.ts`.                                                                               |
 
-743 unit tests in 17 files, confirmed on 2026-10-28 (new: `csv.test.ts`, `time-zone.test.ts`,
-`dashboard-contracts.test.ts`).
+764 unit tests in 18 files, confirmed on 2026-11-02 (Phase 6 added `csv.test.ts`,
+`time-zone.test.ts`, `dashboard-contracts.test.ts`; Phase 7 `domain/ai-contracts.test.ts`).
+
+## Phase 7 contract changes (ADR-0010, ADR-0011, 2026-10-30)
+
+- **Smart capture** (`domain/ai-capture.ts`): `SMART_CAPTURE_INPUT_KINDS`, `SMART_CAPTURE_STATUSES`,
+  `SMART_CAPTURE_FAILURE_REASONS` (`input_unusable`, `transcription_empty`, `output_invalid`,
+  `refused`, `provider_rejected`), the audio MIME types and caps (`AI_CAPTURE_MAX_AUDIO_BYTES`,
+  `AI_CAPTURE_MAX_AUDIO_MS`, text and note lengths), `createSmartCaptureSchema` (discriminated by
+  `kind`: `text`, `voice`, `photo`), `smartCaptureContextSchema`, `smartCaptureSchema` (no storage
+  key), `smartCaptureStartedSchema` (`{ capture, upload }`), proposal and confidence schemas,
+  `aiWorkLogMetadataSchema`, `smartCaptureEndpoints` (`create`, `list`, `get`, `renewUpload`,
+  `process`, `discard`).
+- **Capture output** (`domain/ai-capture-output.ts`): `buildCaptureOutputSchema` (a union over the
+  offered log types, every field present, select options as enums, references as enums, a
+  confidence per field), `toStructuredOutputJsonSchema`, `interpretCaptureOutput` (references to
+  ids, field rules; a failing value is dropped), `compareWithProposal` (kept, changed, added).
+- **Settings** (`domain/ai-settings.ts`): `organizationAiSettingsSchema` (`settings.ai`),
+  `aiSettingsOf`, `effectiveAiLimit`, `AI_SUMMARY_RECIPIENT_ROLES`, `DEFAULT_AI_SUMMARY_TIME`,
+  `organizationAiFeaturesSchema` and `aiFeaturesOf` (the `aiFeatures` of the organization
+  summary, absent from older answers means off).
+- **Summaries and flags** (`domain/ai-summaries.ts`): `ANOMALY_KINDS`, `ANOMALY_SEVERITIES`,
+  `ANOMALY_THRESHOLDS`, `SUMMARY_NARRATIVE_SOURCES`, flag params per kind, `dailySummarySchema`
+  (scope snapshot, stats, anomalies, narrative), list queries, `generateDailySummariesSchema`
+  (`day?`, `recipientId?`), `AI_SUMMARY_GENERATE_MAX_DAYS_BACK` (7), `aiSummariesEndpoints`
+  (`list`, `get`, `generate`, `anomalies`).
+- **Capture caps and retention** (`domain/ai-capture.ts`): `AI_CAPTURE_MAX_LOG_TYPES` (20),
+  `AI_CAPTURE_MAX_TASKS` and `AI_CAPTURE_MAX_SITES` (30), `AI_CAPTURE_CLIENT_TIMEOUT_MS` (120 s,
+  the phone's timeout for capture calls), `AI_CAPTURE_INPUT_RETENTION_DAYS` (30),
+  `AI_CAPTURE_DECIDED_INPUT_RETENTION_DAYS` (7).
+- **Platform** (`platform/ai.ts`): `AI_TRACE_STATUSES`, `AI_DECISIONS` (both must match Prisma),
+  the usage report schema, `aiUsageEndpoints` (`get`).
+- **Changed**: `WORK_LOG_SOURCES` ends with `ai_assisted` (was `ai`); `createWorkLogSchema`
+  accepts `source` `manual` or `ai_assisted` (`WORK_LOG_CREATE_SOURCES`) and `aiProposalId`, each
+  requiring the other; `workLogSchema.aiMetadata` is `aiWorkLogMetadataSchema | null`;
+  `organizationSettingsSchema.ai`; organization summary `aiFeatures`; error codes `ai_disabled`
+  (403), `ai_limit_reached` (429), `ai_unavailable` (503, retryable); `createApiClient` groups
+  `smartCapture`, `aiSummaries`, `aiUsage`.
 
 ## Phase 6 contract changes (ADR-0009, 2026-10-28)
 
@@ -130,6 +167,8 @@ put, onProgress, checkpoint })` runs start, PUT, and complete and returns an
 | `src/index.ts`                        | The public entry point. Re-exports every area.                                                                                                                      |
 | `src/common/errors.ts`                | The error body of every non-2xx API response (except `/health`).                                                                                                    |
 | `src/domain/enums.ts`                 | `ROLES` (with `roleRank`, `rolesHighestFirst`), `TASK_STATUSES`, `TASK_PRIORITIES`, `WORK_LOG_STATUSES`, `WORK_LOG_SOURCES`. Must match the Prisma enums, in order. |
+| `src/domain/ai-capture-output.ts`     | The per-capture output schema, its JSON Schema form, interpretation into a proposal, and comparison with the saved log (Phase 7).                                   |
+| `src/domain/ai-settings.ts`           | `settings.ai` schema, defaults (`aiSettingsOf`), the `aiFeatures` of the organization summary (Phase 7).                                                            |
 | `src/domain/custom-fields.ts`         | Custom field definitions and `validateCustomFieldValues` (ADR-0003).                                                                                                |
 | `src/platform/auth.ts`                | The sign-in wire contract (above).                                                                                                                                  |
 | `src/api-client/client.ts`            | `createApiTransport`: the one place that performs HTTP. Bearer token, CSRF header on non-GET, `credentials`, refresh once on a 401.                                 |
@@ -216,7 +255,12 @@ const logs = await session.client.workLogs.list({ sort: 'occurredAt:desc' });
   identifier normalisation, wording) or when both clients need it (the API client, the session
   manager, the health monitor, the upload helper, the custom-field form logic). Authorization
   rules stay in the API.
-- `ATTACHMENT_STATUSES` and `PUSH_PLATFORMS` must match the Prisma enums, like `enums.ts`.
+- `ATTACHMENT_STATUSES`, `PUSH_PLATFORMS`, and the Phase 7 arrays (`SMART_CAPTURE_INPUT_KINDS`,
+  `SMART_CAPTURE_STATUSES`, `ANOMALY_KINDS`, `ANOMALY_SEVERITIES`, `SUMMARY_NARRATIVE_SOURCES`,
+  `AI_TRACE_STATUSES`, `AI_DECISIONS`) must match the Prisma enums, like `enums.ts`
+  (`apps/api/src/prisma-enums.spec.ts` checks them).
+- The capture output schema must stay within the JSON Schema subset structured outputs accept;
+  `toStructuredOutputJsonSchema` is the one conversion, tested in `ai-contracts.test.ts`.
 - Catalogue keys of the translator: never a plural category name (`zero`, `one`, `two`, `few`,
   `many`, `other`) as a plain key; an object holding `other` is read as plural forms.
 - No runtime dependency other than Zod. Only `fetch`, `AbortController`, and timers; no other DOM

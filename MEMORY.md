@@ -1,21 +1,28 @@
 # MEMORY.md
 
 Current state of the HZ project (repository folder `Operations_App`, packages `@ops/*`). Update this
-file at the end of every session. Newest session log entry goes first. Last updated: 2026-10-28.
+file at the end of every session. Newest session log entry goes first. Last updated: 2026-11-02.
 
 ## Current phase
 
-**Phase 6 (Web manager dashboard) is code complete, tested, and reviewed (2026-10-28), and is about
-to be committed and pushed by the coordinator as "Phase 6: ...".** Nobody has used the dashboard
-in a browser with data yet (it needs the owner's `pnpm db:reset` first). `main` has Phase 1
-(`d03c843`), Phase 2 (`1fd2988`), Phase 3 (`8c8283a`), Phase 4 (`280c50a`), the restore note
-(`924446e`), and Phase 5 (`2cf5a01`, pushed). The Phase 5 emulator and phone tests are still open.
-**Phase 7 (Intelligent layer v1) is next.** Phases are defined in [ROADMAP.md](ROADMAP.md).
+**Phase 7 (Intelligent layer v1: smart capture and daily AI summaries) is code complete, tested
+with the deterministic fake AI providers, and reviewed (2026-11-02), and is about to be committed
+by the coordinator as "Phase 7: ...".** No real AI provider has been called (the owner has no keys
+yet), nothing has run on a phone or in the emulator, and the dashboard has not been used in a
+browser with data. `main` has Phase 1 (`d03c843`), Phase 2 (`1fd2988`), Phase 3 (`8c8283a`),
+Phase 4 (`280c50a`), the restore note (`924446e`), Phase 5 (`2cf5a01`), and Phase 6 (`713f592`,
+in sync with `origin/main`). The owner plans to test Phases 4 to 7 together: the combined manual
+test is in [docs/reports/phase-7.md](docs/reports/phase-7.md). **Phase 8 (Hardening & release)
+is next.** Phases are defined in [ROADMAP.md](ROADMAP.md).
 
 **Before using the apps the owner must run `pnpm db:reset` once**: the development database
 `operations_app` holds a stray migration `20261018090000_phase5_offline_sync` from the lost work
-and lacks the repository's `20261027090000_phase5_offline_sync` and
-`20261028090000_phase6_dashboard`. Agents may not run it.
+and lacks the repository's `20261027090000_phase5_offline_sync`,
+`20261028090000_phase6_dashboard`, and `20261030090000_phase7_ai`. Agents may not run it.
+
+**The AI features are off until an admin turns them on** (Settings, AI). Without keys the API
+uses its fake providers in development; README section 11 says which keys to get (Anthropic and
+OpenAI) and where to put them (the root `.env`, then restart the API).
 
 **On this PC port 3000 is used by another project.** To open the dashboard, set `WEB_PORT` (for
 example 3100) in `.env`, add that origin (`http://localhost:3100`) to `CORS_ORIGINS` and use it as
@@ -34,22 +41,24 @@ technical name of the folder, the packages, the API domain folder, and the datab
 
 ## What exists
 
-| Area              | State                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Monorepo          | pnpm 12 workspaces + Turborepo 2. Root scripts: `dev`, `build`, `lint`, `typecheck`, `test`, `test:integration`, `format`, `format:check`, `db:up`, `db:down`, `db:logs`, `db:migrate`, `db:seed`, `db:reset`.                                                                                                                                                                                                                                                                                                                                                  |
-| Docker Compose    | PostgreSQL 17 and, since Phase 4, MinIO (`alpine/minio`, pinned by digest) for photos. `pnpm db:up` starts both; both bind to `127.0.0.1` by default.                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `packages/config` | Shared ESLint 10 flat config, Prettier config, three tsconfig presets. Unchanged since Phase 1.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `packages/shared` | Zod schemas and endpoint functions for every resource, `/auth/*`, `/notifications`, `/sync/pull`, and since Phase 6 the dashboard, directory, map, histories, exports, report, and user sessions; the offline headers and typed error codes; the transport (refresh once on a 401, per-call headers, text responses); `createAuthSessionManager`; the upload helper; custom-field forms; time-zone, CSV, and locale helpers; the translation core; design tokens.                                                                                               |
-| `apps/api`        | NestJS 12 API, 68 paths. Platform: sign-in and sessions, the policy seam, idempotency (`Idempotency-Key`), S3-compatible file storage, notifications, the outbox consumer, audit log (with offline metadata), outbox. Domain: the access layer on every route, row versions and typed conflict codes, the attachment upload flow and cleanup, notification rules rendered in each recipient's `User.locale`, `GET /sync/pull`, and since Phase 6 the overview, directory, bulk review, map, histories, audited CSV exports, report, and session administration. |
-| `apps/web`        | Next.js 16.4.3 manager dashboard (Phase 6): `/login`, `/activate`, and behind sign-in an app shell with Overview (`/`), Work logs (list, detail, report), Tasks (list and board, detail), Map, People, Structure (sites, teams, log-type editor), Audit log, Settings; navigation by role; TanStack Query and Table, Leaflet, an i18n layer (English), times in the organization's time zone. Never used in a browser with data.                                                                                                                                |
-| `apps/mobile`     | Expo SDK 57 worker app: Home, Tasks, Task detail, New/Edit log (custom fields, photos, location), Logs, Log detail, Notifications, Profile, Sync. Offline since Phase 5: per-user SQLite cache and write queue, photo store, sync engine (NetInfo, foreground, background task), sync indicator and screen, edit drafts. Unchanged in Phase 6 except that the translation core now comes from `@ops/shared`. Never run on a phone or emulator.                                                                                                                  |
-| Database          | PostgreSQL in Docker on `127.0.0.1` (port 5433 on this PC). `operations_app` has the four migrations up to Phase 4, the Phase 3 seed, and a stray `20261018090000_phase5_offline_sync` from lost work; `20261027090000_phase5_offline_sync` and `20261028090000_phase6_dashboard` are not applied to it (needs `pnpm db:reset`). `operations_app_test` is rebuilt by the integration tests.                                                                                                                                                                     |
-| Docs              | `AGENTS.md`, this file, `ARCHITECTURE.md` (with the permissions matrix), `ROADMAP.md`, `README.md` (including the web dashboard, "Test on my phone", and "Test offline mode in the Android emulator"), ADR-0001 to ADR-0009, a `memory.md` in each app and package, the phase prompts in `docs/prompts/`, the coordinator's `docs/reports/phase-5.md` and `phase-6.md`, the logo files in `docs/brand/`.                                                                                                                                                        |
-| Subagents         | `reviewer`, `docs-keeper`, `test-writer` in `.claude/agents/`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Area              | State                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Monorepo          | pnpm 12 workspaces + Turborepo 2. Root scripts: `dev`, `build`, `lint`, `typecheck`, `test`, `test:integration`, `format`, `format:check`, `db:up`, `db:down`, `db:logs`, `db:migrate`, `db:seed`, `db:reset`.                                                                                                                                                                                                                                                                                                                                                     |
+| Docker Compose    | PostgreSQL 17 and, since Phase 4, MinIO (`alpine/minio`, pinned by digest) for photos. `pnpm db:up` starts both; both bind to `127.0.0.1` by default.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `packages/config` | Shared ESLint 10 flat config, Prettier config, three tsconfig presets. Unchanged since Phase 1.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `packages/shared` | Zod schemas and endpoint functions for every resource, `/auth/*`, `/notifications`, `/sync/pull`, the Phase 6 dashboard routes, and since Phase 7 smart capture, summaries, anomalies, AI usage, `settings.ai`, and the per-capture output schema; the offline headers and typed error codes; the transport (refresh once on a 401, per-call headers, text responses); `createAuthSessionManager`; the upload helper; custom-field forms; time-zone, CSV, and locale helpers; the translation core; design tokens.                                                 |
+| `apps/api`        | NestJS 12 API, 78 paths. Platform: sign-in and sessions, the policy seam, idempotency, S3-compatible file storage, notifications, the outbox consumer, audit log, outbox, and since Phase 7 the AI platform (provider interfaces, Anthropic and OpenAI adapters, fakes, runner, traces, limits, prompt loader). Domain: the access layer on every route, row versions and typed conflict codes, the attachment flow, notification rules, `GET /sync/pull`, the Phase 6 dashboard reads, and since Phase 7 smart capture, daily summaries, anomaly rules, AI usage. |
+| `apps/web`        | Next.js 16.4.3 manager dashboard: `/login`, `/activate`, and behind sign-in Overview (with the daily summary and anomaly panels since Phase 7), Work logs (list, detail, report), Tasks (list and board, detail), Map, Summaries, People, Structure, Audit log, Settings (with the AI section), AI usage; navigation by role; TanStack Query and Table, Leaflet, an i18n layer (English), times in the organization's time zone. Never used in a browser with data.                                                                                                |
+| `apps/mobile`     | Expo SDK 57 worker app: Home, Tasks, Task detail, New/Edit log (custom fields, photos, location), Logs, Log detail, Notifications, Profile, Sync, and since Phase 7 Capture (Speak, Snap, Type a note) with the proposal reviewed in the New log form. Offline since Phase 5: per-user SQLite cache and write queue (smart captures queued too), photo and voice-note stores, sync engine (NetInfo, foreground, background task), sync indicator and screen, drafts. Never run on a phone or emulator.                                                             |
+| Database          | PostgreSQL in Docker on `127.0.0.1` (port 5433 on this PC). `operations_app` has the four migrations up to Phase 4, the Phase 3 seed, and a stray `20261018090000_phase5_offline_sync` from lost work; the Phase 5, 6, and 7 migrations are not applied to it (needs `pnpm db:reset`). `operations_app_test` is rebuilt by the integration tests.                                                                                                                                                                                                                  |
+| Docs              | `AGENTS.md`, this file, `ARCHITECTURE.md` (with the permissions matrix), `ROADMAP.md`, `README.md` (including the web dashboard, "Test on my phone", "Test offline mode in the Android emulator", and "AI features: keys, switches, and trying them"), ADR-0001 to ADR-0011, a `memory.md` in each app and package, the phase prompts in `docs/prompts/`, `docs/reports/phase-5.md`, `phase-6.md`, and `phase-7.md` (with the combined manual test of Phases 4 to 7), the logo files in `docs/brand/`.                                                             |
+| Subagents         | `reviewer`, `docs-keeper`, `test-writer` in `.claude/agents/`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 Not built yet: activation deep links into the app, photo upload from the browser (deferred to
-Phase 8), Turkish and Arabic catalogues, real email or SMS delivery of codes, encryption of the
-phone's local database, and the AI layer. See [ARCHITECTURE.md](ARCHITECTURE.md).
+Phase 8), Turkish and Arabic catalogues (and prompts reviewed in those languages), real email or
+SMS delivery of codes, encryption of the phone's local database, a web button for generating
+summaries on demand, autonomous AI actions and questions over data (v2, out of scope). See
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Signing in
 
@@ -61,17 +70,38 @@ phone's local database, and the AI layer. See [ARCHITECTURE.md](ARCHITECTURE.md)
 - New users get a one-time activation code from an admin (`POST /users`); in development the code
   and link are in the response and the API log. Reset codes: `POST /users/:id/password-reset`.
 - The development database has the Phase 3 seed (the owner ran `pnpm db:reset` before
-  2026-10-17), but its migration history diverges (see Current phase), so the Phase 5 and Phase 6
-  API needs the owner's `pnpm db:reset` first. The seed has no photos and no notifications.
+  2026-10-17), but its migration history diverges (see Current phase), so the Phase 5, 6, and 7
+  API needs the owner's `pnpm db:reset` first. The seed has no photos, no notifications, and no
+  `settings.ai` (every AI feature starts off).
 - The dashboard is for supervisors, managers, and admins; a worker who signs in on the web sees
-  "use the mobile app". Admins (`aylin`) manage people, the audit log, and settings; managers
-  (`murat`) see everything read-only in People; supervisors (`selin`, `emre`) see their scope.
+  "use the mobile app". Admins (`aylin`) manage people, the audit log, settings (including the AI
+  switches), and see AI usage; managers (`murat`) see everything read-only in People;
+  supervisors (`selin`, `emre`) see their scope. Daily summaries go by default to supervisors and
+  managers (`selin`, `emre`, `murat`); `aylin` gets one only if an admin adds the admin role to
+  the recipients.
 
 ## Verified
 
 **Phase 3 acceptance (owner, reported 2026-10-17)**: `pnpm db:reset` ran; sign-in works in a real
 browser for `aylin`, `selin`, and `deniz`; Phase 3 committed (`8c8283a`). The rest of the Phase 3
 manual list (Swagger per role, activation, lockout, sign-out everywhere) is not recorded as run.
+
+**In the Phase 7 session (2026-10-30 to 2026-11-02)**, as reported by the coordinator unless a
+line says otherwise. Everything below ran against the **fake** AI providers:
+
+- Unit tests (re-run by the docs-keeper with `pnpm test` on 2026-11-02, all pass): 764
+  `@ops/shared` (18 files), 706 `@ops/api` (35 suites), 191 `@ops/web` (12 files), 332
+  `@ops/mobile` (28 suites).
+- Integration tests: 1,681 in 26 suites plus 6 in `storage-minio` (27 suites in all; new:
+  `ai-platform`, `smart-capture`, `smart-capture-safety`, `ai-summaries`, `ai-summaries-scope`,
+  `ai-off`). Not re-run by the docs-keeper.
+- `pnpm build` (the prompt files are in `apps/api/dist/operations/ai/prompts/`), `typecheck`,
+  `lint`, `format:check`; `npx expo install --check` up to date.
+- The test-writer's 46 tests found no bug: summaries hold only their recipient's scope (two
+  supervisors, scope changes, flags), invalid model output, fake end-to-end, prompt injection in
+  transcripts and task titles, narrative numbers equal the stats, switches and limits,
+  offline-queued voice notes, the core with AI off.
+- The reviewer's "pass with fixes", nothing blocking; the fixes are in the session log.
 
 **In the Phase 6 session (2026-10-28)**, as reported by the coordinator unless a line says
 otherwise:
@@ -131,21 +161,29 @@ agents unless a line says otherwise:
 ## Not yet verified
 
 1. **Anything on a phone or in the emulator**: the screens, camera and gallery, location,
-   SecureStore, push, and all of Phase 5 on a device (SQLite, the file system, NetInfo, the
-   background task, airplane mode, the conflict case). Only test fakes cover them. The owner can
-   use the emulator `hz_pixel` (README section 6) or the phone's hotspot (README section 5).
-2. **The Phase 5 and Phase 6 migrations on the development database** (after the owner's
+   SecureStore, push, all of Phase 5 on a device (SQLite, the file system, NetInfo, the
+   background task, airplane mode, the conflict case), and the Phase 7 capture on a device
+   (microphone permission and `expo-audio` recording, Snap, the review form, offline captures).
+   Only test fakes cover them. The owner can use the emulator `hz_pixel` (README section 6) or
+   the phone's hotspot (README section 5).
+2. **The Phase 5, 6, and 7 migrations on the development database** (after the owner's
    `pnpm db:reset`).
 3. **The web dashboard in a real browser** with the seed data, as `aylin` (admin), `selin`
-   (supervisor), and `murat` (manager): the manual list in `docs/reports/phase-6.md`, phone and
-   desktop widths, keyboard use, print preview of the report, a CSV opened in Excel, the map
-   tiles.
-4. **A development build**: configured (`expo-dev-client`, `apps/mobile/eas.json`), never built
+   (supervisor), and `murat` (manager): the manual list in `docs/reports/phase-7.md` (which
+   includes the Phase 6 list), phone and desktop widths, keyboard use, print preview of the
+   report, a CSV opened in Excel, the map tiles, and the Phase 7 summary panels, Summaries, the
+   AI settings, and AI usage.
+4. **Real AI providers** (no keys yet): that Claude accepts the structured-output request
+   (`output_config`) and the photo input with `@anthropic-ai/sdk` 1.3.0, the refusal fallback
+   beta (`AI_ANTHROPIC_REFUSAL_FALLBACK`), OpenAI transcribing the phone's m4a, the quality of
+   proposals and narratives, and Turkish and Arabic voice notes. The prompts and the summary and
+   notification texts exist in English only.
+5. **A development build**: configured (`expo-dev-client`, `apps/mobile/eas.json`), never built
    or installed. It needs the owner's Expo account and `eas init`. Push and background sync need
-   it.
-5. **Real push delivery through Expo** (only a fake Expo client in tests).
-6. **AWS S3 or any provider other than MinIO.**
-7. The web "API status" card's automatic recovery, watched by a person (the card is on the
+   it. `expo-doctor` has not been re-run since `expo-audio` was added.
+6. **Real push delivery through Expo** (only a fake Expo client in tests).
+7. **AWS S3 or any provider other than MinIO.**
+8. The web "API status" card's automatic recovery, watched by a person (the card is on the
    Settings page since Phase 6).
 
 ## Machine and repository state
@@ -162,19 +200,22 @@ agents unless a line says otherwise:
   2026-10-27 (the old `.env` was lost with the local copy).
 - **The development database `operations_app` still holds a migration from the lost Phase 5 work
   (`20261018090000_phase5_offline_sync`) that is not in the repo, and lacks
-  `20261027090000_phase5_offline_sync`** (`prisma migrate status`, 2026-10-28) **and
-  `20261028090000_phase6_dashboard`**. It needs the owner's `pnpm db:reset` (agents may not run
-  it). The test database is rebuilt by the integration tests.
+  `20261027090000_phase5_offline_sync`** (`prisma migrate status`, 2026-10-28)**,
+  `20261028090000_phase6_dashboard`, and `20261030090000_phase7_ai`**. It needs the owner's
+  `pnpm db:reset` (agents may not run it). The test database is rebuilt by the integration
+  tests.
 - **Port 3000 on this PC is taken** by another project. Run the dashboard on another `WEB_PORT`
   (for example 3100) with that origin in `CORS_ORIGINS` and `WEB_APP_URL` (README section 3).
 - Android SDK under `%LOCALAPPDATA%\Android\Sdk` with the emulator and `adb`; the virtual device
   `hz_pixel` (Android 35, Google APIs, x86_64) exists. `ANDROID_HOME` is not set system-wide
   (README section 6 sets it in the Expo terminal). Never started for this project yet.
-- Branch `main`, six commits up to `2cf5a01` (Phase 5), in sync with `origin/main` (private GitHub
-  repository `wesamalhroubuni-rgb/hz-operations-app`); the Phase 6 work is uncommitted at the time
-  of writing (2026-10-28).
+- Branch `main`, seven commits up to `713f592` (Phase 6), in sync with `origin/main` (private
+  GitHub repository `wesamalhroubuni-rgb/hz-operations-app`); the Phase 7 work is uncommitted at
+  the time of writing (2026-11-02).
 - The local `.env` (git-ignored) was recreated from `.env.example` on 2026-10-27 (development
-  placeholders). `EXPO_PUBLIC_EAS_PROJECT_ID` is empty until the owner runs `eas init`.
+  placeholders). `EXPO_PUBLIC_EAS_PROJECT_ID` is empty until the owner runs `eas init`. It has no
+  AI variables yet; all of them are optional (defaults apply, fakes without keys). The owner will
+  add `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` there (README section 11).
 - User ids are generated, so they change on every reset. Sign in with identifiers instead.
 
 ## Known limitations
@@ -232,6 +273,18 @@ Behaviour
   team for worker and supervisor memberships is a dashboard rule only. The map uses the public
   OpenStreetMap tiles unless `NEXT_PUBLIC_MAP_TILE_URL` is set (their usage policy forbids heavy
   use). The CSP still has no `img-src` / `connect-src`.
+- **AI layer (ADR-0010, ADR-0011)**: only the fakes have run. Usage limits count per UTC day,
+  not the organization's day; the per-user AI rate limit and the scheduler's 15-minute back-off
+  are in memory per process. A model missing from `ai-prices.ts` counts $0 against the cost
+  limit. Anomaly parameters are counted over the organization's data (a reader may see a count
+  including records outside their scope; accepted for v1). Flags are computed once a day at
+  summary time, thresholds are constants. A missed summary run is caught up the same local day
+  only; older days need the admin route (up to 7 days back), which has no web button. Snap
+  photos are uploaded twice when also attached to the log. The prompts, the summary template,
+  and the notification texts are English only (per-key fallback). `POST /ai/capture/:id/process`
+  and `/upload-url` are not `@Idempotent()` (idempotent by state; accepted). The summary
+  generate route runs actor-less (audit actor `system`, the admin in `metadata.requestedById`).
+  Provider data agreements and zero data retention are not arranged (Phase 8).
 - Redaction in audit and outbox events is by key name at any depth.
 - Old log type definitions are not kept; `logTypeVersion` resolves only through the audit log.
 - Row versions on tasks and work logs only; other resources are last-write-wins, and so are task
@@ -282,7 +335,10 @@ Clients and tooling
   who may erase them? Which email or SMS provider delivers one-time codes? Who in the client's
   organization holds the admin role?
 - Before production: is the lockout acceptable as is (F4)? Should 403 and 404 answers be audited?
-- Phase 7: which AI provider and hosting constraints (data residency, cost limits)?
+- With the owner (Phase 7): which Claude model in production (`claude-opus-5-5` default or a
+  cheaper one), what daily cost ceiling per organization, and does the client need data
+  residency (which would point to self-hosted speech-to-text, ADR-0010 alternatives)? Who reviews
+  the prompts with real Turkish and Arabic voice notes?
 - Before Phase 8: retention and erasure of personal data in the audit log and the outbox
   (including the IP addresses and user agents stored on sessions).
 - Before a second client: does tenancy need database-level enforcement?
@@ -306,7 +362,81 @@ screens (People with invitations, codes shown once, memberships, sessions, archi
 Structure; Settings; Audit log) and where a user's language is stored (`User.locale`, default
 `en`, changed by the user or an admin).
 
+Answered in Phase 7 (see [ADR-0010](docs/decisions/0010-ai-layer-architecture.md) and
+[ADR-0011](docs/decisions/0011-daily-summaries-and-anomaly-rules.md)): the AI providers
+(Anthropic Claude for proposals and narratives, OpenAI `gpt-4o-transcribe` for speech-to-text,
+both optional behind interfaces with fakes), what is sent to them and what never is, retention
+of AI data, cost controls (organization switches, daily request and cost limits, per-user rate
+limit, timeouts), and how summaries stay within the recipient's scope (`runAsUser`).
+
 ## Session log
+
+### 2026-10-30 to 2026-11-02: Phase 7 intelligent layer v1 (smart capture, daily AI summaries)
+
+- **What changed**
+  - Database: migration `20261030090000_phase7_ai`. Tables `SmartCapture`, `DailySummary`
+    (unique per organization, recipient, day), `AnomalyFlag` (unique fingerprint), and the
+    platform table `AiTrace`; seven enums; `WorkLogSource.ai` renamed in place to `ai_assisted`;
+    `SmartCapture.workLogId` unique with a foreign key to `WorkLog` (`ON DELETE RESTRICT`).
+    `organization.settings.ai` (switches, summary time, recipient roles, limits), all off by
+    default.
+  - API platform: `src/platform/ai/` (provider interfaces and registry, Anthropic adapter on
+    `@anthropic-ai/sdk` pinned exactly `1.3.0`, OpenAI speech-to-text over `fetch`, deterministic
+    fakes steered by `FAKE-*` markers, `AiRunnerService`, `AiTraceService`, `AiUsageLimiter`,
+    price table, `FilePromptLoader`, `untrustedDataBlock`, `AiModule.register`).
+  - API domain: `src/operations/ai/` (`OperationsAiModule`, `GET /ai/usage`, smart capture with
+    six routes and an hourly retention job, the confirm path inside `POST /work-logs`, daily
+    summaries with a scheduler and the admin generate route, anomaly rules, the outbox handler
+    sending `ai.daily_summary`, two versioned prompt files copied by `nest-cli.json` assets and
+    `apps/api/scripts/copy-prompts.mjs`); `AccessService.runAsUser`; five policies; error codes
+    `ai_disabled`, `ai_limit_reached`, `ai_unavailable`; 78 paths.
+  - `@ops/shared`: `domain/ai-capture.ts`, `ai-capture-output.ts`, `ai-settings.ts`,
+    `ai-summaries.ts`, `platform/ai.ts`; `source` / `aiProposalId` / `aiMetadata` on work logs;
+    `aiFeatures` on the organization summary; client groups `smartCapture`, `aiSummaries`,
+    `aiUsage`.
+  - Mobile: `expo-audio ~57.0.5` and its config plugin (microphone text, no background
+    recording); `CaptureScreen` (Speak, Snap, Type a note), the review in the New log form, queue
+    kinds `smartCapture` and `discardSmartCapture`, `offline-audio/<userId>/`, SQLite table
+    `smart_captures` (migration 2), unreviewed captures counted at sign-out.
+  - Web: Overview summary and anomaly panels, `/summaries`, `/ai-usage`, the AI section on
+    Settings, capabilities `readSummaries` and `viewAiUsage`.
+  - Configuration: the optional `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `AI_*` variables in
+    `.env.example`, `apps/api/src/config/env.ts`, and `turbo.json`.
+  - Docs: ADR-0010 and ADR-0011 (accepted, written in the contracts step on 2026-10-30, notes
+    added after the review); every document updated; README section 11 (keys, switches, fakes,
+    microphone); `docs/reports/phase-7.md` with the combined manual test of Phases 4 to 7.
+- **Why**: Phase 7 of the roadmap (`docs/prompts/phase-7.md`): faster, richer logging for workers
+  and an end-of-day picture for supervisors and managers, without making the core less reliable
+  or leaking data across scopes.
+- **How it was built**: a contracts step (2026-10-30: ADRs, shared contracts, migration,
+  `runAsUser`, policies, environment, error codes), then three parallel agents: A (AI platform),
+  B (smart capture, API and mobile), C (summaries, anomalies, dashboard, notifications); then the
+  `test-writer`, the `reviewer`, and the `docs-keeper`.
+  - The test-writer added 46 tests and found no bug.
+  - The reviewer returned "pass with fixes", nothing blocking. Fixed: (1) the generate route's
+    default day is the last due day, and today before the summary time is refused (422); (2)
+    overdue counts use `min(now, end of day)`; (3) the phone's sign-out counts unreviewed
+    captures; (4) `AI_ANTHROPIC_REFUSAL_FALLBACK` (default false), provider answers 400, 401, 403,
+    404, 422 become `rejected` (capture `failed` with `provider_rejected`), an unpriced answering
+    model is costed at the configured model's price; (5) the fake LLM answers null for nullable
+    values; (6) a 15-minute back-off per organization and day in the scheduler; (7) the
+    `SmartCapture.workLogId` foreign key; (8) ADR notes (anomaly parameters counted over the
+    organization's data: accepted). Accepted as is: the generate route runs actor-less (audit
+    actor `system`, `metadata.requestedById`); `process` and `upload-url` are not
+    `@Idempotent()`.
+- **Verified**: see "Verified" above (unit counts re-run by the docs-keeper on 2026-11-02;
+  integration 1,681 in 26 suites plus 6 in `storage-minio`, build, lint, typecheck, format check,
+  and `npx expo install --check` as reported). All with the fake providers.
+- **Left to do**
+  - Owner: `pnpm db:reset`; the combined manual test of Phases 4 to 7
+    (`docs/reports/phase-7.md`) on a free `WEB_PORT`, in the emulator `hz_pixel` or on the phone;
+    obtain `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, put them in the root `.env`, restart the API,
+    and repeat the capture and summary steps with real providers; then decide on
+    `AI_ANTHROPIC_REFUSAL_FALLBACK`.
+  - Coordinator: commit "Phase 7: ..." and push.
+  - Later: Turkish and Arabic prompts and catalogues reviewed with real samples; provider data
+    agreements and zero retention, a shared store for the AI rate limit (Phase 8); a web button
+    for generating summaries if wanted.
 
 ### 2026-10-28: Phase 6 web manager dashboard
 
@@ -360,7 +490,7 @@ Structure; Settings; Audit log) and where a user's language is stored (`User.loc
 - **Left to do**
   - Owner: `pnpm db:reset`; the browser test (`docs/reports/phase-6.md`) on a free `WEB_PORT`
     (port 3000 is taken on this PC); the Phase 5 emulator and phone tests.
-  - Coordinator: commit "Phase 6: ..." and push.
+  - Coordinator: commit "Phase 6: ..." and push (done: `713f592`).
   - Later: Turkish and Arabic catalogues and a per-user dashboard language; browser photo upload
     and a nonce-based CSP with `img-src` (Phase 8); restoring archived log types.
 

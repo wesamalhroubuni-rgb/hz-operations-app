@@ -150,6 +150,12 @@ export function itemSummary(item: Pick<QueueItem, 'mutation'>): string | null {
     }
     case 'uploadAttachment':
       return mutation.photo.fileName;
+    case 'smartCapture':
+      return mutation.input.kind === 'text'
+        ? mutation.input.text
+        : mutation.input.kind === 'photo'
+          ? mutation.input.note
+          : null;
     default:
       return null;
   }

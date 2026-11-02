@@ -5,12 +5,19 @@ import { AppText } from '../components/AppText';
 import { Button } from '../components/Button';
 import { LogRow, TaskRow } from '../components/rows';
 import { ScreenContainer } from '../components/ScreenContainer';
+import { CaptureRow, SmartCaptureButtons } from '../components/SmartCapture';
 import { EmptyState, LoadingState } from '../components/StateViews';
 import { SyncReadErrorState } from '../components/SyncNotices';
 import { SyncBanner } from '../components/SyncBanner';
 import { useSync } from '../components/SyncProvider';
 import { useData } from '../data/DataProvider';
-import { readErrorKind, useMyLogs, useMyTasks } from '../data/queries';
+import {
+  readErrorKind,
+  useMyLogs,
+  useMyTasks,
+  useSmartCaptureEnabled,
+  useSmartCaptures,
+} from '../data/queries';
 import { useLookups } from '../hooks/useLookups';
 import { useNow } from '../hooks/useNow';
 import { usePendingPhotoCounts } from '../hooks/useUploads';
@@ -33,6 +40,8 @@ export function HomeScreen({ navigation }: Readonly<TabScreenProps<'Home'>>) {
   const lookups = useLookups();
   const pendingPhotos = usePendingPhotoCounts();
   const { logStates } = useSync();
+  const smartCapture = useSmartCaptureEnabled();
+  const captures = useSmartCaptures();
 
   const today = tasksForToday(tasks.data ?? [], now);
   const recent = logs.data?.pages[0]?.items.slice(0, RECENT_LOGS) ?? [];
@@ -46,17 +55,41 @@ export function HomeScreen({ navigation }: Readonly<TabScreenProps<'Home'>>) {
         void logs.refetch();
       }}
       footer={
-        <Button
-          size="large"
-          icon="add-circle-outline"
-          label={t('home.newLog')}
-          accessibilityHint={t('home.newLogHint')}
-          onPress={() => navigation.navigate('LogForm', { mode: 'new' })}
-        />
+        <View style={styles.footer}>
+          {smartCapture ? (
+            <SmartCaptureButtons onPick={(kind) => navigation.navigate('Capture', { kind })} />
+          ) : null}
+          <Button
+            size="large"
+            icon="add-circle-outline"
+            label={t('home.newLog')}
+            accessibilityHint={t('home.newLogHint')}
+            onPress={() => navigation.navigate('LogForm', { mode: 'new' })}
+          />
+        </View>
       }
     >
       <SyncBanner />
       <AppText variant="title">{t('home.greeting', { name: user.displayName })}</AppText>
+
+      {/* Captures stay listed until reviewed or discarded, even if the switch went off since. */}
+      {(captures.data?.length ?? 0) > 0 ? (
+        <View style={styles.section}>
+          <AppText variant="heading">{t('capture.listTitle')}</AppText>
+          {(captures.data ?? []).map((view) => (
+            <CaptureRow
+              key={view.local.captureClientId}
+              view={view}
+              onPress={() =>
+                navigation.navigate('LogForm', {
+                  mode: 'new',
+                  captureClientId: view.local.captureClientId,
+                })
+              }
+            />
+          ))}
+        </View>
+      ) : null}
 
       <View style={styles.section}>
         <AppText variant="heading">{t('home.todayTitle')}</AppText>
@@ -124,5 +157,8 @@ export function HomeScreen({ navigation }: Readonly<TabScreenProps<'Home'>>) {
 const styles = StyleSheet.create({
   section: {
     gap: spacing.md,
+  },
+  footer: {
+    gap: spacing.sm,
   },
 });

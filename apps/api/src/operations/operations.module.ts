@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AccessModule } from './access/access.module';
+import { OperationsAiModule } from './ai/ai.module';
 import { AttachmentsModule } from './attachments/attachments.module';
 import { OperationsCommonModule } from './common/operations-common.module';
 import { DashboardModule } from './dashboard/dashboard.module';
@@ -37,6 +38,7 @@ import { WorkLogsModule } from './work-logs/work-logs.module';
     ExportsModule,
     ReportsModule,
     OperationsNotificationsModule,
+    OperationsAiModule,
   ],
 })
 export class OperationsModule {}

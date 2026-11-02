@@ -8,6 +8,7 @@ import {
 } from '../common/pagination.js';
 import { apiErrorCodeSchema } from '../common/errors.js';
 import { idSchema, isoDateTimeSchema, queryBooleanSchema } from '../common/primitives.js';
+import { aiWorkLogMetadataSchema } from './ai-capture.js';
 import { customFieldValuesInputSchema, customFieldValuesSchema } from './custom-fields.js';
 import { workLogSourceSchema, workLogStatusSchema } from './enums.js';
 import { recordHistorySchema, type RecordHistory } from './history.js';
@@ -110,8 +111,11 @@ export const workLogSchema = z.object({
     })
     .nullable(),
   source: workLogSourceSchema,
-  /** Reserved for AI-derived data. Always null today. */
-  aiMetadata: z.record(z.string(), z.unknown()).nullable(),
+  /**
+   * Set by the API on an `ai_assisted` log (Phase 7, ADR-0010): which smart capture it came from
+   * and which proposed fields the worker kept or changed. Null for every other log.
+   */
+  aiMetadata: aiWorkLogMetadataSchema.nullable(),
   /** Optimistic-concurrency counter: send it back as `expectedVersion` (ADR-0008). */
   version: z.number().int().min(1),
   /** Sent by the phone's offline queue (`X-Client-Sync: offline` on the create request). */
@@ -139,6 +143,9 @@ export type WorkLog = z.infer<typeof workLogSchema>;
 /** The statuses a log may be created with. `approved` and `rejected` are set by a reviewer. */
 export const WORK_LOG_CREATE_STATUSES = ['draft', 'submitted'] as const;
 
+/** The sources a client may create a log with (Phase 7). */
+export const WORK_LOG_CREATE_SOURCES = ['manual', 'ai_assisted'] as const;
+
 /**
  * `clientId` is a UUID generated on the device: sending the same one again returns the log that
  * already exists (HTTP 200 instead of 201) and changes nothing; the same `clientId` sent by
@@ -151,24 +158,38 @@ export const WORK_LOG_CREATE_STATUSES = ['draft', 'submitted'] as const;
  * `attachmentClientIds` declares the clientIds of the photos that belong to this submission
  * (stored as `declaredAttachmentClientIds`); only those may be uploaded after the edit window.
  * `deviceCreatedAt` is the phone's clock when the worker saved the log (informative).
+ *
+ * Phase 7 (ADR-0010): confirming a smart capture IS this request, with `source: 'ai_assisted'`
+ * and `aiProposalId` (the capture's id); each requires the other. The API checks that the
+ * capture is the caller's own and `proposed` or `failed` (else 422 `unprocessable`; a capture
+ * already confirmed by another log is 409 `conflict`), marks it `confirmed` in the same
+ * transaction, and writes `aiMetadata` itself (`aiMetadata` from a client is still refused).
+ * `voice` and `photo` are not accepted as a source from a client.
  */
-export const createWorkLogSchema = z.strictObject({
-  clientId: idSchema,
-  occurredAt: isoDateTimeSchema,
-  attachmentClientIds: uniqueIdListSchema(MAX_DECLARED_ATTACHMENTS).default([]),
-  deviceCreatedAt: isoDateTimeSchema.optional(),
-  taskId: idSchema.nullable().optional(),
-  siteId: idSchema.nullable().optional(),
-  teamId: idSchema.nullable().optional(),
-  logTypeId: idSchema.nullable().optional(),
-  text: longTextSchema.nullable().optional(),
-  customFields: customFieldValuesInputSchema.default({}),
-  location: workLogLocationSchema.nullable().optional(),
-  status: z.enum(WORK_LOG_CREATE_STATUSES).default('submitted'),
-  source: workLogSourceSchema.default('manual'),
-  /** Reserved for the AI phases; only null is accepted today. */
-  aiMetadata: z.null().optional(),
-});
+export const createWorkLogSchema = z
+  .strictObject({
+    clientId: idSchema,
+    occurredAt: isoDateTimeSchema,
+    attachmentClientIds: uniqueIdListSchema(MAX_DECLARED_ATTACHMENTS).default([]),
+    deviceCreatedAt: isoDateTimeSchema.optional(),
+    taskId: idSchema.nullable().optional(),
+    siteId: idSchema.nullable().optional(),
+    teamId: idSchema.nullable().optional(),
+    logTypeId: idSchema.nullable().optional(),
+    text: longTextSchema.nullable().optional(),
+    customFields: customFieldValuesInputSchema.default({}),
+    location: workLogLocationSchema.nullable().optional(),
+    status: z.enum(WORK_LOG_CREATE_STATUSES).default('submitted'),
+    source: z.enum(WORK_LOG_CREATE_SOURCES).default('manual'),
+    /** The smart capture this log confirms (Phase 7); required with `source: 'ai_assisted'`. */
+    aiProposalId: idSchema.optional(),
+    /** Written by the API only; only null is accepted from a client. */
+    aiMetadata: z.null().optional(),
+  })
+  .refine((body) => (body.source === 'ai_assisted') === (body.aiProposalId !== undefined), {
+    path: ['aiProposalId'],
+    error: "is required with source 'ai_assisted' and accepted only with it",
+  });
 export type CreateWorkLog = z.infer<typeof createWorkLogSchema>;
 export type CreateWorkLogInput = z.input<typeof createWorkLogSchema>;
 

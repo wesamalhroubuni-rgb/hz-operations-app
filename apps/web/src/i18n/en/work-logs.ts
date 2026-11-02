@@ -106,7 +106,7 @@ export const workLogs = {
     manual: 'Entered by the worker',
     voice: 'Voice note',
     photo: 'Photo',
-    ai: 'AI',
+    ai_assisted: 'AI-assisted, confirmed by the worker',
   },
   fields: {
     heading: 'Details',

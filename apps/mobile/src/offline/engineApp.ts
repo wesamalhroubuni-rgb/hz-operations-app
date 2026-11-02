@@ -7,7 +7,14 @@ import { deviceStore } from '../storage/deviceStore';
 import { createDroppedReferenceNotices, type DroppedReferenceNotices } from './engineNotices';
 import { createRetryPolicy } from './engineRetry';
 import { appNetworkMonitor } from './network';
-import type { LocalPhotoStore, LocalStore, SyncEngineDeps, WriteQueue } from './types';
+import type {
+  LocalAudioStore,
+  LocalPhotoStore,
+  LocalStore,
+  SmartCaptureResults,
+  SyncEngineDeps,
+  WriteQueue,
+} from './types';
 
 // The engine as the app runs it: photo bytes are PUT with expo-file-system, "foreground" is
 // React Native's AppState, connectivity is NetInfo, the clock is the phone's.
@@ -41,6 +48,7 @@ export const appForeground: ForegroundSource = {
 export function createAppSyncEngine(deps: SyncEngineDeps): AppSyncEngine {
   return createSyncEngine(deps, {
     put: (photo) => putFileFromUri(photo.uri),
+    putFile: (uri) => putFileFromUri(uri),
     foreground: appForeground,
     onDroppedReferences: (log, fields) =>
       droppedReferenceNoticesFor(deps.userId).record(log.clientId, fields, new Date()),
@@ -61,6 +69,8 @@ export function createUserSyncEngine(input: {
   store: LocalStore;
   queue: WriteQueue;
   photos: LocalPhotoStore;
+  audio: LocalAudioStore;
+  captures: SmartCaptureResults;
   api: ApiClient;
   onNeedsSignIn: () => void;
 }): AppSyncEngine {

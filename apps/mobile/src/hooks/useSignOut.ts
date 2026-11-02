@@ -11,11 +11,13 @@ import { usePushService } from '../push/usePush';
 
 export type SignOutScope = 'device' | 'everywhere';
 
-/** Queued writes that make sign-out ask first. */
+/** Queued writes (and smart captures waiting for review) that make sign-out ask first. */
 export interface SignOutPrompt {
   scope: SignOutScope;
+  /** Queued writes plus `captures`. */
   pending: number;
   failed: number;
+  captures: number;
 }
 
 /**
@@ -34,7 +36,11 @@ export function useSignOut() {
   const [busy, setBusy] = useState<SignOutScope | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [prompt, setPrompt] = useState<SignOutPrompt | null>(null);
-  const [notEmpty, setNotEmpty] = useState<{ pending: number; failed: number } | null>(null);
+  const [notEmpty, setNotEmpty] = useState<{
+    pending: number;
+    failed: number;
+    captures: number;
+  } | null>(null);
 
   async function run(
     scope: SignOutScope,
@@ -50,6 +56,7 @@ export function useSignOut() {
         {
           user,
           queue: offline.queue,
+          captures: offline.captures,
           engine: offline.engine,
           factory: offlineSessions,
           identity: offlineIdentity,
@@ -72,11 +79,14 @@ export function useSignOut() {
       void unregisterBackgroundSync();
       return outcome;
     }
-    if (outcome.reason === 'needsChoice') {
-      setPrompt({ scope, pending: outcome.pending, failed: outcome.failed });
-    } else if (outcome.reason === 'notEmpty') {
-      setPrompt({ scope, pending: outcome.pending, failed: outcome.failed });
-      setNotEmpty({ pending: outcome.pending, failed: outcome.failed });
+    if (outcome.reason === 'needsChoice' || outcome.reason === 'notEmpty') {
+      const counts = {
+        pending: outcome.pending,
+        failed: outcome.failed,
+        captures: outcome.captures,
+      };
+      setPrompt({ scope, ...counts });
+      if (outcome.reason === 'notEmpty') setNotEmpty(counts);
     } else {
       setFailure(authFailureText(outcome.failure));
       // Still signed in (sign out everywhere was not confirmed): register the phone again.

@@ -48,7 +48,9 @@ function item(
       ? `workLog:${mutation.body.clientId}`
       : mutation.kind === 'changeTaskStatus'
         ? `task:${mutation.taskId}`
-        : `workLog:${mutation.workLogClientId}`;
+        : mutation.kind === 'smartCapture' || mutation.kind === 'discardSmartCapture'
+          ? `smartCapture:${mutation.captureClientId}`
+          : `workLog:${mutation.workLogClientId}`;
   return {
     id: `item-${seq}`,
     seq,
@@ -291,11 +293,11 @@ describe('phase 5 notices', () => {
     );
   });
 
-  it('says on the sign-in screen how many changes wait for whom', () => {
+  it('says on the sign-in screen how many items (changes, captures to review) wait for whom', () => {
     expect(render(signInWaitingText('Deniz', 3))).toBe(
-      '3 changes wait on this phone for Deniz. Sign in again as Deniz to send them.',
+      '3 items wait on this phone for Deniz (changes to send or captures to review). Sign in again as Deniz to finish them.',
     );
-    expect(render(signInWaitingText('Deniz', 1))).toContain('1 change waits');
+    expect(render(signInWaitingText('Deniz', 1))).toContain('1 item waits');
     expect(render(signInWaitingText('Deniz', 0))).toBe(
       'The session of Deniz has ended. Sign in again.',
     );

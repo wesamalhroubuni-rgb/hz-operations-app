@@ -1,18 +1,34 @@
 # apps/web memory
 
-Package `@ops/web`. Last updated: 2026-10-28.
+Package `@ops/web`. Last updated: 2026-11-02.
 
 ## Purpose
 
 The manager dashboard: a web app where supervisors, managers, and admins monitor and manage the
 work that workers log. Built with Next.js (App Router) and React. The architecture is in
-[ADR-0009](../../docs/decisions/0009-web-dashboard-architecture.md).
+[ADR-0009](../../docs/decisions/0009-web-dashboard-architecture.md); the AI screens follow
+[ADR-0011](../../docs/decisions/0011-daily-summaries-and-anomaly-rules.md).
 
 ## Current state
 
-Phase 6 code complete, tested, and reviewed on 2026-10-28 (about to be committed). **Not yet used
-in a browser with data** (it needs the owner's `pnpm db:reset`); only a smoke test (every route
-answers, security headers present). The browser test list is in `docs/reports/phase-6.md`.
+Phase 6 committed (`713f592`). Phase 7 (2026-10-30 to 2026-11-02) added the AI screens (below);
+code complete, tested, reviewed, about to be committed. **Not yet used in a browser with data**
+(it needs the owner's `pnpm db:reset`); only a smoke test in Phase 6. The browser steps are in
+the combined manual test in `docs/reports/phase-7.md`.
+
+- **Phase 7 (AI)**, in `src/components/ai/`, `src/lib/ai.ts`, `src/i18n/en/ai.ts`:
+  - Overview: when `aiFeatures.dailySummary` is on, `LatestSummaryPanel` (the caller's latest
+    summary: narrative as plain text, labelled AI-written when `narrativeSource` is `ai`, the key
+    numbers from `stats`, its flags with reasons) and `AnomalyPanel` (`GET /ai/anomalies` for the
+    day range ending at the shown day).
+  - `/summaries` (supervisor and up, capability `readSummaries`): own summary history
+    (`GET /ai/summaries`, `GET /ai/summaries/:id`).
+  - `/ai-usage` (admin, capability `viewAiUsage`): calls, outcomes, tokens, estimated cost per
+    day, feature, provider, model; today against the limits (`GET /ai/usage`).
+  - Settings: `AiSettingsSection` (admins) with its own form and Save: the two switches, summary
+    time, recipient roles, daily request and cost limits; the body keeps every other stored
+    setting (`PATCH /organization` replaces the settings object).
+  - No button for `POST /ai/summaries/generate` (an admin calls it from Swagger or a script).
 
 - **Public pages** (Phase 3): `/login` (email, phone, or username plus password; signed-in users go
   to `?next=`, sanitised, or `/`) and `/activate` (activation and reset with a one-time code; a
@@ -30,7 +46,9 @@ answers, security headers present). The browser test list is in `docs/reports/ph
   | `/people`               | manager (read only), admin | Invite (activation code shown once), reset code, archive and restore, memberships and scope, sessions and sign-out everywhere, language.                   |
   | `/structure`            | manager, admin             | Sites and teams as trees; log types with the custom-field editor (saved keys locked, a saved key cannot be reused; saving raises the version).             |
   | `/audit`                | admin                      | Audit log with filters, paging, and the redacted diff and offline facts.                                                                                   |
-  | `/settings`             | admin                      | Organization name, time zone, edit window, offline backdating limit (sends every settings key).                                                            |
+  | `/settings`             | admin                      | Organization name, time zone, edit window, offline backdating limit (sends every settings key); the AI section (Phase 7); the API status card.             |
+  | `/summaries`            | supervisor, manager, admin | Own daily summaries, newest first, with detail (Phase 7).                                                                                                  |
+  | `/ai-usage`             | admin                      | AI usage and limits (Phase 7).                                                                                                                             |
 
 - **Shell** (`src/components/shell/`): navigation by role from `src/lib/navigation.ts` and
   `src/lib/permissions.ts` (mirrors the API policy registry; UX only), organization name and time
@@ -45,8 +63,9 @@ answers, security headers present). The browser test list is in `docs/reports/ph
   referrer and permissions policies, HSTS in production, `poweredByHeader: false`. No
   `default-src`, `script-src`, `style-src`, `img-src`, or `connect-src`: the hosts a Phase 8
   nonce-based policy must allow (tiles, storage, API) are listed in the comment there.
-- **Tests**: 174 unit tests in 11 files (2026-10-28), all in `src/**/*.test.ts` (Vitest, `node`
-  environment): `src/lib/*.test.ts`, `src/lib/work-logs/work-logs.test.ts`, and
+- **Tests**: 191 unit tests in 12 files (2026-11-02, re-run by the docs-keeper), all in
+  `src/**/*.test.ts` (Vitest, `node` environment): `src/lib/*.test.ts` (Phase 7 added
+  `ai.test.ts`), `src/lib/work-logs/work-logs.test.ts`, and
   `src/components/manage/screens.render.test.ts` (renders management screens to a string).
 - Not built: photo upload from the browser (deferred to Phase 8: a CORS rule on the bucket);
   catalogues other than English; restoring archived log types (no API route).
@@ -60,7 +79,8 @@ answers, security headers present). The browser test list is in `docs/reports/ph
 | `src/components/query-provider.tsx`                      | The TanStack Query client with the defaults of `src/lib/api/query.ts`.                                                                                                                                    |
 | `src/components/auth-provider.tsx`                       | Subscribes to the session manager, `RouteGuard`, `useAuth()`.                                                                                                                                             |
 | `src/components/ui/`                                     | DataTable, Pagination, filters, Loading/Empty/ErrorState, dialogs (`<dialog>`), form controls, StatusBadge, layout.                                                                                       |
-| `src/components/<area>/`                                 | One folder per page area: `overview`, `work-logs`, `tasks`, `map-page`, `report`, `exports`, `people`, `structure`, `audit`, `settings`, `manage` (shared parts of the admin screens).                    |
+| `src/components/<area>/`                                 | One folder per page area: `overview`, `work-logs`, `tasks`, `map-page`, `report`, `exports`, `people`, `structure`, `audit`, `settings`, `manage` (shared parts of the admin screens), `ai` (Phase 7).    |
+| `src/lib/ai.ts`                                          | AI settings form state and body, summary and anomaly display helpers, `AI_USAGE_PATH` (tested in `ai.test.ts`).                                                                                           |
 | `src/components/map/`                                    | `map-view.tsx` loads `leaflet-map.tsx` with `next/dynamic` (`ssr: false`).                                                                                                                                |
 | `src/hooks/`                                             | `use-caller` (role, capabilities), `use-organization`, `use-directory`, `use-list-params`, `use-work-logs`, sign-in and sign-out hooks.                                                                   |
 | `src/lib/api/client.ts`, `api/query.ts`, `api/errors.ts` | `authSession` and `apiClient` (null without an API URL); `queryKeys`, `unwrap`, retry rules; error to message mapping.                                                                                    |
@@ -135,6 +155,8 @@ Run from the repo root as `pnpm --filter @ops/web <script>`.
   still decides (404 shown as "not found or you cannot see it", 409 `version_conflict` as
   "reload and try again").
 - **Never store a token in the browser**; never read the session cookies.
+- AI text (summary narratives) is rendered as plain text only (no HTML, no Markdown links) and
+  labelled AI-written; numbers shown next to it come from `stats`, not from the narrative.
 - Never write a client name in a component; read `brand`. Read environment variables only in
   `src/lib/env.ts`, written out in full (Next.js inlines them by exact text).
 - Import from `src` with the `@/` alias. Components are server components unless they need state
@@ -143,9 +165,12 @@ Run from the repo root as `pnpm --filter @ops/web <script>`.
 ## Known issues
 
 - Not yet used in a browser with data; loading, empty, and error states, phone widths, and
-  keyboard use have not been checked by a person.
+  keyboard use have not been checked by a person. The Phase 7 panels and pages have never shown
+  a real summary.
+- The Summaries and AI usage entries are shown by role, also while the AI features are off (the
+  pages then show no summaries or zero usage).
 - The API status card (`src/components/api-status.tsx`, `hooks/use-api-health.ts`) is shown on
-  the Settings page (admin) since 2026-10-30; the health texts themselves come from `@ops/shared`
+  the Settings page (admin) since Phase 6 (2026-10-28); the health texts themselves come from `@ops/shared`
   in English. The Phase 3 session card was removed (the user menu replaces it).
 - A 403 from `POST /auth/login` means the page's origin is not in `CORS_ORIGINS`.
 - No nonce-based CSP yet; in production the web app and the API must be same-site (or

@@ -33,7 +33,11 @@ export const WORK_LOG_STATUSES = ['draft', 'submitted', 'approved', 'rejected'] 
 export const workLogStatusSchema = z.enum(WORK_LOG_STATUSES);
 export type WorkLogStatus = z.infer<typeof workLogStatusSchema>;
 
-/** How a work log was captured. Everything is `manual` until the AI phases. */
-export const WORK_LOG_SOURCES = ['manual', 'voice', 'photo', 'ai'] as const;
+/**
+ * How a work log was captured: `manual`, or `ai_assisted` when the worker confirmed a smart
+ * capture proposal (Phase 7, ADR-0010). `voice` and `photo` are values reserved in Phase 2 that
+ * Phase 7 does not write (the input kind of an AI-assisted log is `aiMetadata.inputKind`).
+ */
+export const WORK_LOG_SOURCES = ['manual', 'voice', 'photo', 'ai_assisted'] as const;
 export const workLogSourceSchema = z.enum(WORK_LOG_SOURCES);
 export type WorkLogSource = z.infer<typeof workLogSourceSchema>;

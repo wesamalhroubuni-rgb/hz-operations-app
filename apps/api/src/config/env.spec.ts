@@ -206,7 +206,49 @@ describe('validateEnv', () => {
         PUSH_ENABLED: true,
         OUTBOX_CONSUMER_ENABLED: true,
         OUTBOX_POLL_INTERVAL_MS: 2000,
+        ANTHROPIC_API_KEY: undefined,
+        OPENAI_API_KEY: undefined,
+        AI_PROVIDER: 'auto',
+        AI_LLM_MODEL: 'claude-opus-5-5',
+        AI_STT_MODEL: 'gpt-4o-transcribe',
+        AI_REQUEST_TIMEOUT_MS: 30_000,
+        AI_DAILY_LIMIT_PER_ORG: 500,
+        AI_DAILY_COST_LIMIT_USD_PER_ORG: 10,
+        AI_RATE_LIMIT_PER_USER_PER_MINUTE: 6,
+        AI_SUMMARY_SCHEDULER_ENABLED: true,
+        AI_SUMMARY_POLL_INTERVAL_MS: 60_000,
+        AI_ANTHROPIC_REFUSAL_FALLBACK: false,
       });
+    });
+
+    it('reads the AI settings (Phase 7): keys optional, fake refused in production', () => {
+      const env = validateEnv({
+        ...BASE,
+        NODE_ENV: 'development',
+        ANTHROPIC_API_KEY: ' ',
+        AI_PROVIDER: 'fake',
+        AI_DAILY_COST_LIMIT_USD_PER_ORG: '2.5',
+        AI_LLM_MODEL: '',
+      });
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(env.AI_PROVIDER).toBe('fake');
+      expect(env.AI_DAILY_COST_LIMIT_USD_PER_ORG).toBe(2.5);
+      expect(env.AI_LLM_MODEL).toBe('claude-opus-5-5');
+      expect(env.AI_ANTHROPIC_REFUSAL_FALLBACK).toBe(false);
+      expect(validateEnv({ ...BASE, AI_ANTHROPIC_REFUSAL_FALLBACK: 'true' })).toMatchObject({
+        AI_ANTHROPIC_REFUSAL_FALLBACK: true,
+      });
+      expect(messageOf({ ...BASE, AI_ANTHROPIC_REFUSAL_FALLBACK: 'maybe' })).toContain(
+        '- AI_ANTHROPIC_REFUSAL_FALLBACK:',
+      );
+      expect(messageOf({ ...BASE, NODE_ENV: 'production', AI_PROVIDER: 'fake' })).toContain(
+        '- AI_PROVIDER:',
+      );
+      expect(messageOf({ ...BASE, AI_PROVIDER: 'cloud' })).toContain('- AI_PROVIDER:');
+      const real = messageOf({ ...BASE, AI_PROVIDER: 'real', OPENAI_API_KEY: 'example-openai' });
+      expect(real).toContain('- ANTHROPIC_API_KEY:');
+      expect(real).not.toContain('- OPENAI_API_KEY:');
+      expect(real).not.toContain('example-openai');
     });
 
     it('are read as numbers, and an empty value means the default', () => {

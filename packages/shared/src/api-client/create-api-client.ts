@@ -1,3 +1,5 @@
+import { smartCaptureEndpoints } from '../domain/ai-capture.js';
+import { aiSummariesEndpoints } from '../domain/ai-summaries.js';
 import { attachmentsEndpoints } from '../domain/attachments.js';
 import { dashboardEndpoints } from '../domain/dashboard.js';
 import { directoryEndpoints } from '../domain/directory.js';
@@ -13,6 +15,7 @@ import { tasksEndpoints } from '../domain/tasks.js';
 import { teamsEndpoints } from '../domain/teams.js';
 import { usersEndpoints } from '../domain/users.js';
 import { workLogsEndpoints } from '../domain/work-logs.js';
+import { aiUsageEndpoints } from '../platform/ai.js';
 import { auditEventsEndpoints } from '../platform/audit.js';
 import { authEndpoints } from '../platform/auth.js';
 import { notificationsEndpoints } from '../platform/notifications.js';
@@ -52,6 +55,10 @@ export function createApiClient(options: ApiClientOptions) {
     directory: directoryEndpoints(transport),
     reports: reportsEndpoints(transport),
     exports: exportsEndpoints(transport),
+    // Phase 7 (ADR-0010, ADR-0011): the intelligent layer.
+    smartCapture: smartCaptureEndpoints(transport),
+    aiSummaries: aiSummariesEndpoints(transport),
+    aiUsage: aiUsageEndpoints(transport),
     auditEvents: auditEventsEndpoints(transport),
     outboxEvents: outboxEventsEndpoints(transport),
   };

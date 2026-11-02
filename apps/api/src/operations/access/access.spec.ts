@@ -2,6 +2,7 @@ import { parseLoginIdentifier } from '../../platform/auth/identifiers';
 import { RequestContext } from '../../platform/request-context/request-context';
 import { createUserSchema } from '@ops/shared';
 import type { ScopeService } from '../scope/scope.service';
+import { authorOf } from './access-context';
 import { AccessService } from './access.service';
 import { OperationsRequestAuthorizer, mayUsePolicy } from './operations-request-authorizer';
 import { listPolicies, POLICIES } from './policies';
@@ -63,6 +64,35 @@ describe('AccessService', () => {
     expect(context).toMatchObject({ system: true, isAdmin: true, organizationId: 'org' });
     await inRequest(async () => {
       expect(() => access.runAsSystem('org', async () => null)).toThrow();
+    });
+  });
+
+  it('runs as a user read-only outside a request, with that user scope (Phase 7)', async () => {
+    const scope = fakeScope(['supervisor']);
+    const access = new AccessService(scope.service);
+    const context = await access.runAsUser('org', 'u7', () => access.context());
+    expect(context).toMatchObject({
+      userId: 'u7',
+      organizationId: 'org',
+      system: false,
+      readOnly: true,
+      isSupervisorOrAbove: true,
+      isManagerOrAbove: false,
+    });
+    expect(() => authorOf(context)).toThrow();
+    expect(scope.resolveForUser).toHaveBeenCalledWith('org', 'u7');
+  });
+
+  it('applies a background context in a context without an actor, never in a signed-in request', async () => {
+    const access = new AccessService(fakeScope(['worker']).service);
+    const handler = await RequestContext.run({ correlationId: 'event', actor: null }, () =>
+      access.runAsUser('org', 'u7', () => access.context()),
+    );
+    expect(handler.userId).toBe('u7');
+    await inRequest(async () => {
+      await expect(access.runAsUser('org', 'u7', async () => null)).rejects.toThrow();
+      const own = await access.context();
+      expect(own.userId).toBe('u1');
     });
   });
 });

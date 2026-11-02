@@ -86,4 +86,11 @@ export const queryKeys = {
     all: ['audit'] as const,
     list: (query: Record<string, unknown>) => ['audit', 'list', query] as const,
   },
+  // Phase 7 (ADR-0011): daily summaries, unusual-item flags, AI usage.
+  ai: {
+    all: ['ai'] as const,
+    summaries: (query: Record<string, unknown>) => ['ai', 'summaries', query] as const,
+    anomalies: (query: Record<string, unknown>) => ['ai', 'anomalies', query] as const,
+    usage: (query: Record<string, unknown>) => ['ai', 'usage', query] as const,
+  },
 } as const;

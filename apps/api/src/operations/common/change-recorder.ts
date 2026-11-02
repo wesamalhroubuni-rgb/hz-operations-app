@@ -13,7 +13,11 @@ export type EntityType =
   | 'log_type'
   | 'task'
   | 'work_log'
-  | 'attachment';
+  | 'attachment'
+  // Phase 7 (ADR-0010, ADR-0011)
+  | 'smart_capture'
+  | 'daily_summary'
+  | 'anomaly_flag';
 
 /** Key under which the entity sits in an outbox payload. */
 const PAYLOAD_KEYS: Record<EntityType, string> = {
@@ -26,6 +30,9 @@ const PAYLOAD_KEYS: Record<EntityType, string> = {
   task: 'task',
   work_log: 'workLog',
   attachment: 'attachment',
+  smart_capture: 'smartCapture',
+  daily_summary: 'dailySummary',
+  anomaly_flag: 'anomalyFlag',
 };
 
 export interface RecordedChange {

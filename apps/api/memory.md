@@ -1,19 +1,80 @@
 # apps/api memory
 
-Package `@ops/api`. Last updated: 2026-10-28 (Phase 6).
+Package `@ops/api`. Last updated: 2026-11-02 (Phase 7).
 
 ## Purpose
 
 The REST API. It owns the PostgreSQL database, the business rules, sign-in and sessions, the
-permission rules, photo storage, notifications, the audit trail, and the event outbox. Both clients
-(web and mobile) talk only to this API (and to object storage through URLs it signs).
+permission rules, photo storage, notifications, the audit trail, the event outbox, and the AI
+layer. Both clients (web and mobile) talk only to this API (and to object storage through URLs it
+signs); only the API talks to the AI providers.
 
-## Phase 6 additions (2026-10-28, ADR-0009)
+## Phase 7 additions (2026-10-30 to 2026-11-02, ADR-0010, ADR-0011)
 
-Code complete, tested, and reviewed; about to be committed. Migration
-`20261028090000_phase6_dashboard` adds `User.locale` (default `en`); the user full profile maps
-`locale`, the organization summary maps `timeZone` (`settings.timeZone`, default
-`Europe/Istanbul`). 11 new paths:
+Code complete, tested with the fake providers, and reviewed; about to be committed. **No real
+provider has been called.** Migration `20261030090000_phase7_ai`: tables `SmartCapture`,
+`DailySummary`, `AnomalyFlag` (operations) and `AiTrace` (platform), seven enums,
+`WorkLogSource.ai` renamed in place to `ai_assisted`, FK `SmartCapture.workLogId` to `WorkLog`
+(`ON DELETE RESTRICT`, unique). 10 new paths (11 routes), five policies.
+
+- **Platform `src/platform/ai/`** (no Operations import): `llm-provider.ts`,
+  `speech-to-text-provider.ts` (interfaces, `AiProviderError`), `provider-registry.ts`
+  (`resolveAiProviders`: `AI_PROVIDER` `auto` / `fake` / `real`; production never uses a fake),
+  `anthropic-llm-provider.ts` (`@anthropic-ai/sdk` exactly 1.3.0; `output_config.format`
+  `json_schema`, `effort: 'low'` where supported, `maxRetries: 0`, refusal fallback beta only with
+  `AI_ANTHROPIC_REFUSAL_FALLBACK`; HTTP 400/401/403/404/422 map to `rejected`),
+  `openai-speech-to-text-provider.ts` (`fetch`, multipart), `fake-llm-provider.ts` and
+  `fake-speech-to-text-provider.ts` (markers `FAKE-LLM-JSON:`, `FAKE-LLM-INVALID`,
+  `FAKE-LLM-REFUSE`, `FAKE-LLM-FAIL`, `FAKE-LLM-SLOW`, `FAKE-STT:`), `ai-runner.service.ts`
+  (`AI_RUNNER`: limits, timeout, one retry with the reason, validation, a trace per attempt,
+  failure mapping, logs with ids and codes only), `ai-trace.service.ts` (writes `AiTrace`, usage
+  by UTC day, decisions, `purgeExpired`), `usage-limiter.ts` (daily calls and cost per
+  organization; per-user per-minute limit in memory), `ai-prices.ts`, `prompt-loader.ts`
+  (`FilePromptLoader`, header `id`/`version`/`purpose`, SHA-256), `prompt-data.ts`
+  (`untrustedDataBlock`), `ai-usage-report.service.ts`, `ai.module.ts`
+  (`AiModule.register({ promptDirectories, organizationLimits })`, global).
+- **Operations `src/operations/ai/`**: `ai.module.ts` (`OperationsAiModule`, imported by
+  `OperationsModule`; `OPERATIONS_PROMPTS_DIRECTORY`), `organization-ai-limits.ts`,
+  `ai-usage.controller.ts` (`GET /ai/usage`), `day-column.ts`, `prompts/`
+  (`smart-capture-extract.v1.md`, `daily-summary-narrative.v1.md`).
+  - `capture/`: `smart-capture.controller.ts` (six routes; `POST /ai/capture` and `/discard`
+    `@Idempotent()`, `/process` and `/upload-url` not, accepted in review),
+    `smart-capture.service.ts` (create, upload URL with the API-chosen key
+    `ai-captures/<organizationId>/<captureId>`, process with a lease, verify, offer, transcribe,
+    extract, interpret), `capture-offer.ts` (log types max 20, tasks `T1..` and sites `S1..` max
+    30), `audio-check.ts`, `capture-failures.ts`, `capture-confirmation.ts` (called from
+    `WorkLogsService.create` for `source: 'ai_assisted'` + `aiProposalId`, same transaction),
+    `capture-retention.service.ts` (hourly), `smart-capture.mapper.ts`.
+  - `summaries/`: `summary-scheduler.ts` (`setTimeout` chain, 15-minute back-off per organization
+    and day, in memory), `summary-schedule.ts` (`dueSummaryDay`), `summaries.service.ts`
+    (recipients, `runAsUser` facts, idempotent per recipient and day, `generateNow` detached from
+    the admin's request with `requestedById` in the audit metadata), `summary-stats.service.ts`,
+    `summary-facts.ts` (`checkNarrative`, `substitutePeople`), `summary-narrative.service.ts`,
+    `summary-messages.ts` (template and notification texts, English),
+    `summary-notifications.service.ts` (outbox handler `daily_summary.created` to
+    `ai.daily_summary`).
+  - `anomalies/`: `anomaly-rules.ts` (pure), `anomalies.service.ts` (once per organization and
+    day, system context, fingerprint-idempotent), `anomaly-visibility.ts`,
+    `anomalies.controller.ts` (`GET /ai/anomalies`).
+- **Access**: `AccessService.runAsUser` (read-only background context, `readOnly` makes
+  `authorOf` throw); `rules/anomaly.rules.ts` (`anomalyFlagVisibilityWhere`: every subject
+  visible); policies `ai_capture.use` (everyone), `ai_summary.read`, `ai_anomaly.read`
+  (supervisor and up), `ai_summary.generate`, `ai_usage.read` (admin).
+- **Elsewhere**: `ChangeRecorder` entity types `smart_capture`, `daily_summary`, `anomaly_flag`;
+  `toOrganizationSummary` adds `aiFeatures`; `config/env.ts` the AI variables and refusals;
+  `nest-cli.json` copies `operations/ai/prompts/*.md` into `dist`; `scripts/copy-prompts.mjs`
+  copies them for the seed build; `src/prisma-enums.spec.ts` checks every shared enum array
+  against Prisma.
+- Reviewer decisions (2026-11-02): generate defaults to the last due day and refuses today
+  before the summary time (422); overdue counts use `min(now, dayEnd)`; an unpriced answering
+  model is costed at the configured model's price; the fake LLM answers null for nullable values;
+  the summary generate route runs actor-less (audit actor `system`).
+
+## Phase 6 (2026-10-28, ADR-0009, committed in `713f592`)
+
+Migration `20261028090000_phase6_dashboard` adds `User.locale` (default `en`); the user full
+profile maps `locale`, the organization summary maps `timeZone` (`settings.timeZone`, default
+`Europe/Istanbul`). 11 paths:
 
 - New modules `operations/dashboard/` (`GET /dashboard/overview`, `GET /directory`),
   `operations/exports/` (`GET /exports/work-logs.csv`, `/exports/tasks.csv`),
@@ -44,13 +105,13 @@ Code complete, tested, and reviewed; about to be committed. Migration
 
 ## Current state
 
-Phase 5 committed (`2cf5a01`); Phase 6 as above.
+Phase 6 committed (`713f592`); Phase 7 as above.
 
-- **68 paths**: the Phase 2 resources, nine `/auth/*` routes, the two user code routes, from
+- **78 paths**: the Phase 2 resources, nine `/auth/*` routes, the two user code routes, from
   Phase 4 `POST /attachments/:id/complete`, `POST /attachments/:id/upload-url`, and five
-  `/notifications` paths, from Phase 5 `GET /sync/pull`, and the 11 Phase 6 paths. The full list with the policy of each
-  route, the HTTP conventions, and the permissions matrix are in
-  [ARCHITECTURE.md](../../ARCHITECTURE.md).
+  `/notifications` paths, from Phase 5 `GET /sync/pull`, the 11 Phase 6 paths, and the 10
+  Phase 7 `/ai/*` paths. The full list with the policy of each route, the HTTP conventions, and
+  the permissions matrix are in [ARCHITECTURE.md](../../ARCHITECTURE.md).
 - **Offline sync** (ADR-0008): `Task.version` and `WorkLog.version` raised by every change;
   `expectedVersion` on log edits and status changes and task status changes (409
   `version_conflict` unless the request is a no-op); typed refusal codes (`already_reviewed`,
@@ -83,21 +144,25 @@ Phase 5 committed (`2cf5a01`); Phase 6 as above.
   policy from the registry; services apply pure object-level rules and visibility filters from one
   definition per resource; role-shaped responses (users `basic` / `contact` / `full`,
   organization `summary` / `full`).
-- **Data model**: 14 business models, four auth tables, three notification platform tables
-  (`Notification`, `PushToken`, `OutboxConsumerCursor`), `IdempotencyRecord`, six migrations,
-  UUIDv7 ids.
+- **Data model**: 14 business models plus the Phase 7 `SmartCapture`, `DailySummary`,
+  `AnomalyFlag`; four auth tables, three notification platform tables (`Notification`,
+  `PushToken`, `OutboxConsumerCursor`), `IdempotencyRecord`, `AiTrace`; seven migrations; UUIDv7
+  ids.
 - **Every write** is one transaction: business row, audit event, outbox event, through
   `ChangeRecorder`. Auth security events and push token changes go to the audit log only;
   notification rows are not audited.
 - **Swagger** at `/docs`, `/docs-json`, `/docs-yaml`, in development only, with a bearer scheme.
-- **Tests**: 527 unit tests in 25 suites; 1,534 integration tests in 21 suites.
+- **Tests**: 706 unit tests in 35 suites; 1,687 integration tests in 27 suites.
 
-Verified in the Phase 6 session (2026-10-28): unit tests re-run by the docs-keeper; integration
-tests, lint, typecheck, and build as reported by the coordinator. **Not applied**: the Phase 5 and
-Phase 6 migrations on the development database, which holds a stray
+Verified in the Phase 7 session (2026-11-02): unit tests re-run by the docs-keeper; integration
+tests (1,681 in 26 suites plus 6 in `storage-minio`), lint, typecheck, format check, and build
+(prompt files present in `dist/operations/ai/prompts/`) as reported by the coordinator. **Not
+applied**: the Phase 5, 6, and 7 migrations on the development database, which holds a stray
 `20261018090000_phase5_offline_sync` from lost work; the owner must run `pnpm db:reset`. Earlier
 (Phase 4): storage against the real MinIO, a live in-app notification, push token removal on
-sign-out. **Not verified**: real Expo push delivery, any provider other than MinIO.
+sign-out. **Not verified**: any real AI provider (Claude's acceptance of `output_config`, the
+refusal fallback beta, OpenAI with the phone's m4a), real Expo push delivery, any storage
+provider other than MinIO.
 
 ## Layout
 
@@ -139,6 +204,9 @@ src/
     outbox/               OutboxService, query, controller (@DevelopmentOnly), outbox-consumer.ts,
                           outbox-consumer-state.ts (pure bookkeeping)
     docs/                 Swagger setup (bearer and cookie schemes)
+    ai/                   Phase 7: provider interfaces, registry, Anthropic and OpenAI adapters,
+                          fakes, AiRunnerService, AiTraceService, AiUsageLimiter, prices, prompt
+                          loader, untrustedDataBlock, AiModule (registered by the host)
   operations/             the Operations domain
     operations.module.ts
     access/               policies.ts (registry), access.service.ts, access-context.ts,
@@ -153,6 +221,8 @@ src/
     exports/              GET /exports/work-logs.csv, /exports/tasks.csv (audited)
     reports/              GET /reports/work-logs
     history/              record histories for GET /work-logs/:id/history, /tasks/:id/history
+    ai/                   Phase 7: OperationsAiModule, GET /ai/usage, capture/, summaries/,
+                          anomalies/, prompts/*.v<N>.md
     organization/ users/ memberships/ sites/ teams/ log-types/ tasks/ work-logs/ attachments/
                           each: *.controller.ts, *.service.ts, *.module.ts
     memberships/admin-guard.ts   last-admin check under an advisory lock
@@ -169,8 +239,11 @@ prisma/
   schema.prisma
   migrations/             20261013112952_init, 20261013150000_attachment_storage_key_per_org,
                           20261014090000_auth, 20261017090000_phase4_mobile,
-                          20261027090000_phase5_offline_sync, 20261028090000_phase6_dashboard
+                          20261027090000_phase5_offline_sync, 20261028090000_phase6_dashboard,
+                          20261030090000_phase7_ai
   seed.ts                 entry point of the seed
+scripts/
+  copy-prompts.mjs        copies the prompt files into the seed build
 test/
   *.int-spec.ts           integration suites
   support/                test-database.ts (safety guard), test-app.ts (harness, sessions, fake
@@ -202,7 +275,7 @@ test/
 | `src/platform/http/api-exception.filter.ts`                | Standard error body; maps Prisma `P2002` to 409, `P2003` to 422, `P2025` to 404; sets `Retry-After`.                                                                                          |
 | `src/platform/audit/audit.service.ts`                      | `record(tx, input)`: one audit row with redacted `before`, `after`, and `changes`.                                                                                                            |
 | `src/operations/access/policies.ts`                        | The policy registry: name, roles, description. `listPolicies()`. The permissions matrix is written from it.                                                                                   |
-| `src/operations/access/access.service.ts`                  | `context()` (per-request cached access context) and `runAsSystem()`.                                                                                                                          |
+| `src/operations/access/access.service.ts`                  | `context()` (per-request cached access context), `runAsSystem()`, and `runAsUser()` (read-only background context, Phase 7).                                                                  |
 | `src/operations/access/visibility.ts`                      | `Visibility` values, `isVisible()`, `visibilityWhere()`.                                                                                                                                      |
 | `src/operations/access/rules/`                             | Pure rules per resource returning a `Decision`; `decision.ts` `enforce()` turns it into 404, 403, or 409.                                                                                     |
 | `src/operations/common/change-recorder.ts`                 | `record(tx, change)`: the audit event and the outbox event of one change (`auditMetadata` for dropped references); `recordAccess`: audit only (exports).                                      |
@@ -216,7 +289,14 @@ test/
 | `test/support/test-app.ts`                                 | The integration harness: `as(userId)`, `loginAs`, `bearer`, `browser()`, `clock`, `notifications`, `rateLimiter`, the fake storage and Expo client.                                           |
 | `prisma.config.ts`                                         | Prisma 7 config. Attaches `DATABASE_URL` only when set.                                                                                                                                       |
 | `eslint.config.mjs`                                        | Base config, decorator parser options, and the rule that forbids `src/platform` importing `src/operations`.                                                                                   |
-| `nest-cli.json`                                            | `deleteOutDir: true`: every `nest build` wipes `dist/`.                                                                                                                                       |
+| `nest-cli.json`                                            | `deleteOutDir: true`: every `nest build` wipes `dist/`. `assets` copies `operations/ai/prompts/*.md` (watched in `dev`).                                                                      |
+| `src/platform/ai/ai-runner.service.ts`                     | The one entry point of AI calls: limits, timeout, one retry on invalid output, validation, traces, failure mapping (`unavailable`, `timeout`, `rejected`, `refused`, `limited`, ...).         |
+| `src/platform/ai/provider-registry.ts`                     | Chooses real, fake, or unavailable per provider kind from `AI_PROVIDER`, the keys, and `NODE_ENV`.                                                                                            |
+| `src/platform/ai/ai-prices.ts`                             | The price table behind cost estimates and the cost limit. A model missing here counts as $0.                                                                                                  |
+| `src/operations/ai/capture/smart-capture.service.ts`       | Smart capture: create, upload URL, process (lease, verify, offer, transcribe, extract, interpret), list, get, discard.                                                                        |
+| `src/operations/ai/capture/capture-confirmation.ts`        | Confirming a capture inside `POST /work-logs`: checks, `confirmed` with `workLogId`, `aiMetadata`, decision on the traces.                                                                    |
+| `src/operations/ai/summaries/summaries.service.ts`         | Recipients, facts under `runAsUser`, narrative or template, one `DailySummary` per recipient and day; `generateNow` for the admin route.                                                      |
+| `src/operations/ai/anomalies/anomaly-rules.ts`             | The four anomaly rules (pure), thresholds from `ANOMALY_THRESHOLDS` in `@ops/shared`.                                                                                                         |
 
 ## Environment variables
 
@@ -250,6 +330,15 @@ Values come from the root `.env`, except `NODE_ENV`, which the scripts set.
 | `EXPO_ACCESS_TOKEN`                                             | Optional; sent to Expo only when set.                                                          |
 | `PUSH_ENABLED`, `OUTBOX_CONSUMER_ENABLED`                       | Optional `true`/`false`, default `true`. The modules treat anything but `true` as off.         |
 | `OUTBOX_POLL_INTERVAL_MS`                                       | Optional, 200 to 60000, default 2000.                                                          |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`                           | Optional secrets; empty means not set. Never logged.                                           |
+| `AI_PROVIDER`                                                   | Optional `auto` (default), `fake` (refused in production), `real` (both keys required).        |
+| `AI_LLM_MODEL`, `AI_STT_MODEL`                                  | Optional, defaults `claude-opus-5-5` and `gpt-4o-transcribe`.                                  |
+| `AI_ANTHROPIC_REFUSAL_FALLBACK`                                 | Optional `true`/`false`, default `false`.                                                      |
+| `AI_REQUEST_TIMEOUT_MS`                                         | Optional, 1000 to 120000, default 30000 (one provider call).                                   |
+| `AI_DAILY_LIMIT_PER_ORG`                                        | Optional, 0 to 1000000, default 500 (calls per organization per UTC day).                      |
+| `AI_DAILY_COST_LIMIT_USD_PER_ORG`                               | Optional decimal, 0 to 100000, default 10.                                                     |
+| `AI_RATE_LIMIT_PER_USER_PER_MINUTE`                             | Optional, 1 to 600, default 6.                                                                 |
+| `AI_SUMMARY_SCHEDULER_ENABLED`, `AI_SUMMARY_POLL_INTERVAL_MS`   | Optional, defaults `true` and 60000 (5000 to 3600000).                                         |
 | `DATABASE_URL_TEST`                                             | Read only by the integration tests. Database name must end in `_test`.                         |
 
 If any is wrong, the process prints one line per variable and exits with code 1, never printing
@@ -261,22 +350,22 @@ Run from the repo root as `pnpm --filter @ops/api <script>`. The root has shortc
 `db:migrate`, `db:seed`, `db:reset`, and `test:integration` that build `@ops/shared` first where
 needed.
 
-| Script             | Command                                                                                                          |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `dev`              | `prisma generate`, then `nest start --watch` with the root `.env` and `NODE_ENV=development`                     |
-| `build`            | `prisma generate`, then `nest build` into `dist/` (deletes `dist/` first)                                        |
-| `start`            | `node dist/main.js` with the root `.env` and `NODE_ENV=production`                                               |
-| `lint`             | `eslint .`                                                                                                       |
-| `typecheck`        | `prisma generate`, then `tsc --noEmit`                                                                           |
-| `test`             | `prisma generate`, then Jest through `node --experimental-vm-modules`                                            |
-| `test:integration` | `prisma generate`, then `node test/run-integration.mjs` with the root `.env`                                     |
-| `db:generate`      | `prisma generate`                                                                                                |
-| `db:migrate`       | `prisma migrate dev` with the root `.env`                                                                        |
-| `db:deploy`        | `prisma migrate deploy` with the root `.env`                                                                     |
-| `db:seed`          | `prisma generate`, compile `src` into `node_modules/.cache/ops-seed`, then `tsx prisma/seed.ts` in `development` |
-| `db:reset`         | `prisma migrate reset --force`, then `db:seed`. **Never executed so far. Owner only, never an agent.**           |
-| `db:studio`        | `prisma studio` with the root `.env`                                                                             |
-| `postinstall`      | `prisma generate`                                                                                                |
+| Script             | Command                                                                                                                                                                    |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dev`              | `prisma generate`, then `nest start --watch` with the root `.env` and `NODE_ENV=development`                                                                               |
+| `build`            | `prisma generate`, then `nest build` into `dist/` (deletes `dist/` first)                                                                                                  |
+| `start`            | `node dist/main.js` with the root `.env` and `NODE_ENV=production`                                                                                                         |
+| `lint`             | `eslint .`                                                                                                                                                                 |
+| `typecheck`        | `prisma generate`, then `tsc --noEmit`                                                                                                                                     |
+| `test`             | `prisma generate`, then Jest through `node --experimental-vm-modules`                                                                                                      |
+| `test:integration` | `prisma generate`, then `node test/run-integration.mjs` with the root `.env`                                                                                               |
+| `db:generate`      | `prisma generate`                                                                                                                                                          |
+| `db:migrate`       | `prisma migrate dev` with the root `.env`                                                                                                                                  |
+| `db:deploy`        | `prisma migrate deploy` with the root `.env`                                                                                                                               |
+| `db:seed`          | `prisma generate`, compile `src` into `node_modules/.cache/ops-seed`, copy the prompt files there (`scripts/copy-prompts.mjs`), then `tsx prisma/seed.ts` in `development` |
+| `db:reset`         | `prisma migrate reset --force`, then `db:seed`. **Owner only, never an agent** (last run by the owner before 2026-10-17).                                                  |
+| `db:studio`        | `prisma studio` with the root `.env`                                                                                                                                       |
+| `postinstall`      | `prisma generate`                                                                                                                                                          |
 
 ## Seed
 
@@ -298,14 +387,19 @@ needed.
 - The seed compiles the API with `tsc` into `node_modules/.cache/ops-seed` (decorator metadata;
   `dist/` belongs to a running dev server).
 - The development database holds the Phase 3 seed with the Phase 4 migration applied, plus a
-  stray Phase 5 migration from lost work, and lacks the Phase 5 and Phase 6 migrations; it needs
-  the owner's `pnpm db:reset` (2026-10-28). The organization's settings get `timeZone`
-  `Europe/Istanbul` (and a free `locale: 'en'` key); users keep the default `locale` `en`.
+  stray Phase 5 migration from lost work, and lacks the Phase 5, 6, and 7 migrations; it needs
+  the owner's `pnpm db:reset` (2026-11-02). The organization's settings get `timeZone`
+  `Europe/Istanbul` (and a free `locale: 'en'` key); users keep the default `locale` `en`. The
+  seed writes no `settings.ai`, so every AI feature starts off, and creates no captures,
+  summaries, flags, or traces.
 
 ## Tests
 
-- **Unit** (`pnpm --filter @ops/api test`): `src/**/*.spec.ts`, 25 suites, 527 tests (2026-10-28;
-  Phase 6 added `operations/dashboard/phase6.spec.ts`).
+- **Unit** (`pnpm --filter @ops/api test`): `src/**/*.spec.ts`, 35 suites, 706 tests (2026-11-02;
+  Phase 6 added `operations/dashboard/phase6.spec.ts`; Phase 7 added `platform/ai/ai-runner`,
+  `providers`, `prompt-loader`, `operations/ai/capture/capture`, `anomalies/anomaly-rules`,
+  `summaries/summary-facts`, `summary-schedule`, `summary-scheduler`,
+  `access/rules/anomaly.rules`, and `prisma-enums` specs).
   No database, no `.env`. Covers the environment schema, health, `ZodPipe`, the platform modules,
   auth (tokens, cookies, CSRF, codes, policy, identifiers, rate limiter), `AuthAdminService`, scope
   resolution, the access rules (including `attachment.rules.spec.ts` and the Phase 5
@@ -313,8 +407,12 @@ needed.
   (`storage.spec.ts`), notifications and Expo push, the outbox consumer, the notification rules,
   and `route-policies.spec.ts`. Running it at the same time as other packages' test runners once
   failed four suites to load on 2026-10-17; a rerun alone passed.
-- **Integration** (`pnpm test:integration`): `test/*.int-spec.ts`, 21 suites, 1,534 tests (as
-  reported 2026-10-28), a few minutes. Suites: `harness`, `auth-and-errors`, `auth-login`,
+- **Integration** (`pnpm test:integration`): `test/*.int-spec.ts`, 27 suites, 1,687 tests (as
+  reported 2026-11-02: 1,681 in 26 suites plus 6 in `storage-minio`), a few minutes. Phase 7
+  suites: `ai-platform` (traces, limits, decisions), `smart-capture`, `smart-capture-safety`
+  (another worker's capture, prompt injection, hostile model output), `ai-summaries`,
+  `ai-summaries-scope` (two supervisors, scope changes, flags), `ai-off` (core with AI off). The
+  harness's fake configuration holds no AI key, so the AI runs on the fakes. Suites: `harness`, `auth-and-errors`, `auth-login`,
   `auth-sessions`, `secrets`, `org-structure`, `log-types`, `tasks`, `work-logs`,
   `audit-outbox-transaction`, `audit-outbox-read`, `tenant-isolation`, `permissions-matrix` (every
   cell, fixture in `support/matrix-world.ts`), `permissions-cases`, and from Phase 4 `uploads`,
@@ -370,12 +468,22 @@ needed.
   for rows loaded through `attachmentVisibilityWhere`. A storage failure becomes 503.
 - Outbox handlers are registered from Operations modules, are idempotent (`sourceEventId`), and
   re-check current state. Push text stays generic.
+- AI calls go only through `AI_RUNNER`; prompts are versioned files (never edit a used one, add
+  `v<N+1>`); untrusted text only inside `untrustedDataBlock`; summary numbers come from code;
+  capture and summary audit payloads carry ids and counts only. A new model needs a price row.
 
 ## Known issues
 
-- **Rate limits are in memory per process** (sign-in and upload steps), and so is the decode
-  limit; a restart clears them, several instances count separately. Bind a shared store under
-  `RATE_LIMITER` before scaling out.
+- **Rate limits are in memory per process** (sign-in, upload steps, and the per-user AI limit),
+  and so are the decode limit and the summary scheduler's back-off; a restart clears them,
+  several instances count separately. Bind a shared store under `RATE_LIMITER` before scaling out.
+- **AI (Phase 7)**: never called a real provider. AI daily limits count per UTC day, not the
+  organization's day. A model missing from the price table counts $0 against the cost limit.
+  Anomaly parameters are counted over the organization's data, so a reader may see a count that
+  includes records outside their scope (accepted, ADR-0011). Summary and notification texts and
+  the prompts exist in English only (Turkish and Arabic fall back per key). Flags are computed
+  once a day at summary time. The scheduler, the capture retention job, and the trace purge run
+  in every API process (each claims its rows; the unique keys decide).
 - **Lockout can be used to keep a known account locked** (accepted, ADR-0004).
 - **Orphan upload bytes** after a PUT to a still-valid upload URL of a completed attachment; never
   served, never removed (ADR-0006). The purge covers attachments archived while pending, for

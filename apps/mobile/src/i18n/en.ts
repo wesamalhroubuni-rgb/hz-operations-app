@@ -248,6 +248,76 @@ export const en = {
     pickerEmpty: 'Nothing to choose from.',
   },
 
+  // Smart capture (Phase 7, ADR-0010). AI text (transcripts, proposals) is shown as plain text.
+  capture: {
+    speak: 'Speak',
+    speakHint: 'Record a voice note; a log is proposed for you to check',
+    snap: 'Snap',
+    snapHint: 'Take a photo; a log is proposed for you to check',
+    type: 'Type a note',
+    typeHint: 'Type a few words; a log is proposed for you to check',
+    or: 'Or fill in the form yourself below.',
+    titles: {
+      voice: 'Speak',
+      photo: 'Snap',
+      text: 'Type a note',
+    },
+    intro:
+      'Say, show or type what you did. A log is proposed for you to check and change. Nothing is saved until you save the log.',
+    record: 'Start recording',
+    stopRecording: 'Stop',
+    recordAgain: 'Record again',
+    recording: 'Recording {{elapsed}} s. It stops by itself after {{max}} s.',
+    recorded: 'Voice note recorded ({{seconds}} s).',
+    microphoneDenied:
+      'The app may not use the microphone. Allow it in the phone settings, or fill in the form by hand.',
+    recordFailed: 'The recording did not work. Try again, or fill in the form by hand.',
+    takePhoto: 'Take the photo',
+    retakePhoto: 'Take another photo',
+    cameraDenied:
+      'The app may not use the camera. Allow it in the phone settings, or fill in the form by hand.',
+    photoFailed: 'The photo could not be prepared. Try again.',
+    note: 'Note (optional)',
+    notePlaceholder: 'Anything the photo does not show',
+    text: 'What did you do?',
+    textPlaceholder: 'For example: replaced the valve at the north pump, took 2 hours',
+    send: 'Get a proposal',
+    sending: 'Saving…',
+    fillByHand: 'Fill in by hand',
+    done: 'Done',
+    review: 'Review the proposal',
+    status: {
+      waiting: 'Waiting to be processed. It is sent when you have signal.',
+      retrying: 'Not processed yet. It is tried again automatically.',
+      ready: 'A log was proposed. Review it, change what is wrong, and save.',
+      notUnderstood: "Couldn't understand, please fill in manually.",
+      notProcessed: 'This could not be processed: {{reason}}',
+      notProcessedNoReason: 'This could not be processed. Fill in the log by hand.',
+    },
+    listTitle: 'Smart captures',
+    kinds: {
+      voice: 'Voice note',
+      photo: 'Photo',
+      text: 'Typed note',
+    },
+    aiSuggested: 'AI-suggested',
+    aiSuggestedHint:
+      'These fields were proposed from your input. Check each one; the log is saved only when you save it.',
+    transcriptTitle: 'What you said',
+    noteTitle: 'Your note',
+    textTitle: 'What you typed',
+    noTranscript: 'Nothing was heard.',
+    confidence: {
+      high: 'AI-suggested, high confidence',
+      medium: 'AI-suggested, medium confidence: check it',
+      low: 'AI-suggested, low confidence: check it',
+    },
+    discard: 'Discard this capture',
+    discardTitle: 'Discard this capture?',
+    discardMessage: 'The proposal and your recording are deleted. Nothing is saved as a log.',
+    busy: 'It is being sent right now. Try again in a moment.',
+  },
+
   notifications: {
     title: 'Notifications',
     markAllRead: 'Mark all as read',
@@ -303,9 +373,9 @@ export const en = {
     offlineStart:
       'You opened the app without a connection to the server. Showing what is saved on this phone; your changes are sent when the connection is back.',
     needsSignInLogin: {
-      one: '1 change waits on this phone for {{name}}. Sign in again as {{name}} to send it.',
+      one: '1 item waits on this phone for {{name}} (a change to send or a capture to review). Sign in again as {{name}} to finish it.',
       other:
-        '{{count}} changes wait on this phone for {{name}}. Sign in again as {{name}} to send them.',
+        '{{count}} items wait on this phone for {{name}} (changes to send or captures to review). Sign in again as {{name}} to finish them.',
     },
     needsSignInLoginEmpty: 'The session of {{name}} has ended. Sign in again.',
     notDownloaded:
@@ -330,6 +400,8 @@ export const en = {
       changeWorkLogStatus: 'Log sent for review',
       changeTaskStatus: 'Task status: {{status}}',
       uploadAttachment: 'Photo',
+      smartCapture: 'Smart capture',
+      discardSmartCapture: 'Discarded smart capture',
     },
     savedAt: 'Made {{time}}',
     attempts: { one: 'Tried {{count}} time', other: 'Tried {{count}} times' },
@@ -366,10 +438,14 @@ export const en = {
       megabytes: '{{value}} MB',
     },
     signOut: {
-      title: 'Changes not sent yet',
+      title: 'Not finished on this phone',
       message: {
         one: '1 change on this phone has not been sent yet.',
         other: '{{count}} changes on this phone have not been sent yet.',
+      },
+      captures: {
+        one: '1 smart capture is waiting for your review.',
+        other: '{{count}} smart captures are waiting for your review.',
       },
       syncFirst: 'Sync first',
       keepForLater: 'Keep them and sign out',
@@ -378,7 +454,7 @@ export const en = {
       discard: 'Discard and sign out',
       discardConfirmTitle: 'Discard the changes?',
       discardConfirmMessage:
-        'Changes that were not sent are deleted from this phone and never reach your supervisor. This cannot be undone.',
+        'Changes that were not sent and captures not reviewed are deleted from this phone and never reach your supervisor. This cannot be undone.',
       stillPending: {
         one: '1 change could not be sent yet. Try again when you have signal, or choose another option.',
         other:
@@ -411,11 +487,16 @@ export const en = {
         'The server is still working on this. It is checked again automatically.',
       // A dashboard export code (Phase 6); the phone never exports, but the list is typed.
       export_too_large: 'There is too much data for one export.',
+      // Phase 7 (ADR-0010): smart capture.
+      ai_disabled: 'Smart capture is switched off for your organization. Fill in the log by hand.',
+      ai_limit_reached: 'Smart capture has reached its limit for today. Fill in the log by hand.',
+      ai_unavailable: 'Smart capture is not available right now. It is tried again automatically.',
       network: 'No connection. It is sent when you have signal.',
       timeout: 'The server took too long to answer. It is tried again automatically.',
       invalid_response:
         'The answer from the server could not be read. It is tried again automatically.',
       photo_missing: 'The photo file is no longer on this phone, so it cannot be sent.',
+      audio_missing: 'The voice note is no longer on this phone, so it cannot be sent.',
       taskNoLongerAssigned: 'This task is no longer assigned to you.',
     },
   },

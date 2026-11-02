@@ -9,6 +9,7 @@ import type {
   ApiErrorCode,
   ApiFailure,
   ApiResult,
+  SmartCapture,
   SyncPullResponse,
   Task,
   UploadPut,
@@ -30,6 +31,7 @@ import type {
   QueueItemError,
   QueueItemState,
   RetryPolicy,
+  SmartCaptureCheckpoint,
   SyncMeta,
   WriteQueue,
 } from './types';
@@ -40,6 +42,9 @@ export function recordKeyOf(mutation: QueuedMutation): string {
       return `workLog:${mutation.body.clientId}`;
     case 'changeTaskStatus':
       return `task:${mutation.taskId}`;
+    case 'smartCapture':
+    case 'discardSmartCapture':
+      return `smartCapture:${mutation.captureClientId}`;
     default:
       return `workLog:${mutation.workLogClientId}`;
   }
@@ -190,6 +195,13 @@ export class FakeQueue implements WriteQueue {
   ): Promise<void> {
     const item = this.items.find((candidate) => candidate.id === id);
     if (item?.mutation.kind === 'uploadAttachment') {
+      item.mutation = { ...item.mutation, checkpoint };
+    }
+  }
+
+  async saveCaptureCheckpoint(id: string, checkpoint: SmartCaptureCheckpoint): Promise<void> {
+    const item = this.items.find((candidate) => candidate.id === id);
+    if (item?.mutation.kind === 'smartCapture') {
       item.mutation = { ...item.mutation, checkpoint };
     }
   }
@@ -471,6 +483,8 @@ export class FakeApi {
   logsById = new Map<string, WorkLog>();
   tasks = new Map<string, Task>();
   attachmentsByClientId = new Map<string, { id: string; status: 'pending' | 'ready' }>();
+  /** Smart captures by clientId, like the server keeps them (Phase 7). */
+  capturesByClientId = new Map<string, SmartCapture>();
   pullResponses: (SyncPullResponse | ApiFailure)[] = [];
   interceptor: Interceptor | null = null;
   /** In-flight calls now, and the most seen at once (concurrency checks). */
@@ -588,6 +602,59 @@ export class FakeApi {
           data: { id, status: 'ready' } as never,
         })),
     },
+    smartCapture: {
+      create: (
+        body: { clientId: string; kind: string } & Record<string, unknown>,
+        options?: ApiCallOptions,
+      ) =>
+        this.handle('smartCapture.create', null, body, options, () => {
+          const existing = this.capturesByClientId.get(body.clientId);
+          const capture =
+            existing ??
+            captureFixture({
+              clientId: body.clientId,
+              inputKind: body.kind as SmartCapture['inputKind'],
+              status: body.kind === 'text' ? 'proposed' : 'awaiting_upload',
+            });
+          this.capturesByClientId.set(body.clientId, capture);
+          return {
+            ok: true,
+            status: existing ? 200 : 201,
+            data: {
+              capture,
+              upload: capture.status === 'awaiting_upload' ? UPLOAD_TARGET : null,
+            },
+          } as never;
+        }),
+      renewUpload: (id: string) =>
+        this.handle('smartCapture.renewUpload', id, null, undefined, () => {
+          const capture = this.captureById(id);
+          if (!capture) return { ok: false, failure: httpFailure('not_found') };
+          if (capture.status !== 'awaiting_upload') {
+            return { ok: false, failure: httpFailure('conflict') };
+          }
+          return { ok: true, status: 200, data: { capture, upload: UPLOAD_TARGET } } as never;
+        }),
+      process: (id: string, options?: ApiCallOptions) =>
+        this.handle('smartCapture.process', id, null, options, (): ApiResult<SmartCapture> => {
+          const capture = this.captureById(id);
+          if (!capture) return { ok: false, failure: httpFailure('not_found') };
+          const next: SmartCapture =
+            capture.status === 'awaiting_upload' || capture.status === 'pending'
+              ? { ...capture, status: 'proposed', transcript: 'Heard on the fake server' }
+              : capture;
+          this.capturesByClientId.set(next.clientId, next);
+          return { ok: true, status: 200, data: next };
+        }),
+      discard: (id: string, options?: ApiCallOptions) =>
+        this.handle('smartCapture.discard', id, null, options, (): ApiResult<SmartCapture> => {
+          const capture = this.captureById(id);
+          if (!capture) return { ok: false, failure: httpFailure('not_found') };
+          const next: SmartCapture = { ...capture, status: 'discarded' };
+          this.capturesByClientId.set(next.clientId, next);
+          return { ok: true, status: 200, data: next };
+        }),
+    },
     sync: {
       pull: (query: { cursor?: string } = {}) =>
         this.handle('sync.pull', null, query, undefined, (): ApiResult<SyncPullResponse> => {
@@ -597,6 +664,11 @@ export class FakeApi {
         }),
     },
   };
+
+  private captureById(id: string): SmartCapture | null {
+    for (const capture of this.capturesByClientId.values()) if (capture.id === id) return capture;
+    return null;
+  }
 
   private changeLog(id: string, body: Record<string, unknown>): ApiResult<WorkLog> {
     const log = this.logsById.get(id);
@@ -614,6 +686,43 @@ export class FakeApi {
   asClient(): ApiClient {
     return this.client as unknown as ApiClient;
   }
+}
+
+const UPLOAD_TARGET = {
+  url: 'https://storage.invalid/capture',
+  method: 'PUT',
+  headers: { 'Content-Type': 'audio/mp4' },
+  expiresAt: '2099-01-01T00:00:00.000Z',
+} as const;
+
+export function captureFixture(overrides: Partial<SmartCapture> = {}): SmartCapture {
+  return {
+    id: testUuid(),
+    organizationId: 'org-1',
+    clientId: testUuid(),
+    workerId: 'user-1',
+    inputKind: 'text',
+    status: 'proposed',
+    failureReason: null,
+    context: {
+      taskId: null,
+      siteId: null,
+      logTypeId: null,
+      capturedAt: '2026-10-27T09:00:00.000Z',
+      languageHint: 'en',
+    },
+    transcript: null,
+    detectedLanguage: null,
+    proposal: null,
+    confidence: null,
+    workLogId: null,
+    inputPurged: false,
+    processedAt: null,
+    decidedAt: null,
+    createdAt: '2026-10-27T09:00:00.000Z',
+    updatedAt: '2026-10-27T09:00:00.000Z',
+    ...overrides,
+  };
 }
 
 export function pullFixture(overrides: Partial<SyncPullResponse> = {}): SyncPullResponse {

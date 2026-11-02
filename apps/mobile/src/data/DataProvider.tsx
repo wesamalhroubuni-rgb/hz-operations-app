@@ -91,10 +91,12 @@ function invalidateOnChange(session: AppOfflineSession, queryClient: QueryClient
   };
   const unsubscribeStore = session.store.subscribe(schedule);
   const unsubscribeQueue = session.queue.subscribe(schedule);
+  const unsubscribeCaptures = session.captures.subscribe(schedule);
   return () => {
     if (timer !== null) clearTimeout(timer);
     unsubscribeStore();
     unsubscribeQueue();
+    unsubscribeCaptures();
   };
 }
 
@@ -150,6 +152,8 @@ export function DataProvider({
       store: session.store,
       queue: session.queue,
       photos: session.photos,
+      audio: session.audio,
+      captures: session.captures,
       client,
       newId: newOfflineId,
     });

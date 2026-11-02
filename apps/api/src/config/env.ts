@@ -46,6 +46,45 @@ export function weakSecretReason(secret: string): string | null {
   return null;
 }
 
+/** An optional decimal number with a default and bounds. An empty value counts as not set. */
+function decimalSetting(defaultValue: number, min: number, max: number) {
+  return z
+    .preprocess(
+      (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+      z.coerce
+        .number<unknown>({ error: 'must be a number' })
+        .min(min, `must be at least ${min}`)
+        .max(max, `must be at most ${max}`)
+        .optional(),
+    )
+    .transform((value) => value ?? defaultValue);
+}
+
+/** An optional secret (an API key). Empty means not set. Never trimmed into a log or message. */
+function optionalSecret() {
+  return z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value ? value : undefined));
+}
+
+/**
+ * How the AI providers are chosen (ADR-0010):
+ * - `auto` (default): a provider whose key is set is real; one without a key is the
+ *   deterministic fake in development and test, and "unavailable" in production (the AI features
+ *   then degrade: captures answer 503 `ai_unavailable`, summaries use the template).
+ * - `fake`: both fakes, no network call. Refused in production.
+ * - `real`: both real; boot fails unless ANTHROPIC_API_KEY and OPENAI_API_KEY are set.
+ */
+export const AI_PROVIDER_MODES = ['auto', 'fake', 'real'] as const;
+export type AiProviderMode = (typeof AI_PROVIDER_MODES)[number];
+
+/** Default LLM: the current Claude Opus model (ADR-0010 records the choice). */
+export const DEFAULT_AI_LLM_MODEL = 'claude-opus-5-5';
+/** Default speech-to-text model (OpenAI). */
+export const DEFAULT_AI_STT_MODEL = 'gpt-4o-transcribe';
+
 /** A required http(s) URL, without a trailing slash. */
 function httpUrlSetting() {
   return requiredString
@@ -193,6 +232,48 @@ export const envSchema = z
     /** Runs the outbox consumer that turns domain events into notifications. */
     OUTBOX_CONSUMER_ENABLED: booleanSetting(true),
     OUTBOX_POLL_INTERVAL_MS: integerSetting(2000, 200, 60_000),
+
+    // --- Intelligent layer (Phase 7, ADR-0010, ADR-0011). Keys are optional: without them the
+    // fakes run (development, test) and the app works fully. Never logged. ---
+    /** Anthropic API key for the LLM (Claude). */
+    ANTHROPIC_API_KEY: optionalSecret(),
+    /** OpenAI API key for speech-to-text. */
+    OPENAI_API_KEY: optionalSecret(),
+    AI_PROVIDER: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => (value ? value : 'auto'))
+      .pipe(
+        z.enum(AI_PROVIDER_MODES, { error: `must be one of: ${AI_PROVIDER_MODES.join(', ')}` }),
+      ),
+    AI_LLM_MODEL: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => (value ? value : DEFAULT_AI_LLM_MODEL)),
+    AI_STT_MODEL: z
+      .string()
+      .trim()
+      .optional()
+      .transform((value) => (value ? value : DEFAULT_AI_STT_MODEL)),
+    /** Timeout of ONE provider call (a capture makes up to three: transcription, extraction, retry). */
+    AI_REQUEST_TIMEOUT_MS: integerSetting(30_000, 1000, 120_000),
+    /** Hard ceiling of AI provider calls per organization per UTC day (organizations may set less). */
+    AI_DAILY_LIMIT_PER_ORG: integerSetting(500, 0, 1_000_000),
+    /** Hard ceiling of estimated AI cost per organization per UTC day, US dollars. */
+    AI_DAILY_COST_LIMIT_USD_PER_ORG: decimalSetting(10, 0, 100_000),
+    /** Smart-capture calls one user may start per minute (in memory per process). */
+    AI_RATE_LIMIT_PER_USER_PER_MINUTE: integerSetting(6, 1, 600),
+    /** Runs the daily-summary scheduler. The integration tests leave it off and drive it. */
+    AI_SUMMARY_SCHEDULER_ENABLED: booleanSetting(true),
+    /** How often the scheduler looks for organizations whose summary time has come. */
+    AI_SUMMARY_POLL_INTERVAL_MS: integerSetting(60_000, 5_000, 3_600_000),
+    /**
+     * Sends Anthropic's server-side refusal fallback (`fallbacks: 'default'` with its beta).
+     * Off by default: switch it on only after checking it with a real key (ADR-0010).
+     */
+    AI_ANTHROPIC_REFUSAL_FALLBACK: booleanSetting(false),
   })
   .superRefine((env, ctx) => {
     if (env.AUTH_SESSION_ABSOLUTE_TTL_DAYS < env.AUTH_REFRESH_TOKEN_TTL_DAYS) {
@@ -202,8 +283,26 @@ export const envSchema = z
         message: 'must not be shorter than AUTH_REFRESH_TOKEN_TTL_DAYS',
       });
     }
+    if (env.AI_PROVIDER === 'real') {
+      for (const key of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'] as const) {
+        if (!env[key]) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [key],
+            message: 'is required when AI_PROVIDER=real',
+          });
+        }
+      }
+    }
     if (env.NODE_ENV !== 'production') {
       return;
+    }
+    if (env.AI_PROVIDER === 'fake') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['AI_PROVIDER'],
+        message: 'must not be fake in production (use auto or real)',
+      });
     }
     // Production refuses to boot with the placeholder from .env.example or an obviously weak
     // secret, and with links that would send a one-time code over plain HTTP.

@@ -15,6 +15,11 @@ export interface AccessContext {
    * code that runs without a request). Never true for an HTTP request.
    */
   system: boolean;
+  /**
+   * True for a context made by `AccessService.runAsUser` (a background job reading as a user,
+   * Phase 7). Such a context may read but never author: `authorOf` refuses it.
+   */
+  readOnly?: boolean;
   /** Every role held through an active membership, highest first. */
   roles: readonly Role[];
   /** The highest of `roles`, or null for a user with no active membership. */
@@ -75,7 +80,7 @@ export function systemAccessContext(organizationId: string): AccessContext {
  * foreign key.
  */
 export function authorOf(context: AccessContext): string {
-  if (context.system) {
+  if (context.system || context.readOnly) {
     throw new Error('A record with an author cannot be created without a signed-in user');
   }
   return context.userId;

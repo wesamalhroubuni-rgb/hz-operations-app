@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  aiSettingsOf,
   offlineMaxBackdateDaysOf,
   timeZoneOf,
   workLogEditWindowHoursOf,
@@ -25,7 +26,17 @@ export function toOrganizationSummary(row: OrganizationRow): OrganizationSummary
     workLogEditWindowHours: workLogEditWindowHoursOf(row.settings),
     offlineMaxBackdateDays: offlineMaxBackdateDaysOf(row.settings),
     timeZone: timeZoneOf(row.settings),
+    aiFeatures: aiFeaturesFromSettings(row.settings),
   };
+}
+
+/** Which AI features are switched on (Phase 7): the phone shows Speak and Snap only then. */
+function aiFeaturesFromSettings(settings: unknown): {
+  smartCapture: boolean;
+  dailySummary: boolean;
+} {
+  const ai = aiSettingsOf(settings);
+  return { smartCapture: ai.smartCaptureEnabled, dailySummary: ai.dailySummaryEnabled };
 }
 
 /** Everything, for admins; also the shape recorded in the audit log and the outbox. */

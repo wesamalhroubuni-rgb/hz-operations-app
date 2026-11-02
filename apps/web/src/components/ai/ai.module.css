@@ -1,0 +1,151 @@
+/* Daily summaries, unusual items, AI usage (Phase 7). Tokens and logical properties only. */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  min-inline-size: 0;
+}
+
+.panelHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.panelTitle {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+.meta {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* AI text is shown as plain text: line breaks kept, nothing interpreted. */
+.narrative {
+  margin: 0;
+  padding-block: var(--space-sm);
+  padding-inline: var(--space-md);
+  border-inline-start: 4px solid var(--color-border);
+  color: var(--color-text-primary);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.narrativeAi {
+  border-inline-start-color: var(--color-primary);
+}
+
+.numbers {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-sm);
+  margin: 0;
+}
+
+.number {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.numberAttention {
+  border-inline-start: 4px solid var(--color-warning);
+}
+
+.numberValue {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  font-variant-numeric: tabular-nums;
+}
+
+.numberLabel {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.table th,
+.table td {
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-sm);
+  border-block-end: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  text-align: start;
+  vertical-align: top;
+}
+
+.table thead th {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.end {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.table .end {
+  text-align: end;
+}
+
+.link {
+  color: var(--color-primary);
+  font-weight: var(--font-weight-semibold);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scroll {
+  overflow-x: auto;
+}
+
+.visuallyHidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

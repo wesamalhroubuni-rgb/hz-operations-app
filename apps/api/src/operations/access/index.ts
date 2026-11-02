@@ -5,6 +5,7 @@ export * from './clock';
 export * from './decision';
 export * from './policies';
 export * from './visibility';
+export * from './rules/anomaly.rules';
 export * from './rules/attachment.rules';
 export * from './rules/membership.rules';
 export * from './rules/organization.rules';

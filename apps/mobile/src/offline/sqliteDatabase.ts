@@ -29,8 +29,24 @@ const keyValueTable = (name: OfflineTable) =>
  * a step that has shipped.
  */
 export const MIGRATIONS: readonly string[] = [
-  // 1: Phase 5 (ADR-0008): read cache per resource, meta, write queue.
-  OFFLINE_TABLES.map(keyValueTable).join('\n'),
+  // 1: Phase 5 (ADR-0008): read cache per resource, meta, write queue. (The list is spelled out
+  // so the step never changes when a table is added to OFFLINE_TABLES.)
+  (
+    [
+      'cache_tasks',
+      'cache_log_types',
+      'cache_sites',
+      'cache_teams',
+      'cache_work_logs',
+      'cache_notifications',
+      'meta',
+      'queue',
+    ] as const
+  )
+    .map(keyValueTable)
+    .join('\n'),
+  // 2: Phase 7 (ADR-0010): smart captures waiting for review.
+  keyValueTable('smart_captures'),
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {

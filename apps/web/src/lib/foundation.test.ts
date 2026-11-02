@@ -79,16 +79,18 @@ describe('capabilities (UX mirror of the policy registry)', () => {
 describe('navigation', () => {
   it('shows the entries of the role', () => {
     const keys = (roles: string[]) => visibleNavItems(capabilitiesFor(roles)).map((i) => i.key);
-    expect(keys(['supervisor'])).toEqual(['overview', 'workLogs', 'tasks', 'map']);
+    expect(keys(['supervisor'])).toEqual(['overview', 'workLogs', 'tasks', 'map', 'summaries']);
     expect(keys(['manager'])).toEqual([
       'overview',
       'workLogs',
       'tasks',
       'map',
+      'summaries',
       'people',
       'structure',
     ]);
-    expect(keys(['admin'])).toHaveLength(8);
+    expect(keys(['admin'])).toHaveLength(10);
+    expect(keys(['admin']).at(-1)).toBe('aiUsage');
     expect(keys(['worker'])).toEqual([]);
   });
 

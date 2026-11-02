@@ -627,6 +627,8 @@ describe('createApiClient', () => {
   it('exposes one endpoint group per resource', () => {
     const client = createApiClient({ baseUrl: BASE_URL, fetch: fetchReturning({}) });
     expect(Object.keys(client).sort()).toEqual([
+      'aiSummaries',
+      'aiUsage',
       'attachments',
       'auditEvents',
       'auth',
@@ -642,6 +644,7 @@ describe('createApiClient', () => {
       'reports',
       'scope',
       'sites',
+      'smartCapture',
       'sync',
       'tasks',
       'teams',

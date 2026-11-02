@@ -13,6 +13,7 @@ import { SyncIndicator } from '../components/SyncIndicator';
 import { SyncProvider } from '../components/SyncProvider';
 import { useNotifications } from '../data/queries';
 import { t } from '../i18n';
+import { CaptureScreen } from '../screens/CaptureScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { LogDetailScreen } from '../screens/LogDetailScreen';
 import { LogFormScreen } from '../screens/LogFormScreen';
@@ -152,6 +153,11 @@ export function SignedInNavigator() {
           options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade' }}
         />
         <Stack.Screen name="Sync" component={SyncScreen} options={{ title: t('sync.title') }} />
+        <Stack.Screen
+          name="Capture"
+          component={CaptureScreen}
+          options={{ title: t('capture.titles.voice') }}
+        />
       </Stack.Navigator>
     </SyncProvider>
   );

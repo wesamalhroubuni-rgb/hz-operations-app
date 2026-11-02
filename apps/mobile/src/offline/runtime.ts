@@ -4,7 +4,7 @@ import * as SecureStore from 'expo-secure-store';
 
 import { deviceStore } from '../storage/deviceStore';
 import { createUserSyncEngine } from './engineApp';
-import { expoPhotoFiles } from './expoPhotoFiles';
+import { expoAudioFiles, expoPhotoFiles } from './expoPhotoFiles';
 import { createKeptUsersRegister, createOfflineIdentityStore } from './identity';
 import {
   createInertSyncEngine,
@@ -59,6 +59,7 @@ export const offlineSessions = createOfflineSessionFactory({
   openDatabase: openUserDatabase,
   deleteDatabase: deleteUserDatabase,
   photoFiles: expoPhotoFiles,
+  audioFiles: expoAudioFiles,
   kept: keptUsers,
   legacy: deviceStore,
   newId: randomUUID,

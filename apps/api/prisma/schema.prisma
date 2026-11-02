@@ -48,12 +48,15 @@ enum WorkLogStatus {
   rejected
 }
 
-/// How a work log was captured. Everything is `manual` until the AI phases.
+/// How a work log was captured: `manual`, or `ai_assisted` when the worker confirmed an AI
+/// proposal (Phase 7, ADR-0010; `aiMetadata` then says from which capture). `voice` and `photo`
+/// were reserved in Phase 2 and are not written by Phase 7 (the input kind of an AI-assisted log
+/// is `aiMetadata.inputKind`). `ai_assisted` was named `ai` before Phase 7.
 enum WorkLogSource {
   manual
   voice
   photo
-  ai
+  ai_assisted
 }
 
 enum AttachmentStatus {
@@ -64,6 +67,63 @@ enum AttachmentStatus {
 enum PushPlatform {
   ios
   android
+}
+
+/// What a smart capture started from (Phase 7, ADR-0010).
+enum SmartCaptureInputKind {
+  voice
+  photo
+  text
+}
+
+/// Lifecycle of a smart capture (ADR-0010): `awaiting_upload` (voice or photo bytes not yet
+/// verified) -> `pending` (input present, not processed) -> `processing` (leased by one call)
+/// -> `proposed`, or `failed` (unusable input or model output after one retry; transcript kept)
+/// -> `confirmed` (a work log was created from it) or `discarded` (by the worker).
+enum SmartCaptureStatus {
+  awaiting_upload
+  pending
+  processing
+  proposed
+  failed
+  confirmed
+  discarded
+}
+
+/// Rule-based anomaly kinds v1 (ADR-0011).
+enum AnomalyKind {
+  no_activity_site
+  slow_task
+  repeated_rejections
+  far_location
+}
+
+enum AnomalySeverity {
+  low
+  medium
+  high
+}
+
+/// Where a daily summary's narrative came from: the model, or the code template used when AI is
+/// off, over its limit, failing, or its numbers did not match the facts.
+enum SummaryNarrativeSource {
+  ai
+  template
+}
+
+/// Outcome of one AI provider call (platform, ADR-0010).
+enum AiTraceStatus {
+  ok
+  invalid_output
+  failed
+  timeout
+  limited
+}
+
+/// A human's decision on what an AI call proposed, copied onto its traces.
+enum AiDecision {
+  confirmed
+  discarded
 }
 
 enum AuditActorType {
@@ -96,6 +156,10 @@ model Organization {
   tasks       Task[]
   workLogs    WorkLog[]
   attachments Attachment[]
+
+  smartCaptures  SmartCapture[]
+  dailySummaries DailySummary[]
+  anomalyFlags   AnomalyFlag[]
 }
 
 model User {
@@ -121,6 +185,8 @@ model User {
   taskAssignments TaskAssignee[]
   workLogs        WorkLog[]
   attachments     Attachment[]
+  smartCaptures   SmartCapture[]
+  dailySummaries  DailySummary[]
 
   @@unique([organizationId, email])
   @@unique([organizationId, phone])
@@ -304,55 +370,57 @@ model TaskAssignee {
 /// stored it (they differ once offline sync exists). `clientId` is generated on the device so a
 /// retried upload is idempotent.
 model WorkLog {
-  id               String        @id @default(uuid(7)) @db.Uuid
-  organizationId   String        @db.Uuid
-  clientId         String        @db.Uuid
-  authorId         String        @db.Uuid
-  occurredAt       DateTime      @db.Timestamptz(3)
-  taskId           String?       @db.Uuid
-  siteId           String?       @db.Uuid
-  teamId           String?       @db.Uuid
-  logTypeId        String?       @db.Uuid
+  id                          String        @id @default(uuid(7)) @db.Uuid
+  organizationId              String        @db.Uuid
+  clientId                    String        @db.Uuid
+  authorId                    String        @db.Uuid
+  occurredAt                  DateTime      @db.Timestamptz(3)
+  taskId                      String?       @db.Uuid
+  siteId                      String?       @db.Uuid
+  teamId                      String?       @db.Uuid
+  logTypeId                   String?       @db.Uuid
   /// LogType.version the custom fields were validated against.
-  logTypeVersion   Int?
-  text             String?
+  logTypeVersion              Int?
+  text                        String?
   /// Custom field values keyed by field key, validated against the log type's definition.
-  customFields     Json          @default("{}")
-  latitude         Float?
-  longitude        Float?
+  customFields                Json          @default("{}")
+  latitude                    Float?
+  longitude                   Float?
   /// GPS accuracy radius in metres.
-  locationAccuracy Float?
-  status           WorkLogStatus @default(submitted)
+  locationAccuracy            Float?
+  status                      WorkLogStatus @default(submitted)
   /// Who approved or rejected the log last, when, and the note they gave (the rejection reason).
   /// Cleared when the log goes back to submitted.
-  reviewedById     String?       @db.Uuid
-  reviewedAt       DateTime?     @db.Timestamptz(3)
-  reviewNote       String?
-  source           WorkLogSource @default(manual)
-  /// Reserved for AI-derived data (Phase 7). Always null today.
-  aiMetadata       Json?
+  reviewedById                String?       @db.Uuid
+  reviewedAt                  DateTime?     @db.Timestamptz(3)
+  reviewNote                  String?
+  source                      WorkLogSource @default(manual)
+  /// AI facts of an `ai_assisted` log (Phase 7, ADR-0010), written by the API only
+  /// (`aiWorkLogMetadataSchema` in @ops/shared): capture id, trace ids, input kind, model, prompt
+  /// version, and which proposed fields the worker kept or changed. Null for manual logs.
+  aiMetadata                  Json?
   /// Optimistic-concurrency counter (ADR-0008): 1 on create, +1 on every change (content,
   /// status, review, archive). Clients send it back as `expectedVersion`.
-  version          Int           @default(1)
+  version                     Int           @default(1)
   /// The create request carried `X-Client-Sync: offline`: the log was written on the phone
   /// without a connection and sent later by the sync queue (ADR-0008).
-  submittedOffline Boolean       @default(false)
+  submittedOffline            Boolean       @default(false)
   /// The phone's clock when the worker saved the log (body field `deviceCreatedAt`).
   /// Informative only: never used by a rule.
-  deviceCreatedAt  DateTime?     @db.Timestamptz(3)
+  deviceCreatedAt             DateTime?     @db.Timestamptz(3)
   /// Phone clock minus server clock, in whole seconds, measured from the `X-Device-Time`
   /// header of the create request. Null when the header was absent. A magnitude above
   /// CLOCK_SKEW_FLAG_SECONDS (@ops/shared) is flagged to reviewers.
-  clockSkewSeconds Int?
+  clockSkewSeconds            Int?
   /// The attachment clientIds declared in the create request (`attachmentClientIds`): the
   /// photos that are "part of the original submission" and may still be uploaded by the author
   /// after the edit window (ADR-0008). Never changed after create.
-  declaredAttachmentClientIds String[] @default([]) @db.Uuid
+  declaredAttachmentClientIds String[]      @default([]) @db.Uuid
   /// The server receive time. For a log created offline it is when the sync reached the
   /// server; the edit window counts from it.
-  createdAt        DateTime      @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime      @updatedAt @db.Timestamptz(3)
-  archivedAt       DateTime?     @db.Timestamptz(3)
+  createdAt                   DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt                   DateTime      @updatedAt @db.Timestamptz(3)
+  archivedAt                  DateTime?     @db.Timestamptz(3)
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   author       User         @relation(fields: [authorId], references: [id], onDelete: Restrict)
@@ -361,6 +429,8 @@ model WorkLog {
   team         Team?        @relation(fields: [teamId], references: [id], onDelete: Restrict)
   logType      LogType?     @relation(fields: [logTypeId], references: [id], onDelete: Restrict)
   attachments  Attachment[]
+  /// The smart capture this log was confirmed from (Phase 7), if any.
+  smartCapture SmartCapture?
 
   @@unique([organizationId, clientId])
   @@index([organizationId, occurredAt])
@@ -410,8 +480,175 @@ model Attachment {
 }
 
 // ---------------------------------------------------------------------------
+// Intelligent layer v1 (Phase 7, ADR-0010 and ADR-0011). Operations tables: written only through
+// the domain services and ChangeRecorder, never by the AI platform layer.
+// ---------------------------------------------------------------------------
+
+/// A worker's voice note, photo or text that the AI layer turns into a proposed work log. Nothing
+/// becomes a work log until the worker confirms it through `POST /work-logs` with
+/// `source: ai_assisted` and `aiProposalId` (= this id).
+model SmartCapture {
+  id               String                @id @default(uuid(7)) @db.Uuid
+  organizationId   String                @db.Uuid
+  /// Generated on the phone; a repeated create with the same clientId returns this row.
+  clientId         String                @db.Uuid
+  /// The worker who captured it (the caller; never from a body). Only they can read it.
+  workerId         String                @db.Uuid
+  inputKind        SmartCaptureInputKind
+  status           SmartCaptureStatus
+  /// Why a `failed` capture failed (`SMART_CAPTURE_FAILURE_REASONS` in @ops/shared).
+  failureReason    String?
+  /// What the worker had open when capturing (`smartCaptureContextSchema`): taskId, siteId,
+  /// logTypeId, capturedAt, languageHint. Hints only: every id is re-checked against the
+  /// worker's visibility when processing and again when the log is created.
+  context          Json                  @default("{}")
+  /// Voice or photo: the API-chosen storage key of the uploaded input (never sent to a client,
+  /// never in audit or outbox payloads). Null for text.
+  inputStorageKey  String?
+  inputMimeType    String?
+  inputSizeBytes   Int?
+  /// Declared length of a voice note, in milliseconds.
+  inputDurationMs  Int?
+  /// When the retention job deleted the input bytes; the transcript and proposal stay.
+  inputPurgedAt    DateTime?             @db.Timestamptz(3)
+  /// Voice: the speech-to-text result. Text: the worker's own text. Photo: null.
+  transcript       String?
+  /// Language reported by the speech-to-text provider (e.g. `tr`), when known.
+  detectedLanguage String?
+  /// The proposed log (`smartCaptureProposalSchema`): ids resolved and re-checked.
+  proposal         Json?
+  /// Confidence per proposed field (`smartCaptureConfidenceSchema`).
+  confidence       Json?
+  /// Every AiTrace of this capture (transcription, extraction, retry), oldest first.
+  traceIds         String[]              @default([]) @db.Uuid
+  /// Lease of the call processing it; another call may take over after this instant.
+  processingUntil  DateTime?             @db.Timestamptz(3)
+  processedAt      DateTime?             @db.Timestamptz(3)
+  /// The work log created from it (status `confirmed`).
+  workLogId        String?               @db.Uuid
+  /// When the worker confirmed or discarded it.
+  decidedAt        DateTime?             @db.Timestamptz(3)
+  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime              @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  worker       User         @relation(fields: [workerId], references: [id], onDelete: Restrict)
+  workLog      WorkLog?     @relation(fields: [workLogId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, clientId])
+  @@unique([organizationId, inputStorageKey])
+  @@unique([workLogId])
+  @@index([organizationId, workerId, createdAt])
+  @@index([status, createdAt])
+}
+
+/// One recipient's summary of one org-local day of their scope. Stats and anomalies are computed
+/// in code for exactly the recipient's visibility; the model only writes `narrative`.
+model DailySummary {
+  id              String                 @id @default(uuid(7)) @db.Uuid
+  organizationId  String                 @db.Uuid
+  recipientId     String                 @db.Uuid
+  /// The calendar day in `timeZone` (org-local).
+  day             DateTime               @db.Date
+  timeZone        String
+  /// The recipient's scope when it was generated (`dailySummaryScopeSchema`).
+  scope           Json
+  /// Deterministic numbers (`dailySummaryStatsSchema`). The narrative may only use these.
+  stats           Json
+  /// The anomaly flags visible to the recipient, as shown (`anomalyFlagSchema[]`).
+  anomalies       Json                   @default("[]")
+  narrative       String
+  narrativeSource SummaryNarrativeSource
+  /// Locale the narrative is written in (the recipient's `User.locale` when generated).
+  locale          String                 @default("en")
+  /// The AiTrace rows of the narrative call(s); empty for a template narrative without a call.
+  traceIds        String[]               @default([]) @db.Uuid
+  createdAt       DateTime               @default(now()) @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  recipient    User         @relation(fields: [recipientId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, recipientId, day])
+  @@index([organizationId, day])
+}
+
+/// A rule-based, explainable flag (ADR-0011): a suggestion for a human, never an action. Computed
+/// once per organization and day; a reader sees only flags whose subjects they may all see.
+model AnomalyFlag {
+  id             String          @id @default(uuid(7)) @db.Uuid
+  organizationId String          @db.Uuid
+  /// The org-local day it was raised for.
+  day            DateTime        @db.Date
+  kind           AnomalyKind
+  severity       AnomalySeverity
+  /// Subjects. Visibility: the reader must be able to see every subject that is set.
+  siteId         String?         @db.Uuid
+  teamId         String?         @db.Uuid
+  userId         String?         @db.Uuid
+  taskId         String?         @db.Uuid
+  workLogId      String?         @db.Uuid
+  logTypeId      String?         @db.Uuid
+  /// The numbers behind the reason (`anomalyParamsSchema` of the kind); clients render the
+  /// reason text in the reader's language.
+  params         Json            @default("{}")
+  /// kind + subjects + day: makes the daily computation idempotent.
+  fingerprint    String
+  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, fingerprint])
+  @@index([organizationId, day])
+  @@index([organizationId, kind, day])
+}
+
+// ---------------------------------------------------------------------------
 // Platform tables (reusable across Kaneri products; no foreign keys to business tables)
 // ---------------------------------------------------------------------------
+
+/// One AI provider call (platform, ADR-0010): which provider, model and prompt version, references
+/// to the input (ids, never raw personal data), the output, latency, tokens and cost, and the
+/// human decision on the proposal it produced. Usage limits are counted from these rows. Written
+/// by `AiTraceService` only; not audited (it is itself the AI audit record).
+model AiTrace {
+  id              String        @id @default(uuid(7)) @db.Uuid
+  organizationId  String        @db.Uuid
+  /// Host-defined feature name (`AI_FEATURES` in @ops/shared).
+  feature         String
+  /// `anthropic`, `openai`, `fake`.
+  provider        String
+  model           String
+  promptId        String?
+  promptVersion   Int?
+  /// 1 for the first call, 2 for the one retry after invalid output.
+  attempt         Int           @default(1)
+  /// What the call was about, as references: { subjectType, subjectId, counts, mimeType }.
+  /// Never transcripts, names, e-mail addresses, phone numbers or storage keys.
+  inputRefs       Json          @default("{}")
+  /// The parsed model output (the transcript for speech-to-text). Null on failure.
+  output          Json?
+  status          AiTraceStatus
+  /// Short machine-readable reason when not ok (`timeout`, `http_429`, `schema_mismatch`, ...).
+  errorCode       String?
+  latencyMs       Int?
+  inputTokens     Int?
+  outputTokens    Int?
+  /// Seconds of audio sent (speech-to-text).
+  audioSeconds    Float?
+  /// Estimated from the price table in the code, in US dollars.
+  costEstimateUsd Decimal?      @db.Decimal(12, 6)
+  /// The user whose action caused the call; null for scheduled work (summaries).
+  requestedById   String?       @db.Uuid
+  decision        AiDecision?
+  decidedById     String?       @db.Uuid
+  decidedAt       DateTime?     @db.Timestamptz(3)
+  correlationId   String?
+  createdAt       DateTime      @default(now()) @db.Timestamptz(3)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, feature, createdAt])
+  @@index([requestedById, createdAt])
+}
 
 /// Append-only record of who did what. Rows are never updated or deleted (database trigger).
 model AuditEvent {

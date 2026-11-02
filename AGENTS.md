@@ -32,14 +32,16 @@ Naming: never hard-code a client name. The name shown in the apps comes from
 `NEXT_PUBLIC_BRAND_NAME` / `EXPO_PUBLIC_BRAND_NAME` through each app's brand module. "Operations"
 stays as the technical name (folder, `@ops/*`, `src/operations`, database `operations_app`).
 
-State on 2026-10-28: Phases 1 to 5 are committed (Phase 5 offline mode: `2cf5a01`). Phase 6 (web
-manager dashboard, ADR-0009) is done in code, tested, and reviewed, and is being committed: the
-API has 68 paths (overview, directory, map, histories, bulk review, audited CSV exports, report,
-session administration, organization time zone, per-user `locale` for notifications); the web app
-is the full dashboard. **Nothing has run on a phone or in the emulator, and the dashboard has not
-been used in a browser with data**; the owner's `pnpm db:reset` (the development database holds
-a stray migration and lacks the Phase 5 and 6 ones) and the browser test are open. Phase 7
-(Intelligent layer v1) is next. See [MEMORY.md](MEMORY.md).
+State on 2026-11-02: Phases 1 to 6 are committed (Phase 6 web dashboard: `713f592`). Phase 7
+(Intelligent layer v1, ADR-0010 and ADR-0011) is done in code, tested with the fake AI providers,
+and reviewed, and is being committed: smart capture (Speak, Snap, Type a note on the phone, a
+proposed log the worker confirms), daily summaries with rule-based anomaly flags, AI traces,
+limits, and admin switches (all AI off by default); the API has 78 paths. **No real AI provider
+has been called (no keys yet), nothing has run on a phone or in the emulator, and the dashboard
+has not been used in a browser with data**; the owner's `pnpm db:reset` (the development database
+holds a stray migration and lacks the Phase 5, 6, and 7 ones) and the combined manual test of
+Phases 4 to 7 (`docs/reports/phase-7.md`) are open. Phase 8 (Hardening & release) is next. See
+[MEMORY.md](MEMORY.md).
 
 ## Engineering principles
 
@@ -147,10 +149,16 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   (`production`), `TRUST_PROXY_HOPS` (0), the `AUTH_*` durations and limits,
   `STORAGE_FORCE_PATH_STYLE` (true), `UPLOAD_MAX_BYTES` (10 MiB, at most 25 MiB),
   `UPLOAD_URL_TTL_SECONDS` and `DOWNLOAD_URL_TTL_SECONDS` (300), `EXPO_ACCESS_TOKEN` (none),
-  `PUSH_ENABLED` and `OUTBOX_CONSUMER_ENABLED` (true), `OUTBOX_POLL_INTERVAL_MS` (2000).
-  **Production refuses** a placeholder-looking or repetitive auth secret or storage secret key and
-  a non-https `WEB_APP_URL` or `STORAGE_PUBLIC_ENDPOINT`, so `pnpm --filter @ops/api start` fails
-  with the `.env.example` values.
+  `PUSH_ENABLED` and `OUTBOX_CONSUMER_ENABLED` (true), `OUTBOX_POLL_INTERVAL_MS` (2000), and the
+  Phase 7 AI variables: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (none), `AI_PROVIDER` (`auto`),
+  `AI_LLM_MODEL` (`claude-opus-5-5`), `AI_STT_MODEL` (`gpt-4o-transcribe`),
+  `AI_ANTHROPIC_REFUSAL_FALLBACK` (false), `AI_REQUEST_TIMEOUT_MS` (30000),
+  `AI_DAILY_LIMIT_PER_ORG` (500), `AI_DAILY_COST_LIMIT_USD_PER_ORG` (10),
+  `AI_RATE_LIMIT_PER_USER_PER_MINUTE` (6), `AI_SUMMARY_SCHEDULER_ENABLED` (true),
+  `AI_SUMMARY_POLL_INTERVAL_MS` (60000). **Production refuses** a placeholder-looking or
+  repetitive auth secret or storage secret key, a non-https `WEB_APP_URL` or
+  `STORAGE_PUBLIC_ENDPOINT`, and `AI_PROVIDER=fake`, so `pnpm --filter @ops/api start` fails
+  with the `.env.example` values. `AI_PROVIDER=real` without both keys fails everywhere.
 - `STORAGE_ENDPOINT` is where the API reaches the storage; `STORAGE_PUBLIC_ENDPOINT` is the host
   written into signed URLs and must be reachable by the phone or browser. A running API keeps
   signing with the value it started with: restart it after changing it.
@@ -216,8 +224,8 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
 - Audit and outbox redact by key name at any depth (`password`, `secret`, `token`, `hash` suffix,
   ...). A field or custom-field key that matches is stored as `"[redacted]"` in both.
 - The enum arrays in `packages/shared/src/domain/enums.ts`, `ATTACHMENT_STATUSES`
-  (`domain/attachments.ts`), and `PUSH_PLATFORMS` (`platform/notifications.ts`) must match the
-  Prisma enums, in order.
+  (`domain/attachments.ts`), `PUSH_PLATFORMS` (`platform/notifications.ts`), and the Phase 7 AI
+  arrays must match the Prisma enums, in order (`src/prisma-enums.spec.ts` checks them).
 
 **Uploads and storage** (ADR-0006)
 
@@ -247,6 +255,29 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
 - The consumer runs when `OUTBOX_CONSUMER_ENABLED=true` (every `OUTBOX_POLL_INTERVAL_MS`). Tests
   run with it and `PUSH_ENABLED` off (the test configuration omits them) and call
   `processPending()`; an agent-started API with the root `.env` has both on.
+
+**AI layer** (ADR-0010, ADR-0011)
+
+- `src/platform/ai/` must not import `src/operations/**` (ESLint). Features live in
+  `src/operations/ai/` and call providers only through `AI_RUNNER` (limits, timeout, the one
+  retry, validation, tracing); never call a provider or the Anthropic SDK directly.
+- Prompts are versioned files `src/operations/ai/prompts/<id>.v<N>.md`. **Never edit a prompt
+  that has been used**: write `v<N+1>` and switch the code to it. The nest build and
+  `scripts/copy-prompts.mjs` (seed build) copy them next to the compiled code.
+- User text, transcripts, notes, task titles, and site names reach a model only inside
+  `untrustedDataBlock(...)`. Never send names, e-mail addresses, phone numbers, ids, storage keys,
+  or URLs; people in a summary are `P1`... references the code resolves.
+- **Numbers come from code**: summary statistics are computed in code; the narrative may only
+  repeat numbers from the facts (`checkNarrative`), else the template is used.
+- The AI never writes a business record on its own: a log exists only through `POST /work-logs`
+  with `aiProposalId`. Audit and outbox payloads of captures and summaries carry ids and counts,
+  never the transcript, proposal, or narrative. Every AI feature is off until an admin turns it on
+  (`settings.ai`); the core must keep working with it off or failing.
+- Tests use the deterministic fakes (no key in the test configuration); steer them with the
+  `FAKE-STT:` and `FAKE-LLM-*` markers (`fake-llm-provider.ts`). Never call a real provider from
+  a test. Fakes are refused in production.
+- A new model needs a row in `src/platform/ai/ai-prices.ts`, or the cost limit counts it as $0.
+- Never log or echo an API key; logs of AI calls carry ids, feature, status, and codes only.
 
 **Database safety**
 
@@ -306,6 +337,8 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
 | Mobile: React Navigation 7, TanStack Query 5, AsyncStorage, datetimepicker, `@expo/vector-icons`, `zod` at exact versions | Versions Expo SDK 57 accepts (`expo install`); `zod` equal to the one `@ops/shared` uses.         |
 | `sharp` `^0.35.5` (API)                                                                                                   | Prebuilt native binary, no install script, so no `allowBuilds` entry. Check that on any bump.     |
 | `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` `^3.1152.0`                                                         | Keep both on the same version.                                                                    |
+| `@anthropic-ai/sdk` exactly `1.3.0` (API)                                                                                 | The adapter relies on its `output_config` and beta request shapes; re-check both on any bump.     |
+| `expo-audio` `~57.0.5` (mobile)                                                                                           | Expo SDK 57 package for voice notes; moves with the SDK like every `expo-*`.                      |
 | MinIO image `alpine/minio:RELEASE.2025-10-15T17-29-55Z@sha256:...`                                                        | Community build (official images are no longer published), pinned by digest. Development only.    |
 
 **Per app**
@@ -356,6 +389,10 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   needs the development build (`expo-dev-client`, `eas.json`, `dev:client`) and
   `EXPO_PUBLIC_EAS_PROJECT_ID`; the background sync task also needs the development build. To
   test offline without a phone, use the emulator `hz_pixel` with `adb reverse` (README section 6).
+  Smart capture (Phase 7) goes through the same queue (kinds `smartCapture`,
+  `discardSmartCapture`); voice notes live in `offline-audio/<userId>/`, processed captures in the
+  user's `smart_captures` table; captures waiting for review count as unfinished work at
+  sign-out. SQLite migrations in `sqliteDatabase.ts` are append-only.
   Bundle identifiers come from `EXPO_IOS_BUNDLE_IDENTIFIER` /
   `EXPO_ANDROID_PACKAGE`. `eas-build-post-install` builds `@ops/shared` on EAS.
 

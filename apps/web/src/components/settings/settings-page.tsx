@@ -12,6 +12,7 @@ import { FormAlert, Notice } from '@/components/manage/parts';
 import { Button } from '@/components/ui/button';
 import { FormField, Input, Select } from '@/components/ui/form-field';
 import { ApiStatus } from '@/components/api-status';
+import { AiSettingsSection } from '@/components/settings/ai-settings-section';
 import { PageHeader } from '@/components/ui/layout';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 import { useOrganization } from '@/hooks/use-organization';
@@ -29,7 +30,10 @@ import {
 
 import styles from '../manage/manage.module.css';
 
-/** `/settings` (admins): name, time zone, edit window, offline backdating limit. */
+/**
+ * `/settings` (admins): name, time zone, edit window, offline backdating limit, and (Phase 7) the
+ * AI features in their own form.
+ */
 export function SettingsPage() {
   const organization = useOrganization();
   if (organization.isLoading) return <LoadingState />;
@@ -188,6 +192,7 @@ function SettingsForm({ organization }: Readonly<{ organization: OrganizationFul
           </Button>
         </div>
       </form>
+      <AiSettingsSection organization={organization} />
       <ApiStatus />
     </>
   );

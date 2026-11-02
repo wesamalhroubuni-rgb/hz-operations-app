@@ -32,8 +32,8 @@ const PATH_METADATA = 'path';
 const METHOD_METADATA = 'method';
 
 /**
- * Policies in the registry that no route uses, on purpose. Empty: every policy governs at
- * least one route. Add a name here only with a reason next to it.
+ * Policies in the registry that no route uses, on purpose. Add a name here only with a reason
+ * next to it.
  */
 const INTENTIONALLY_UNUSED_POLICIES: readonly string[] = [];
 

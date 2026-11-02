@@ -28,16 +28,20 @@ interface CachedContext {
 @Injectable()
 export class AccessService {
   private readonly cache = new WeakMap<RequestContextStore, CachedContext>();
-  private readonly systemContext = new AsyncLocalStorage<AccessContext>();
+  /** The context of `runAsSystem` / `runAsUser` (code without a signed-in request). */
+  private readonly backgroundContext = new AsyncLocalStorage<AccessContext>();
 
   constructor(private readonly scope: ScopeService) {}
 
   /** The access context of the current request. Throws 401 when nobody is signed in. */
   async context(): Promise<AccessContext> {
-    const system = this.systemContext.getStore();
+    const background = this.backgroundContext.getStore();
     const store = RequestContext.current();
-    if (system && !store) {
-      return system;
+    // A background context applies outside a request, and inside a context without an acting
+    // user (an outbox handler runs in one, for its correlation id). Never inside a signed-in
+    // request: there the caller's own context always wins.
+    if (background && !store?.actor) {
+      return background;
     }
     const actor = requireActor();
     if (!store) {
@@ -69,10 +73,34 @@ export class AccessService {
    * inside a request context it throws, and `context()` ignores it there.
    */
   runAsSystem<Result>(organizationId: string, work: () => Promise<Result>): Promise<Result> {
-    if (RequestContext.current()) {
+    if (RequestContext.actor()) {
       throw new Error('AccessService.runAsSystem cannot be called inside a request');
     }
-    return this.systemContext.run(systemAccessContext(organizationId), work);
+    return this.backgroundContext.run(systemAccessContext(organizationId), work);
+  }
+
+  /**
+   * Runs `work` with exactly what one user may SEE, without a request (Phase 7, ADR-0011): the
+   * daily-summary job computes a recipient's summary through the same services and visibility
+   * filters as the dashboard, under the recipient's real scope (resolved now, fail closed).
+   * Read-only: the context is marked `readOnly`, so `authorOf` refuses it and nothing can be
+   * written as that user; the job writes its own rows under `runAsSystem`. Like `runAsSystem`,
+   * it throws inside a signed-in request. An archived user or one without an active membership
+   * is refused (401), so a summary is never computed for someone who lost access.
+   */
+  async runAsUser<Result>(
+    organizationId: string,
+    userId: string,
+    work: () => Promise<Result>,
+  ): Promise<Result> {
+    if (RequestContext.actor()) {
+      throw new Error('AccessService.runAsUser cannot be called inside a request');
+    }
+    const context: AccessContext = {
+      ...(await this.resolve(organizationId, userId)),
+      readOnly: true,
+    };
+    return this.backgroundContext.run(context, work);
   }
 
   private async resolve(organizationId: string, userId: string): Promise<AccessContext> {

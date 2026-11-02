@@ -75,7 +75,8 @@ const config: ExpoConfig = {
     // permission text is not added.
     ['expo-secure-store', { faceIDPermission: false, configureAndroidBackup: true }],
     // Permission texts shown by iOS. Only what the app uses: camera and photos for work log
-    // photos, location while the app is open. No background location, no microphone.
+    // photos, location while the app is open, the microphone for voice notes (smart capture,
+    // Phase 7, through expo-audio below). No background location, no background recording.
     [
       'expo-image-picker',
       {
@@ -103,6 +104,18 @@ const config: ExpoConfig = {
     // best-effort background sync. Foreground sync never depends on the background task.
     'expo-sqlite',
     'expo-background-task',
+    // Phase 7 (ADR-0010): "Speak" records a voice note while the app is open (Android
+    // RECORD_AUDIO, iOS microphone text); nothing records in the background.
+    [
+      'expo-audio',
+      {
+        microphonePermission:
+          'Voice notes you record are turned into a proposed work log that you review.',
+        recordAudioAndroid: true,
+        enableBackgroundRecording: false,
+        enableBackgroundPlayback: false,
+      },
+    ],
   ],
 };
 

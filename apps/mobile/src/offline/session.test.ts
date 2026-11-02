@@ -8,9 +8,10 @@ import { createKeptUsersRegister, createOfflineIdentityStore, KEPT_QUEUES_KEY } 
 import { uploadQueueKey } from './legacyUploads';
 import { deriveSessionView, previousUserToKeep, signOutWithChoice } from './lifecycle';
 import { createMemoryPhotoFiles } from './photoStore';
+import { captureFixture } from './engineTestKit';
 import { createInertSyncEngine, createOfflineSessionFactory } from './session';
 import { at, idSequence, photo, pull, T0, task, USER_A, USER_B, workLog } from './storeTestKit';
-import { KEPT_QUEUE_MAX_DAYS } from './types';
+import { KEPT_QUEUE_MAX_DAYS, type LocalSmartCapture } from './types';
 
 jest.mock('expo-secure-store', () => ({ WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'this-device-only' }));
 
@@ -46,6 +47,7 @@ function phone(now: () => Date = () => T0) {
       databases.delete(userId);
     },
     photoFiles: files,
+    audioFiles: createMemoryPhotoFiles(),
     kept,
     legacy: kv,
     newId: idSequence(),
@@ -149,6 +151,60 @@ describe('offline session factory', () => {
     expect([...device.files.files.keys()]).toEqual([
       `file:///documents/offline-photos/${USER_A}/legacy.jpg`,
     ]);
+  });
+});
+
+/** A smart capture kept on the phone; `status` null = still waiting for the server. */
+function localCapture(
+  captureClientId: string,
+  status: 'proposed' | 'failed' | null,
+): LocalSmartCapture {
+  return {
+    captureClientId,
+    input: { kind: 'text', text: 'Roof done' },
+    context: {
+      taskId: null,
+      siteId: null,
+      logTypeId: null,
+      capturedAt: '2026-10-27T09:00:00.000Z',
+      languageHint: 'en',
+    },
+    capture: status === null ? null : captureFixture({ clientId: captureClientId, status }),
+    createdAt: '2026-10-27T09:00:00.000Z',
+  };
+}
+
+describe('smart captures waiting for review at sign-out (Phase 7)', () => {
+  it('count as not finished: the sign-in notice and the sign-out question see them', async () => {
+    const device = phone();
+    const session = await device.factory.open(USER_A);
+    await session.captures.put(localCapture('cap-proposed', 'proposed'));
+    await session.captures.put(localCapture('cap-failed', 'failed'));
+    // Waiting for the server: its queued write is what counts, not the row.
+    await session.captures.put(localCapture('cap-waiting', null));
+    expect(await session.captures.unreviewedCount()).toBe(2);
+    expect(await device.factory.pendingCountFor(USER_A)).toBe(2);
+    await session.close();
+    expect(await device.factory.pendingCountFor(USER_A)).toBe(2);
+  });
+
+  it('keep for later keeps them for the next sign-in; discard deletes them', async () => {
+    const device = phone();
+    const session = await device.factory.open(USER_A);
+    await session.captures.put(localCapture('cap-proposed', 'proposed'));
+    await session.close();
+
+    await device.factory.signOutCleanup(USER_A, 'keepForLater');
+    expect(device.deleted).toEqual([]);
+    expect(Object.keys(await device.kept.all())).toEqual([USER_A]);
+    const back = await device.factory.open(USER_A);
+    expect((await back.captures.list()).map((capture) => capture.captureClientId)).toEqual([
+      'cap-proposed',
+    ]);
+    await back.close();
+
+    await device.factory.signOutCleanup(USER_A, 'discard');
+    expect(device.deleted).toEqual([USER_A]);
   });
 });
 
@@ -306,7 +362,7 @@ describe('session view (offline start, sign in again)', () => {
 });
 
 describe('sign-out with queued writes', () => {
-  function setup(pending: number, afterSync = pending) {
+  function setup(pending: number, afterSync = pending, unreviewedCaptures = 0) {
     const secure = new Map<string, string>([['ops.auth.offlineIdentity', JSON.stringify(userA)]]);
     const identity = createOfflineIdentityStore({
       getItemAsync: async (key) => secure.get(key) ?? null,
@@ -331,6 +387,7 @@ describe('sign-out with queued writes', () => {
           done: 0,
         }),
       },
+      captures: { unreviewedCount: async () => unreviewedCaptures },
       engine: {
         syncNow: async () => {
           calls.push('sync');
@@ -372,6 +429,7 @@ describe('sign-out with queued writes', () => {
       reason: 'needsChoice',
       pending: 2,
       failed: 0,
+      captures: 0,
     });
     expect(calls).toEqual([]);
     expect(secure.size).toBe(1);
@@ -389,6 +447,30 @@ describe('sign-out with queued writes', () => {
     const done = setup(2, 0);
     expect(await signOutWithChoice(done.deps, 'syncFirst')).toEqual({ ok: true });
     expect(done.calls).toEqual(['sync', 'endSession', `cleanup:${USER_A}:discard`]);
+  });
+
+  it('captures waiting for review need a choice too; syncing does not finish them', async () => {
+    const asked = setup(0, 0, 1);
+    expect(await signOutWithChoice(asked.deps, null)).toEqual({
+      ok: false,
+      reason: 'needsChoice',
+      pending: 1,
+      failed: 0,
+      captures: 1,
+    });
+    expect(asked.calls).toEqual([]);
+
+    const synced = setup(1, 0, 1);
+    expect(await signOutWithChoice(synced.deps, 'syncFirst')).toMatchObject({
+      ok: false,
+      reason: 'notEmpty',
+      pending: 1,
+      captures: 1,
+    });
+
+    const keep = setup(0, 0, 1);
+    expect(await signOutWithChoice(keep.deps, 'keepForLater')).toEqual({ ok: true });
+    expect(keep.calls).toEqual(['endSession', `cleanup:${USER_A}:keepForLater`]);
   });
 
   it('keep for later and discard pass the choice to the cleanup', async () => {

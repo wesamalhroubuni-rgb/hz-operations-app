@@ -10,6 +10,7 @@ import {
   useMyTasks,
   useRecentLogTypeUse,
   useSites,
+  useSmartCapture,
   useTask,
   useTeams,
   useWorkLog,
@@ -31,6 +32,7 @@ import {
   type LogFormErrors,
   type LogFormValues,
 } from '../logic/logForm';
+import { confidenceHints, formValuesFromCapture } from '../logic/smartCapture';
 import { defaultPlacement, orderLogTypesByUse } from '../logic/workLogs';
 import { isDraftWorthKeeping } from '../storage/draftStore';
 import type { LocalPhoto } from '../storage/localPhoto';
@@ -47,6 +49,8 @@ export type SaveOutcome =
   | { kind: 'invalid' }
   | { kind: 'failed' };
 
+export type DiscardOutcome = { kind: 'discarded' } | { kind: 'busy' } | { kind: 'failed' };
+
 /**
  * The state and actions of the work log form, new and edit. Everything the worker types stays in
  * memory until the log is saved; for a new log it is also kept as a draft on the phone, restored
@@ -58,6 +62,9 @@ export function useLogForm(params: LogFormParams) {
   const editLogId = params.mode === 'edit' ? params.logId : null;
   const isNew = params.mode === 'new';
   const prefillTaskId = params.mode === 'new' ? (params.taskId ?? null) : null;
+  // Phase 7: the form reviews a smart capture (no draft: the capture itself is kept).
+  const captureClientId = params.mode === 'new' ? (params.captureClientId ?? null) : null;
+  const capture = useSmartCapture(captureClientId ?? undefined);
 
   const logTypes = useLogTypes();
   const recentLogs = useRecentLogTypeUse();
@@ -88,6 +95,8 @@ export function useLogForm(params: LogFormParams) {
   const [placementTouched, setPlacementTouched] = useState(false);
   // Once the log is saved, the draft must not be written again by a late debounce.
   const saved = useRef(false);
+  /** The form as the capture's proposal filled it (for the confidence hints). */
+  const [proposed, setProposed] = useState<LogFormValues | null>(null);
 
   const orderedTypes = useMemo(
     () => orderLogTypesByUse(logTypes.data ?? [], recentLogs.data ?? []),
@@ -112,9 +121,35 @@ export function useLogForm(params: LogFormParams) {
     });
   }, []);
 
+  // Reviewing a capture: fill the form from it once it and the log types have loaded.
+  if (isNew && captureClientId && !ready && capture.data !== undefined && logTypes.isSuccess) {
+    const view = capture.data;
+    if (view) {
+      const proposal = view.local.capture?.proposal ?? null;
+      const type = proposal?.logTypeId ? (logTypeById.get(proposal.logTypeId) ?? null) : null;
+      const filled = formValuesFromCapture(
+        view.local,
+        type,
+        newLogFormValues(randomUUID(), { taskId: prefillTaskId }),
+      );
+      setValues(filled);
+      setProposed(filled);
+      const input = view.local.input;
+      if (input.kind === 'photo' && localFileExists(input.photo.uri)) setPhotos([input.photo]);
+      setPlacementSettled(true);
+    }
+    setReady(true);
+  }
+  useEffect(() => {
+    if (!captureClientId || !ready || location !== null) return;
+    // As for a new log: the location is taken once the form is filled (outside the render).
+    const timer = setTimeout(startLocation, 0);
+    return () => clearTimeout(timer);
+  }, [captureClientId, location, ready, startLocation]);
+
   // New log: restore the draft if there is one, then capture the location if it has none.
   useEffect(() => {
-    if (!isNew || ready) return;
+    if (!isNew || ready || captureClientId) return;
     let cancelled = false;
     void drafts.load(user.id).then((draft) => {
       if (cancelled) return;
@@ -134,7 +169,7 @@ export function useLogForm(params: LogFormParams) {
     return () => {
       cancelled = true;
     };
-  }, [drafts, isNew, ready, startLocation, user.id]);
+  }, [captureClientId, drafts, isNew, ready, startLocation, user.id]);
 
   // Editing: fill the form once the log and the log types have loaded (state adjusted while
   // rendering, the React way to derive state from newly arrived data).
@@ -221,7 +256,7 @@ export function useLogForm(params: LogFormParams) {
 
   // The draft: written shortly after every change, removed when the form is empty again.
   useEffect(() => {
-    if (!isNew || !ready || saving || saved.current) return;
+    if (!isNew || !ready || saving || saved.current || captureClientId) return;
     const timer = setTimeout(() => {
       if (
         isDraftWorthKeeping(values, photos, {
@@ -236,7 +271,7 @@ export function useLogForm(params: LogFormParams) {
       }
     }, DRAFT_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [drafts, isNew, photos, prefillTaskId, ready, saving, user.id, values]);
+  }, [captureClientId, drafts, isNew, photos, prefillTaskId, ready, saving, user.id, values]);
 
   const clearErrorsFor = useCallback((change: Partial<LogFormErrors>) => {
     setErrors((current) => ({ ...current, ...change }));
@@ -343,13 +378,19 @@ export function useLogForm(params: LogFormParams) {
     [existingPhotoCount, photoBusy, photoSlots, photos.length],
   );
 
-  const removePhoto = useCallback((localId: string) => {
-    setPhotos((current) => {
-      const photo = current.find((candidate) => candidate.localId === localId);
-      if (photo) void deleteLocalFile(photo.uri);
-      return current.filter((candidate) => candidate.localId !== localId);
-    });
-  }, []);
+  const capturePhotoId =
+    capture.data?.local.input.kind === 'photo' ? capture.data.local.input.photo.localId : null;
+  const removePhoto = useCallback(
+    (localId: string) => {
+      setPhotos((current) => {
+        const photo = current.find((candidate) => candidate.localId === localId);
+        // The Snap photo belongs to the capture until it is confirmed or discarded.
+        if (photo && photo.localId !== capturePhotoId) void deleteLocalFile(photo.uri);
+        return current.filter((candidate) => candidate.localId !== localId);
+      });
+    },
+    [capturePhotoId],
+  );
 
   /** Throws the unsaved new log away (after the screen asked) and starts a fresh one. */
   const startOver = useCallback(async () => {
@@ -382,8 +423,11 @@ export function useLogForm(params: LogFormParams) {
       }
       setErrors(emptyLogFormErrors());
       setSaving(true);
-      // The log and its photos go into the queue together (the photos are declared in it).
-      const result = await repositories.workLogs.create(built.body, photos);
+      // The log and its photos go into the queue together (the photos are declared in it). A
+      // reviewed capture is confirmed by this log (`ai_assisted` with the capture's id).
+      const result = captureClientId
+        ? await repositories.captures.confirm(captureClientId, built.body, photos)
+        : await repositories.workLogs.create(built.body, photos);
       if (!result.ok) {
         setSaving(false);
         setSaveError(result.error);
@@ -392,7 +436,7 @@ export function useLogForm(params: LogFormParams) {
       }
       saved.current = true;
       const created = result.data;
-      await drafts.clear(user.id);
+      if (!captureClientId) await drafts.clear(user.id);
       setSaving(false);
       // A queued log is shown by its clientId until the server has it.
       return { kind: 'created', logId: created.log?.id ?? created.clientId };
@@ -440,6 +484,7 @@ export function useLogForm(params: LogFormParams) {
     setSaving(false);
     return { kind: 'updated', logId: original.id };
   }, [
+    captureClientId,
     drafts,
     existing.data,
     existingPhotoCount,
@@ -452,6 +497,20 @@ export function useLogForm(params: LogFormParams) {
     user.id,
     values,
   ]);
+
+  /** The worker does not want the capture: removed from the phone and the server. */
+  const discardCapture = useCallback(async (): Promise<DiscardOutcome> => {
+    if (!captureClientId) return { kind: 'failed' };
+    const result = await repositories.captures.discard(captureClientId);
+    if (result.ok) {
+      saved.current = true;
+      return { kind: 'discarded' };
+    }
+    return result.error.kind === 'conflict' ? { kind: 'busy' } : { kind: 'failed' };
+  }, [captureClientId, repositories]);
+
+  const hints =
+    capture.data && proposed ? confidenceHints(capture.data.local, proposed, values) : {};
 
   const loading = !ready || logTypes.isPending || (!isNew && existing.isPending);
   const loadFailed = logTypes.isError || (!isNew && existing.isError);
@@ -493,5 +552,9 @@ export function useLogForm(params: LogFormParams) {
     removePhoto,
     startOver,
     save,
+    // Phase 7: smart capture review.
+    capture: capture.data ?? null,
+    hints,
+    discardCapture,
   };
 }

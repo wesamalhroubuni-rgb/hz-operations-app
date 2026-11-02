@@ -8,7 +8,9 @@
 //                     priority, roles, map, dialog, errors, pages.<page>.title
 //   agent B: en/overview.ts, en/work-logs.ts, en/map-page.ts, en/report.ts, en/csv-export.ts
 //   agent C: en/tasks.ts, en/people.ts, en/structure.ts, en/audit.ts, en/settings.ts
+//   Phase 7: en/ai.ts (daily summaries, unusual items, AI settings and usage)
 
+import { ai } from './en/ai';
 import { audit } from './en/audit';
 import { core } from './en/core';
 import { csvExport } from './en/csv-export';
@@ -33,6 +35,7 @@ export const en = {
   structure,
   audit,
   settings,
+  ai,
 } as const;
 
 export type EnglishCatalogue = typeof en;

@@ -8,6 +8,7 @@ import {
 import type { OfflineDatabase, OfflineTableAccess } from './db';
 import type {
   EnqueueResult,
+  LocalSmartCapture,
   QueuedMutation,
   QueueItem,
   QueueItemError,
@@ -41,11 +42,25 @@ export function recordKeyOf(mutation: QueuedMutation): string {
       return workLogRecordKey(mutation.workLogClientId);
     case 'changeTaskStatus':
       return taskRecordKey(mutation.taskId);
+    case 'smartCapture':
+    case 'discardSmartCapture':
+      return smartCaptureRecordKey(mutation.captureClientId);
   }
 }
 
 export const workLogRecordKey = (clientId: string) => `workLog:${clientId}`;
 export const taskRecordKey = (taskId: string) => `task:${taskId}`;
+export const smartCaptureRecordKey = (captureClientId: string) => `smartCapture:${captureClientId}`;
+
+/** The local photo and voice note files a smart capture item holds. */
+function captureFilesOf(mutation: QueuedMutation): { photos: string[]; audio: string[] } {
+  if (mutation.kind !== 'smartCapture') return { photos: [], audio: [] };
+  const input = mutation.input;
+  return {
+    photos: input.kind === 'photo' ? [input.photo.localId] : [],
+    audio: input.kind === 'voice' ? [input.audio.localId] : [],
+  };
+}
 
 /** What the queue stores: the public item plus whether it ever left the phone. */
 interface StoredItem extends QueueItem {
@@ -77,8 +92,13 @@ export interface OfflineWriteQueue extends WriteQueue {
   progressOf(id: string): number | null;
   /** Called on every progress change (kept apart from `subscribe`: nothing is stored). */
   subscribeProgress(listener: () => void): () => void;
-  /** The local ids of every photo a queued upload still needs. */
+  /**
+   * The local ids of every photo a queued upload or smart capture still needs, and of the Snap
+   * photos kept for a capture's review (`smart_captures`).
+   */
   referencedPhotoIds(): Promise<string[]>;
+  /** The local ids of every voice note a queued or unprocessed smart capture still needs. */
+  referencedAudioIds(): Promise<string[]>;
 }
 
 export interface WriteQueueDeps {
@@ -90,6 +110,10 @@ export interface WriteQueueDeps {
   deletePhoto?: (localId: string) => Promise<void>;
   /** Deletes every photo of the user (`clear`). */
   clearPhotos?: () => Promise<void>;
+  /** Deletes a voice note of the audio store (discarded smart capture). */
+  deleteAudio?: (localId: string) => Promise<void>;
+  /** Deletes every voice note of the user (`clear`). */
+  clearAudio?: () => Promise<void>;
   /** The cached server copy of a log by clientId (for `resubmitAsNew` of a refused edit). */
   lookupWorkLog?: (clientId: string) => Promise<WorkLog | null>;
   /** Formats `copyText`; the default writes the content without labels. */
@@ -111,6 +135,19 @@ async function readItems(tx: OfflineTableAccess): Promise<StoredItem[]> {
     if (item) items.push(item);
   }
   return items.sort((a, b) => a.seq - b.seq);
+}
+
+/** The smart captures kept for review (Phase 7), as stored by `captureStore.ts`. */
+async function readCaptures(tx: OfflineTableAccess): Promise<LocalSmartCapture[]> {
+  const captures: LocalSmartCapture[] = [];
+  for (const row of await tx.all('smart_captures')) {
+    try {
+      captures.push(JSON.parse(row.value) as LocalSmartCapture);
+    } catch {
+      // A damaged row references nothing.
+    }
+  }
+  return captures;
 }
 
 async function writeItem(tx: OfflineTableAccess, item: StoredItem): Promise<void> {
@@ -169,7 +206,8 @@ export function createBodyFromLog(log: WorkLog, clientId: string, now: Date): Cr
     customFields: log.customFields,
     location: log.location,
     status: log.status === 'draft' ? 'draft' : 'submitted',
-    source: log.source,
+    // A copy is the worker's own new log: it cannot confirm the smart capture again (ADR-0010).
+    source: 'manual',
   };
 }
 
@@ -201,6 +239,12 @@ export function defaultCopyText(item: QueueItem): string {
       break;
     case 'uploadAttachment':
       lines.push(mutation.photo.fileName);
+      break;
+    case 'smartCapture':
+      if (mutation.input.kind === 'text') lines.push(mutation.input.text);
+      if (mutation.input.kind === 'photo' && mutation.input.note) lines.push(mutation.input.note);
+      break;
+    case 'discardSmartCapture':
       break;
   }
   return lines.join('\n');
@@ -374,6 +418,13 @@ export function createWriteQueue(deps: WriteQueueDeps): OfflineWriteQueue {
         }
         break;
       }
+      case 'smartCapture':
+      case 'discardSmartCapture': {
+        // A double tap, or a repeat after a crash: the capture (or its discard) is queued once.
+        const existing = record.find((item) => item.mutation.kind === mutation.kind);
+        if (existing) return { item: toPublic(existing), coalesced: true };
+        break;
+      }
     }
 
     const item = await newItem(tx, mutation, now);
@@ -409,8 +460,35 @@ export function createWriteQueue(deps: WriteQueueDeps): OfflineWriteQueue {
     return raw === null ? null : parseItem(raw);
   }
 
+  async function referencedPhotos(): Promise<string[]> {
+    const queued = (await readItems(db)).flatMap((item) =>
+      item.mutation.kind === 'uploadAttachment'
+        ? [item.mutation.photo.localId]
+        : captureFilesOf(item.mutation).photos,
+    );
+    // A Snap photo stays for the capture's review (it may be attached to the confirmed log).
+    const kept = (await readCaptures(db)).flatMap((capture) =>
+      capture.input.kind === 'photo' ? [capture.input.photo.localId] : [],
+    );
+    return [...new Set([...queued, ...kept])];
+  }
+
+  async function referencedAudio(): Promise<string[]> {
+    const queued = (await readItems(db)).flatMap((item) => captureFilesOf(item.mutation).audio);
+    const waiting = (await readCaptures(db)).flatMap((capture) =>
+      capture.input.kind === 'voice' && capture.capture === null
+        ? [capture.input.audio.localId]
+        : [],
+    );
+    return [...new Set([...queued, ...waiting])];
+  }
+
+  /** Deletes photo files, except those another queued item or kept capture still needs. */
   async function deletePhotos(localIds: readonly string[]): Promise<void> {
+    if (localIds.length === 0) return;
+    const used = new Set(await referencedPhotos());
     for (const localId of localIds) {
+      if (used.has(localId)) continue;
       await deps.deletePhoto?.(localId).catch(() => undefined);
     }
   }
@@ -529,6 +607,14 @@ export function createWriteQueue(deps: WriteQueueDeps): OfflineWriteQueue {
       );
     },
 
+    async saveCaptureCheckpoint(id, checkpoint) {
+      await update(id, (item) =>
+        item.mutation.kind === 'smartCapture'
+          ? { ...item, mutation: { ...item.mutation, checkpoint: { ...checkpoint } } }
+          : item,
+      );
+    },
+
     async rebaseVersion(recordKey, version) {
       await db.transaction(async (tx) => {
         for (const item of await readItems(tx)) {
@@ -590,10 +676,11 @@ export function createWriteQueue(deps: WriteQueueDeps): OfflineWriteQueue {
     },
 
     async discard(id) {
-      const photos = await db.transaction(async (tx) => {
+      const files = await db.transaction(async (tx) => {
+        const none = { photos: [] as string[], audio: [] as string[] };
         const items = await readItems(tx);
         const item = items.find((candidate) => candidate.id === id);
-        if (!item) return [];
+        if (!item) return none;
         const doomed =
           item.mutation.kind === 'createWorkLog'
             ? items.filter((other) => other.recordKey === item.recordKey)
@@ -601,15 +688,42 @@ export function createWriteQueue(deps: WriteQueueDeps): OfflineWriteQueue {
         // An item already on its way to the server may be applied there: never discard it (or a
         // create whose photo is uploading) from a stale list. The worker can discard it after the
         // send has finished or failed.
-        if (doomed.some((other) => other.state === 'sending')) return [];
+        if (doomed.some((other) => other.state === 'sending')) return none;
         for (const other of doomed) await tx.remove('queue', other.id);
         await forgetLinkIfDone(tx, item.recordKey);
-        return doomed.flatMap((other) =>
-          other.mutation.kind === 'uploadAttachment' ? [other.mutation.photo.localId] : [],
-        );
+        const mutation = item.mutation;
+        if (mutation.kind === 'smartCapture') {
+          // The capture goes with its item (Phase 7). One the server already has is discarded
+          // there too, after anything still queued for it.
+          await tx.remove('smart_captures', mutation.captureClientId);
+          if (mutation.checkpoint.captureId !== null) {
+            await enqueueIn(
+              tx,
+              {
+                kind: 'discardSmartCapture',
+                captureClientId: mutation.captureClientId,
+                captureId: mutation.checkpoint.captureId,
+              },
+              new Date(),
+            );
+          }
+        }
+        return {
+          photos: doomed.flatMap((other) =>
+            other.mutation.kind === 'uploadAttachment'
+              ? [other.mutation.photo.localId]
+              : captureFilesOf(other.mutation).photos,
+          ),
+          audio: doomed.flatMap((other) => captureFilesOf(other.mutation).audio),
+        };
       });
       progress.delete(id);
-      await deletePhotos(photos);
+      await deletePhotos(files.photos);
+      const usedAudio = files.audio.length > 0 ? new Set(await referencedAudio()) : new Set();
+      for (const localId of files.audio) {
+        if (usedAudio.has(localId)) continue;
+        await deps.deleteAudio?.(localId).catch(() => undefined);
+      }
       notify();
     },
 
@@ -681,12 +795,15 @@ export function createWriteQueue(deps: WriteQueueDeps): OfflineWriteQueue {
     async clear() {
       await db.transaction(async (tx) => {
         await tx.removeAll('queue');
+        // The captures' photos and voice notes go with the queue's (below).
+        await tx.removeAll('smart_captures');
         for (const row of await tx.all('meta')) {
           if (row.key.startsWith(SERVER_ID_PREFIX)) await tx.remove('meta', row.key);
         }
       });
       progress.clear();
       await deps.clearPhotos?.().catch(() => undefined);
+      await deps.clearAudio?.().catch(() => undefined);
       notify();
     },
 
@@ -712,11 +829,8 @@ export function createWriteQueue(deps: WriteQueueDeps): OfflineWriteQueue {
       };
     },
 
-    async referencedPhotoIds() {
-      return (await readItems(db)).flatMap((item) =>
-        item.mutation.kind === 'uploadAttachment' ? [item.mutation.photo.localId] : [],
-      );
-    },
+    referencedPhotoIds: referencedPhotos,
+    referencedAudioIds: referencedAudio,
   };
 }
 

@@ -2,6 +2,10 @@
 // attachments, scope). One file per resource, re-exported here. Each file holds the wire shape,
 // the create/update/list-query schemas, the inferred types and an `xxxEndpoints(transport)`
 // function for the typed API client.
+export * from './ai-capture.js';
+export * from './ai-capture-output.js';
+export * from './ai-settings.js';
+export * from './ai-summaries.js';
 export * from './attachments.js';
 export * from './custom-fields.js';
 export * from './dashboard.js';

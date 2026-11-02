@@ -1,5 +1,7 @@
 import type { KeyValueStore } from '../storage/keyValueStore';
 import { draftKey, EDIT_DRAFT_KEY_PREFIX } from '../storage/draftStore';
+import { createLocalAudioStore } from './audioStore';
+import { createLocalCaptureStore, type LocalCaptureStore } from './captureStore';
 import { createSerialRunner, type OfflineDatabase } from './db';
 import { droppedReferencesKey } from './engineNotices';
 import type { KeptUsersRegister } from './identity';
@@ -7,6 +9,7 @@ import { migrateLegacyUploads, uploadQueueKey } from './legacyUploads';
 import { createLocalStore, type OfflineLocalStore } from './localStore';
 import { createLocalPhotoStore, type PhotoFiles } from './photoStore';
 import type {
+  LocalAudioStore,
   LocalPhotoStore,
   OfflineSession,
   OfflineSessionFactory,
@@ -30,6 +33,9 @@ export interface OfflineSessionParts {
   store: OfflineLocalStore;
   queue: OfflineWriteQueue;
   photos: LocalPhotoStore;
+  /** Phase 7: voice notes waiting to be sent, and the captures kept for review. */
+  audio: LocalAudioStore;
+  captures: LocalCaptureStore;
 }
 
 /**
@@ -41,6 +47,8 @@ export type SyncEngineFactory = (parts: OfflineSessionParts) => SyncEngine;
 export interface AppOfflineSession extends OfflineSession {
   readonly store: OfflineLocalStore;
   readonly queue: OfflineWriteQueue;
+  readonly audio: LocalAudioStore;
+  readonly captures: LocalCaptureStore;
 }
 
 export interface AppOfflineSessionFactory extends OfflineSessionFactory {
@@ -48,8 +56,8 @@ export interface AppOfflineSessionFactory extends OfflineSessionFactory {
   /** The open session, if any. */
   current(): AppOfflineSession | null;
   /**
-   * How many queued writes a user has on this phone (the sign-in screen's "N items wait" of a
-   * user whose sign-in expired). Opens their database briefly when it is not the open one.
+   * How many queued writes and smart captures waiting for review a user has on this phone (the
+   * sign-in screen's "N items wait" of a user whose sign-in expired). Opens their database briefly when it is not the open one.
    */
   pendingCountFor(userId: string): Promise<number>;
 }
@@ -58,6 +66,8 @@ export interface OfflineSessionFactoryDeps {
   openDatabase(userId: string): Promise<OfflineDatabase>;
   deleteDatabase(userId: string): Promise<void>;
   photoFiles: PhotoFiles;
+  /** The voice notes' files (Phase 7); the same operations as the photos'. */
+  audioFiles: PhotoFiles;
   kept: KeptUsersRegister;
   /** Where the Phase 4 upload queue was kept (AsyncStorage). */
   legacy?: KeyValueStore;
@@ -85,16 +95,20 @@ export function createOfflineSessionFactory(
   function partsFor(db: OfflineDatabase, userId: string): OfflineSessionParts {
     const store = createLocalStore(db, userId);
     const photos = createLocalPhotoStore(deps.photoFiles, userId, deps.photoLimitBytes);
+    const audio = createLocalAudioStore(deps.audioFiles, userId);
+    const captures = createLocalCaptureStore(db);
     const queue = createWriteQueue({
       db,
       userId,
       newId: deps.newId,
       deletePhoto: (localId) => photos.delete(localId),
       clearPhotos: () => photos.clear(),
+      deleteAudio: (localId) => audio.delete(localId),
+      clearAudio: () => audio.clear(),
       lookupWorkLog: (clientId) => store.getWorkLogByClientId(clientId),
       formatCopyText: deps.formatCopyText,
     });
-    return { userId, store, queue, photos };
+    return { userId, store, queue, photos, audio, captures };
   }
 
   async function shutDown(state: OpenState): Promise<void> {
@@ -115,6 +129,8 @@ export function createOfflineSessionFactory(
       store: session.store,
       queue: session.queue,
       photos: session.photos,
+      audio: session.audio,
+      captures: session.captures,
       engine: session.engine,
       close: () =>
         run(async () => {
@@ -149,6 +165,7 @@ export function createOfflineSessionFactory(
     }
     // Photo files no queued upload needs (an upload finished but the app died before deleting).
     await parts.photos.deleteAllExcept(await parts.queue.referencedPhotoIds()).catch(() => 0);
+    await parts.audio.deleteAllExcept(await parts.queue.referencedAudioIds()).catch(() => 0);
     const engine = deps.createEngine(parts);
     const session: AppOfflineSession = { ...parts, engine, close: async () => undefined };
     const state: OpenState = { db, refs: 1, session, view: session };
@@ -160,6 +177,17 @@ export function createOfflineSessionFactory(
    * The user's small key-value leftovers: the Phase 4 upload queue, the new-log and edit drafts,
    * and the sync engine's dropped-link notices.
    */
+  /**
+   * What sign-out must not drop silently: queued writes, and smart captures waiting for the
+   * worker's review (Phase 7). "Keep for later" keeps both (the user's database is kept).
+   */
+  async function unfinishedCount(parts: {
+    queue: OfflineWriteQueue;
+    captures: LocalCaptureStore;
+  }): Promise<number> {
+    return (await parts.queue.pendingCount()) + (await parts.captures.unreviewedCount());
+  }
+
   async function removeUserKeys(userId: string): Promise<void> {
     const kv = deps.legacy;
     if (!kv) return;
@@ -177,6 +205,7 @@ export function createOfflineSessionFactory(
     await deps.kept.deleteSoon(userId, now).catch(() => undefined);
     await deps.deleteDatabase(userId);
     await deps.photoFiles.removeFolder(userId);
+    await deps.audioFiles.removeFolder(userId);
     await removeUserKeys(userId);
     await deps.kept.release(userId).catch(() => undefined);
   }
@@ -188,10 +217,10 @@ export function createOfflineSessionFactory(
 
     pendingCountFor: (userId) =>
       run(async () => {
-        if (open && open.session.userId === userId) return open.session.queue.pendingCount();
+        if (open && open.session.userId === userId) return unfinishedCount(open.session);
         const db = await deps.openDatabase(userId);
         try {
-          return await partsFor(db, userId).queue.pendingCount();
+          return await unfinishedCount(partsFor(db, userId));
         } finally {
           await db.close().catch(() => undefined);
         }
@@ -206,7 +235,7 @@ export function createOfflineSessionFactory(
         try {
           const parts = partsFor(db, userId);
           store = parts.store;
-          pending = await parts.queue.pendingCount();
+          pending = await unfinishedCount(parts);
           if (pending > 0 && choice !== 'discard') {
             // Kept for the same user's next sign-in; the reads go now.
             await store.clearCache();
@@ -231,6 +260,7 @@ export function createOfflineSessionFactory(
           try {
             await deps.deleteDatabase(userId);
             await deps.photoFiles.removeFolder(userId);
+            await deps.audioFiles.removeFolder(userId);
             await removeUserKeys(userId);
             await deps.kept.release(userId);
             swept.push(userId);

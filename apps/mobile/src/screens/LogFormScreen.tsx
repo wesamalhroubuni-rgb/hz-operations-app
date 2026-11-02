@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, customFieldDescriptors, spacing } from '@ops/shared';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { useEffect, useMemo } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { AppText } from '../components/AppText';
 import { Button } from '../components/Button';
@@ -15,9 +15,16 @@ import { Message } from '../components/Message';
 import { PickerField } from '../components/PickerField';
 import { LocalPhotoGrid } from '../components/PhotoGrid';
 import { ScreenContainer } from '../components/ScreenContainer';
+import {
+  AiSuggestedBanner,
+  ConfidenceHint,
+  SmartCaptureButtons,
+  TranscriptPanel,
+} from '../components/SmartCapture';
 import { ErrorState, LoadingState } from '../components/StateViews';
 import { SyncPhotoStorageNotice } from '../components/SyncBanner';
 import { iconSize } from '../components/sizes';
+import { useSmartCaptureEnabled } from '../data/queries';
 import { PHOTO_STORAGE_FULL } from '../data/repositories';
 import { useLogForm } from '../hooks/useLogForm';
 import { formatNumber, t } from '../i18n';
@@ -29,6 +36,8 @@ import type { StackScreenProps } from '../navigation/types';
 
 /** Log types shown as one-tap buttons; the rest are in a list below them. */
 const TYPE_BUTTONS = 6;
+/** From this width the capture's transcript sits beside the form instead of above it. */
+const SIDE_BY_SIDE_MIN_WIDTH = 640;
 const NO_TYPE = '__none__';
 
 /**
@@ -39,6 +48,8 @@ const NO_TYPE = '__none__';
 export function LogFormScreen({ route, navigation }: Readonly<StackScreenProps<'LogForm'>>) {
   const form = useLogForm(route.params);
   const headerHeight = useHeaderHeight();
+  const { width } = useWindowDimensions();
+  const smartCaptureEnabled = useSmartCaptureEnabled();
 
   useEffect(() => {
     navigation.setOptions({ title: form.isNew ? t('logForm.titleNew') : t('logForm.titleEdit') });
@@ -84,6 +95,25 @@ export function LogFormScreen({ route, navigation }: Readonly<StackScreenProps<'
     }
   }
 
+  function confirmDiscardCapture(): void {
+    Alert.alert(t('capture.discardTitle'), t('capture.discardMessage'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('capture.discard'),
+        style: 'destructive',
+        onPress: () =>
+          void form.discardCapture().then((outcome) => {
+            if (outcome.kind === 'discarded') navigation.goBack();
+            else
+              Alert.alert(
+                t('capture.discardTitle'),
+                t(outcome.kind === 'busy' ? 'capture.busy' : 'errors.server'),
+              );
+          }),
+      },
+    ]);
+  }
+
   function confirmStartOver(): void {
     Alert.alert(t('logForm.startOver'), t('logForm.startOverConfirm'), [
       { text: t('common.cancel'), style: 'cancel' },
@@ -107,27 +137,8 @@ export function LogFormScreen({ route, navigation }: Readonly<StackScreenProps<'
           ? t('logForm.location.denied')
           : t('logForm.location.unavailable');
 
-  return (
-    <ScreenContainer
-      keyboardOffset={headerHeight}
-      footer={
-        <Button
-          size="large"
-          icon="checkmark-circle-outline"
-          label={
-            form.saving
-              ? form.isNew
-                ? t('logForm.saving')
-                : t('common.loading')
-              : form.isNew
-                ? t('logForm.save')
-                : t('logForm.saveChanges')
-          }
-          busy={form.saving}
-          onPress={() => void onSave()}
-        />
-      }
-    >
+  const formBody = (
+    <>
       {form.restored ? (
         <Message tone="notice" text={t('logForm.draftRestored')}>
           <Button variant="link" label={t('logForm.startOver')} onPress={confirmStartOver} />
@@ -153,6 +164,7 @@ export function LogFormScreen({ route, navigation }: Readonly<StackScreenProps<'
         }
         onChange={(value) => form.setLogType(value === NO_TYPE || value === null ? null : value)}
       />
+      <ConfidenceHint level={form.hints.logTypeId} />
       {moreTypes.length > 0 ? (
         <PickerField
           label={t('logForm.chooseType')}
@@ -170,13 +182,15 @@ export function LogFormScreen({ route, navigation }: Readonly<StackScreenProps<'
         <Card>
           <AppText variant="heading">{t('logForm.fields')}</AppText>
           {descriptors.map((field) => (
-            <CustomFieldInput
-              key={field.key}
-              field={field}
-              value={form.values.customFields[field.key]}
-              onChange={(value) => form.setCustomField(field.key, value)}
-              error={form.errors.customFields[field.key]}
-            />
+            <View key={field.key}>
+              <CustomFieldInput
+                field={field}
+                value={form.values.customFields[field.key]}
+                onChange={(value) => form.setCustomField(field.key, value)}
+                error={form.errors.customFields[field.key]}
+              />
+              <ConfidenceHint level={form.hints[`customFields.${field.key}`]} />
+            </View>
           ))}
         </Card>
       ) : null}
@@ -193,6 +207,7 @@ export function LogFormScreen({ route, navigation }: Readonly<StackScreenProps<'
         spellCheck
         maxLength={LOG_TEXT_MAX_LENGTH}
       />
+      <ConfidenceHint level={form.hints.text} />
 
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
@@ -262,6 +277,7 @@ export function LogFormScreen({ route, navigation }: Readonly<StackScreenProps<'
         noneLabel={t('logForm.noTask')}
         error={form.errors.other.taskId ? t('logForm.fieldErrors.invalid') : undefined}
       />
+      <ConfidenceHint level={form.hints.taskId} />
       <PickerField
         label={t('logForm.site')}
         options={siteOptions}
@@ -270,6 +286,7 @@ export function LogFormScreen({ route, navigation }: Readonly<StackScreenProps<'
         noneLabel={t('logForm.noSite')}
         error={form.errors.other.siteId ? t('logForm.fieldErrors.invalid') : undefined}
       />
+      <ConfidenceHint level={form.hints.siteId} />
       <PickerField
         label={t('logForm.team')}
         options={teamOptions}
@@ -319,6 +336,60 @@ export function LogFormScreen({ route, navigation }: Readonly<StackScreenProps<'
           />
         ) : null}
       </Card>
+    </>
+  );
+
+  return (
+    <ScreenContainer
+      keyboardOffset={headerHeight}
+      footer={
+        <Button
+          size="large"
+          icon="checkmark-circle-outline"
+          label={
+            form.saving
+              ? form.isNew
+                ? t('logForm.saving')
+                : t('common.loading')
+              : form.isNew
+                ? t('logForm.save')
+                : t('logForm.saveChanges')
+          }
+          busy={form.saving}
+          onPress={() => void onSave()}
+        />
+      }
+    >
+      {form.capture ? (
+        <View style={width >= SIDE_BY_SIDE_MIN_WIDTH ? styles.columns : styles.section}>
+          <View style={width >= SIDE_BY_SIDE_MIN_WIDTH ? styles.sideColumn : undefined}>
+            {form.capture.local.capture?.status === 'proposed' ? <AiSuggestedBanner /> : null}
+            <TranscriptPanel view={form.capture} onDiscard={confirmDiscardCapture} />
+          </View>
+          <View style={width >= SIDE_BY_SIDE_MIN_WIDTH ? styles.formColumn : styles.section}>
+            {formBody}
+          </View>
+        </View>
+      ) : (
+        <>
+          {form.isNew && smartCaptureEnabled ? (
+            <View style={styles.section}>
+              <SmartCaptureButtons
+                onPick={(kind) =>
+                  navigation.replace('Capture', {
+                    kind,
+                    ...(route.params.mode === 'new' && route.params.taskId
+                      ? { taskId: route.params.taskId }
+                      : {}),
+                  })
+                }
+              />
+              <AppText variant="muted">{t('capture.or')}</AppText>
+            </View>
+          ) : null}
+          {formBody}
+        </>
+      )}
     </ScreenContainer>
   );
 }
@@ -343,5 +414,20 @@ const styles = StyleSheet.create({
   photoButtons: {
     flexDirection: 'row',
     gap: spacing.sm,
+  },
+  // Smart capture review (Phase 7): transcript beside the form on wide screens, above it on
+  // phones (logical order: the transcript is at the start side).
+  columns: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.lg,
+  },
+  sideColumn: {
+    flex: 2,
+    gap: spacing.md,
+  },
+  formColumn: {
+    flex: 3,
+    gap: spacing.md,
   },
 });

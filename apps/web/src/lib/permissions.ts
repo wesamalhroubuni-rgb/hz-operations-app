@@ -34,6 +34,10 @@ export interface Capabilities {
   readAudit: boolean;
   /** Organization settings (admin only). */
   editSettings: boolean;
+  /** Read one's own daily summaries and the unusual-item flags (Phase 7, supervisor and above). */
+  readSummaries: boolean;
+  /** AI usage and limits (Phase 7, admin only). */
+  viewAiUsage: boolean;
 }
 
 function isRole(value: string): value is Role {
@@ -60,6 +64,8 @@ export function capabilitiesFor(roleNames: readonly string[]): Capabilities {
     manageStructure: atLeast('manager'),
     readAudit: atLeast('admin'),
     editSettings: atLeast('admin'),
+    readSummaries: atLeast('supervisor'),
+    viewAiUsage: atLeast('admin'),
   };
 }
 

@@ -314,6 +314,7 @@ describe('permissions matrix: who sees what', () => {
           expect(response.body.view).toBe('full');
           expect(Object.keys(response.body).sort()).toEqual(
             [
+              'aiFeatures',
               'archivedAt',
               'createdAt',
               'id',
@@ -336,7 +337,126 @@ describe('permissions matrix: who sees what', () => {
             workLogEditWindowHours: 24,
             offlineMaxBackdateDays: 7,
             timeZone: 'Europe/Istanbul',
+            aiFeatures: { smartCapture: false, dailySummary: false },
           });
+        }
+      },
+    );
+  });
+
+  // Phase 7 (ADR-0010): ai_usage.read is admin-only; the report is the caller's organization's.
+  describe('AI usage (Phase 7)', () => {
+    it.each(VIEWERS)('GET /ai/usage as %s: admins only', async (viewer) => {
+      const response = await api(viewer).get('/ai/usage');
+      expect(response.status).toBe(ADMINS.includes(viewer) ? 200 : 403);
+      if (response.status === 200) {
+        expect(response.body.rows).toEqual([]);
+      }
+    });
+  });
+
+  // Phase 7 (ADR-0011): ai_summary.read and ai_anomaly.read are supervisor+ (own summaries only,
+  // so any other id is 404); ai_summary.generate is admin-only and, while daily summaries are
+  // off (the fixture's default), answers 403 `ai_disabled`.
+  describe('AI summaries and anomalies (Phase 7)', () => {
+    it.each(VIEWERS)('summary and anomaly routes as %s', async (viewer) => {
+      const caller = api(viewer);
+      const generate = await caller.post('/ai/summaries/generate', {});
+      const statuses = {
+        summaries: (await caller.get('/ai/summaries')).status,
+        summary: (await caller.get(`/ai/summaries/${randomUUID()}`)).status,
+        anomalies: (await caller.get('/ai/anomalies')).status,
+        generate: generate.status,
+      };
+      const reader = isSupervisorOrAbove(viewer) ? 200 : 403;
+      expect(statuses).toEqual({
+        summaries: reader,
+        summary: isSupervisorOrAbove(viewer) ? 404 : 403,
+        anomalies: reader,
+        generate: 403,
+      });
+      expect(generate.body.code).toBe(ADMINS.includes(viewer) ? 'ai_disabled' : 'forbidden');
+    });
+  });
+
+  // Phase 7 (ADR-0010): ai_capture.use is every role's, for their own captures only (anybody
+  // else's is 404, admins included). Smart capture is switched on for Alpha during this block.
+  describe('smart capture (Phase 7)', () => {
+    let savedSettings: unknown;
+    let captureOfWA: string;
+    beforeAll(async () => {
+      const alpha = await ctx.prisma.organization.findUniqueOrThrow({ where: { id: w.alpha.id } });
+      savedSettings = alpha.settings;
+      const settings = (alpha.settings ?? {}) as Record<string, unknown>;
+      await ctx.prisma.organization.update({
+        where: { id: w.alpha.id },
+        data: { settings: { ...settings, ai: { smartCaptureEnabled: true } } },
+      });
+      captureOfWA = (
+        await ctx.prisma.smartCapture.create({
+          data: {
+            organizationId: w.alpha.id,
+            clientId: randomUUID(),
+            workerId: w.users.wA,
+            inputKind: 'text',
+            status: 'proposed',
+            transcript: 'Example note',
+            context: { capturedAt: at(0).toISOString() },
+          },
+        })
+      ).id;
+    });
+    afterAll(async () => {
+      await ctx.prisma.organization.update({
+        where: { id: w.alpha.id },
+        data: { settings: savedSettings as object },
+      });
+    });
+
+    it.each(VIEWERS)('POST /ai/capture as %s: every role, as themselves', async (viewer) => {
+      const response = await api(viewer).post('/ai/capture', {
+        kind: 'voice',
+        clientId: randomUUID(),
+        context: { capturedAt: at(0).toISOString() },
+        mimeType: 'audio/mp4',
+        sizeBytes: 100,
+        durationMs: 1000,
+      });
+      expect(response.status).toBe(viewer === 'noMember' ? 403 : 201);
+      if (response.status === 201) {
+        expect(response.body.capture.workerId).toBe(w.users[viewer]);
+      }
+    });
+
+    it.each(VIEWERS)(
+      "wA's capture as %s: only wA may read, process or discard it",
+      async (viewer) => {
+        const id = captureOfWA;
+        const statuses = {
+          'GET /ai/capture/:id': (await api(viewer).get(`/ai/capture/${id}`)).status,
+          'POST /ai/capture/:id/process': (await api(viewer).post(`/ai/capture/${id}/process`))
+            .status,
+          'POST /ai/capture/:id/upload-url': (
+            await api(viewer).post(`/ai/capture/${id}/upload-url`)
+          ).status,
+          'POST /ai/capture/:id/discard': (await api(viewer).post(`/ai/capture/${id}/discard`))
+            .status,
+        };
+        const own = viewer === 'wA';
+        const status = viewer === 'noMember' ? 403 : own ? 200 : 404;
+        expect(statuses).toEqual({
+          'GET /ai/capture/:id': status,
+          'POST /ai/capture/:id/process': status,
+          // A proposed capture does not wait for an upload.
+          'POST /ai/capture/:id/upload-url': own ? 409 : status,
+          'POST /ai/capture/:id/discard': status,
+        });
+        const list = await api(viewer).get('/ai/capture', { pageSize: 100 });
+        expect(list.status).toBe(viewer === 'noMember' ? 403 : 200);
+        if (list.status === 200) {
+          const workers = new Set((list.body.items as Json[]).map((item) => item.workerId));
+          expect([...workers].every((workerId) => workerId === w.users[viewer])).toBe(true);
+          expect(list.body.items.some((item: Json) => item.id === id)).toBe(own);
         }
       },
     );

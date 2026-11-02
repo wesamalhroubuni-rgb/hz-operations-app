@@ -169,6 +169,39 @@ export const POLICIES = {
       'range of at most 92 days.',
   },
 
+  // Phase 7: the intelligent layer (ADR-0010, ADR-0011). The AI sees only what the caller (or,
+  // for a summary, its recipient) may see; every proposal needs a human to act on it.
+  'ai_capture.use': {
+    roles: EVERYONE,
+    description:
+      'Smart capture: turn one of your own voice notes, photos or texts into a proposed work ' +
+      'log (create, upload, process, read, discard your own captures; others are 404). Needs ' +
+      "the organization's smartCaptureEnabled; nothing is saved until you create the log.",
+  },
+  'ai_summary.read': {
+    roles: SUPERVISORS_UP,
+    description:
+      'Read your own daily summaries (you are the recipient), computed for your visibility only.',
+  },
+  'ai_summary.generate': {
+    roles: ADMINS,
+    description:
+      'Generate the daily summaries of one recent day now, for every recipient or one ' +
+      '(idempotent per recipient and day).',
+  },
+  'ai_anomaly.read': {
+    roles: SUPERVISORS_UP,
+    description:
+      'List the rule-based anomaly flags whose every subject (site, team, person, task, log) ' +
+      'the caller may see. Suggestions only.',
+  },
+  'ai_usage.read': {
+    roles: ADMINS,
+    description:
+      'Read AI usage per day and feature: calls, outcomes, tokens, estimated cost, and the ' +
+      'limits in force.',
+  },
+
   'sync.pull': {
     roles: EVERYONE,
     description:

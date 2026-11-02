@@ -17,7 +17,7 @@ import { useData } from '../data/DataProvider';
 import type { SignOutScope } from '../hooks/useSignOut';
 import { t } from '../i18n';
 import { roleName } from '../i18n/roles';
-import { afterSyncFirst, signOutStep } from '../logic/sync';
+import { afterSyncFirst } from '../logic/sync';
 import { useSignOutWithChoice } from '../offline/engineIntegration';
 import type { SignOutChoice } from '../offline/types';
 import { usePushState } from '../push/usePush';
@@ -52,15 +52,17 @@ export function ProfileScreen() {
   const [asking, setAsking] = useState<SignOutScope | null>(null);
   const [stillPending, setStillPending] = useState<number | null>(null);
   const [syncingFirst, setSyncingFirst] = useState(false);
+  // What is not finished on the phone: queued writes and smart captures waiting for review.
+  const [unfinished, setUnfinished] = useState({ writes: 0, captures: 0 });
 
   async function requestSignOut(scope: SignOutScope): Promise<void> {
-    if (sync.available && signOutStep(sync.pendingCount) === 'ask') {
+    // Without a choice nothing changes while something is unfinished: the answer says what.
+    const result = await run(scope, null);
+    if (!result.ok && result.reason === 'needsChoice') {
+      setUnfinished({ writes: result.pending - result.captures, captures: result.captures });
       setStillPending(null);
       setAsking(scope);
-      return;
     }
-    const result = await run(scope, null);
-    if (!result.ok && result.reason === 'needsChoice') setAsking(scope);
   }
 
   async function choose(choice: SignOutChoice): Promise<void> {
@@ -81,7 +83,10 @@ export function ProfileScreen() {
     setAsking(null);
     const result = await run(scope, choice);
     if (!result.ok && 'pending' in result) {
-      setStillPending(result.pending);
+      const writes = result.pending - result.captures;
+      setUnfinished({ writes, captures: result.captures });
+      // Captures waiting for review are not "not sent": the dialog says so on its own line.
+      setStillPending(writes > 0 ? writes : null);
       setAsking(scope);
     }
   }
@@ -125,7 +130,8 @@ export function ProfileScreen() {
 
       <SyncSignOutDialog
         visible={asking !== null}
-        pendingCount={sync.pendingCount}
+        pendingCount={unfinished.writes}
+        captureCount={unfinished.captures}
         stillPending={stillPending}
         busy={syncingFirst}
         onChoose={(choice) => void choose(choice)}

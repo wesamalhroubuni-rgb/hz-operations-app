@@ -1,21 +1,50 @@
 # apps/mobile memory
 
-Package `@ops/mobile`. Last updated: 2026-10-28.
+Package `@ops/mobile`. Last updated: 2026-11-02.
 
 ## Purpose
 
 The worker app for iOS and Android, from one React Native codebase with Expo. Workers log work
-with text, photos, location, and the custom fields of each log type, see and update their tasks,
-and get notifications, online or offline. Voice later.
+with text, photos, location, and the custom fields of each log type, or let the AI propose a log
+from a voice note, photo, or typed note (smart capture), see and update their tasks, and get
+notifications, online or offline.
 
 ## Current state
 
 Phase 4 committed (`280c50a`); Phase 5 (offline mode and sync, ADR-0008) committed (`2cf5a01`).
-Phase 6 (2026-10-28) touched the app only to re-export the moved translation core and add one
-catalogue key; no screen changed. **Never run on a real phone or in the emulator** (Expo Go or a
-build): no screen, camera, location, SecureStore, SQLite, NetInfo, background task, or push
-behaviour has been seen on a device. The emulator test is in README section 6, the phone test in
-section 5.
+Phase 6 touched the app only to re-export the moved translation core. Phase 7 (smart capture,
+ADR-0010) is code complete, tested with fakes, and reviewed (2026-11-02), about to be committed.
+**Never run on a real phone or in the emulator** (Expo Go or a build): no screen, camera,
+microphone, location, SecureStore, SQLite, NetInfo, background task, or push behaviour has been
+seen on a device. The emulator and phone steps are in README sections 5 and 6 and in the combined
+manual test in `docs/reports/phase-7.md`.
+
+- **Smart capture** (Phase 7, ADR-0010):
+  - Shown only when the organization summary's `aiFeatures.smartCapture` is on
+    (`useSmartCaptureEnabled` in `queries.ts`): `SmartCaptureButtons` (Speak, Snap, Type a note,
+    `src/components/SmartCapture.tsx`) on Home and on the New log form; Home lists captures
+    waiting for review (`CaptureRow`), also after the switch went off.
+  - `CaptureScreen` (stack route `Capture`, params `{ kind, taskId? }`): records a voice note with
+    `expo-audio` (`src/hooks/useVoiceRecorder.ts`, `src/device/voice.ts`; m4a, stops by itself at
+    the limit, foreground only), takes a photo (prepared like log photos), or takes typed text;
+    then `repositories.ts` queues it.
+  - Queue: kind `smartCapture` (record key `smartCapture:<captureClientId>`, its own record, so it
+    never blocks a log) run in resumable steps by `src/offline/smartCaptureSteps.ts` with a
+    checkpoint (`POST /ai/capture` with the clientId, PUT to the signed URL, renewal when
+    expired, `POST /ai/capture/:id/process`); `discardSmartCapture` for a capture the server
+    has. `ai_disabled` and `ai_limit_reached` are final; `ai_unavailable`, `rate_limited`, and
+    network errors are retried.
+  - Storage: voice notes in `offline-audio/<userId>/<localId>.m4a` (`audioStore.ts`, deleted once
+    processed or discarded; orphans swept); captures in the user's SQLite table `smart_captures`
+    (`captureStore.ts`, SQLite migration 2), removed when confirmed or discarded.
+  - Review: LogForm with `captureClientId` (`useLogForm.ts`) opens filled from the proposal, with
+    the transcript (or note, or text), an "AI-suggested" marker, and a confidence hint per field;
+    saving queues an ordinary `createWorkLog` with `source: 'ai_assisted'` and `aiProposalId`;
+    a `failed` capture shows "Couldn't understand, please fill in manually" with the transcript.
+  - Sign-out: captures waiting for review count as unfinished work in `SyncSignOutDialog`
+    (`useSignOut.ts`, `session.ts`), like queued writes.
+  - Pure logic in `src/logic/smartCapture.ts`; tests `logic/smartCapture.test.ts`,
+    `offline/smartCapture.test.ts`, and the updated session and repository tests.
 
 - **Offline layer** (`src/offline/`, ADR-0008):
   - One SQLite database per user, `ops-<userId>.db` (`sqliteDatabase.ts`, `db.ts`): cache tables
@@ -53,8 +82,9 @@ section 5.
   sign-in state (`rootViewFor` in `screen.ts`: loading, signed out, signed in). Signed out: a
   stack with Login and Activate (`SignedOutNavigator.tsx`). Signed in (`SignedInNavigator.tsx`):
   bottom tabs Home, Tasks, Logs, Alerts (the `Notifications` route, with an unread badge), Profile;
-  above them a stack with TaskDetail, LogForm (`mode: 'new'`, optionally with a task, or
-  `mode: 'edit'`), LogDetail, PhotoViewer, Sync. The map is in `types.ts`. The signed-in tree is
+  above them a stack with TaskDetail, LogForm (`mode: 'new'`, optionally with a task or a
+  `captureClientId` to review, or `mode: 'edit'`), LogDetail, PhotoViewer, Sync, Capture
+  (Phase 7). The map is in `types.ts`. The signed-in tree is
   keyed by user id and wrapped in `SyncProvider`. `navigationRef.ts` holds a target from a
   tapped notification until the navigator is ready.
 - **Screens**: Home (tasks due today and overdue first, recent logs, a big "New log" button);
@@ -71,8 +101,9 @@ section 5.
   `queryKeys.ts`, `DataProvider.tsx`) that read the local store with the queue applied
   (`localView.ts`), invalidated when the store or queue changes; only attachments (signed URLs)
   and the scope still call the server. **Every write goes through `repositories.ts`**: work-log
-  creates, edits, and status changes, task status changes, and photos go into the write queue
-  first, online or offline, and answer at once (`SavedWorkLog` is `pending` until the sync).
+  creates, edits, and status changes, task status changes, photos, and since Phase 7 smart
+  captures and their discards go into the write queue first, online or offline, and answer at
+  once (`SavedWorkLog` is `pending` until the sync).
   `notifications.markRead`, `markAllRead`, and push token registration are not queued.
 - **Photo uploads** (`uploadQueue.ts`, `src/hooks/useUploads.ts`): since Phase 5 a read-only view
   over the queue's `uploadAttachment` items in the Phase 4 shape, with retry and remove acting on
@@ -112,50 +143,54 @@ section 5.
   `SyncSignOutDialog` (`useSignOut.ts`).
 - **Development build**: `expo-dev-client` installed; `eas.json` profile `development`
   (development client, internal distribution, Android APK, no iOS simulator build). Never built.
-- **Tests**: 305 unit tests in 26 suites (304 confirmed by the docs-keeper on 2026-10-27, one
-  added afterwards as reported), including the engine, queue, store, session, and a full offline
-  journey (`offlineJourney.test.ts`) against fakes for SQLite, files, network, clock, and the API
+- **Tests**: 332 unit tests in 28 suites (2026-11-02, re-run by the docs-keeper), including the
+  engine, queue, store, session, smart capture (offline-queued voice note processed on
+  reconnect, manual filling while waiting), and a full offline journey
+  (`offlineJourney.test.ts`) against fakes for SQLite, files, network, clock, and the API
   (`engineTestKit.ts`, `storeTestKit.ts`).
 
-Verified in the Phase 5 session (2026-10-27): lint, typecheck, and tests pass (re-run by the
-docs-keeper). Earlier (Phase 4): the repositories ran end to end against the real API outside a
-phone; `expo export`; `expo-doctor` 21/21.
+Verified in the Phase 7 session (2026-11-02): tests re-run by the docs-keeper; lint, typecheck,
+and `npx expo install --check` (up to date) as reported by the coordinator. Earlier (Phase 4):
+the repositories ran end to end against the real API outside a phone; `expo export`;
+`expo-doctor` 21/21 (not re-run since `expo-audio` was added).
 
 ## Key files
 
-| File                       | What it does                                                                                                                                                                                                                 |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `index.ts`                 | Entry point (`main` in `package.json`). Registers the sync engine (`src/offline/engineRegistration.ts`, which also defines the background task) and `App`.                                                                   |
-| `App.tsx`                  | Layout direction, the 14-day draft retention sweep, providers (`SafeAreaProvider`, `AuthProvider`, `DataProvider`, `PushProvider`), the navigator by sign-in state, the navigation theme from the tokens.                    |
-| `src/offline/types.ts`     | The offline contracts: `LocalStore`, `WriteQueue`, `QueueItem`, `LocalPhotoStore`, `SyncEngine`, `SyncStatus`, `KEPT_QUEUE_MAX_DAYS`, the photo limit.                                                                       |
-| `app.config.ts`            | Expo config: name, identifiers, EAS project id, plugins and iOS permission texts (see below).                                                                                                                                |
-| `eas.json`                 | EAS Build profile `development`.                                                                                                                                                                                             |
-| `src/data/repositories.ts` | The one write path: writes into the user's queue and answers optimistically.                                                                                                                                                 |
-| `src/data/queries.ts`      | All reads (TanStack Query hooks over the local store and queue).                                                                                                                                                             |
-| `src/data/uploadQueue.ts`  | Read-only view of the queued photos and their error kinds.                                                                                                                                                                   |
-| `src/hooks/useLogForm.ts`  | State of the new and edit log form: custom fields, photos, location, draft, save.                                                                                                                                            |
-| `src/logic/`               | Pure logic: `logForm.ts`, `tasks.ts` (filters, allowed moves), `workLogs.ts` (edit window), `dates.ts`, `notificationRouting.ts`.                                                                                            |
-| `src/device/`              | Camera and gallery, resizing, local files, upload PUT, location.                                                                                                                                                             |
-| `src/push/`                | Push availability, registration lifecycle, provider.                                                                                                                                                                         |
-| `src/storage/`             | `keyValueStore.ts` (interface), `deviceStore.ts` (AsyncStorage), `draftStore.ts`, `localPhoto.ts`, `retention.ts`.                                                                                                           |
-| `src/i18n/`                | Catalogue, translator, language and RTL.                                                                                                                                                                                     |
-| `src/auth/`                | `AuthProvider.tsx`, `token-storage.ts` (SecureStore).                                                                                                                                                                        |
-| `src/api/client.ts`        | `authSession` and `apiClient`, both `null` without an API URL; `DEVICE_NAME`.                                                                                                                                                |
-| `src/config/env.ts`        | The only place the bundle reads environment variables: `apiUrl`, `brandName`, `organizationSlug`, `easProjectId`.                                                                                                            |
-| `src/config/brand.ts`      | `brand`: name, app label, logo, the "Powered by" line.                                                                                                                                                                       |
-| `src/components/`          | Large-target UI pieces: `Button`, `FormField`, `CustomFieldInput`, `ChoiceButtons`, `YesNoField`, `PickerField`, `DateTimeField`, `PhotoGrid`, `UploadList`, `FilterChips`, `StateViews`, `ScreenContainer`, `sizes.ts`, ... |
-| `jest.config.js`           | `jest-expo` preset; tests are `src/**/*.test.ts(x)`.                                                                                                                                                                         |
+| File                                                                   | What it does                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`                                                             | Entry point (`main` in `package.json`). Registers the sync engine (`src/offline/engineRegistration.ts`, which also defines the background task) and `App`.                                                                   |
+| `App.tsx`                                                              | Layout direction, the 14-day draft retention sweep, providers (`SafeAreaProvider`, `AuthProvider`, `DataProvider`, `PushProvider`), the navigator by sign-in state, the navigation theme from the tokens.                    |
+| `src/offline/types.ts`                                                 | The offline contracts: `LocalStore`, `WriteQueue`, `QueueItem`, `LocalPhotoStore`, `SyncEngine`, `SyncStatus`, `KEPT_QUEUE_MAX_DAYS`, the photo limit.                                                                       |
+| `app.config.ts`                                                        | Expo config: name, identifiers, EAS project id, plugins and iOS permission texts (see below).                                                                                                                                |
+| `eas.json`                                                             | EAS Build profile `development`.                                                                                                                                                                                             |
+| `src/data/repositories.ts`                                             | The one write path: writes into the user's queue and answers optimistically.                                                                                                                                                 |
+| `src/data/queries.ts`                                                  | All reads (TanStack Query hooks over the local store and queue).                                                                                                                                                             |
+| `src/data/uploadQueue.ts`                                              | Read-only view of the queued photos and their error kinds.                                                                                                                                                                   |
+| `src/hooks/useLogForm.ts`                                              | State of the new and edit log form: custom fields, photos, location, draft, save; the review of a smart capture (proposal, confidence, `ai_assisted` save).                                                                  |
+| `src/screens/CaptureScreen.tsx`, `src/components/SmartCapture.tsx`     | Speak, Snap, Type a note; the capture buttons and rows (Phase 7).                                                                                                                                                            |
+| `src/offline/smartCaptureSteps.ts`, `captureStore.ts`, `audioStore.ts` | The queued capture's steps; the `smart_captures` table; the per-user voice-note folder (Phase 7).                                                                                                                            |
+| `src/logic/`                                                           | Pure logic: `logForm.ts`, `tasks.ts` (filters, allowed moves), `workLogs.ts` (edit window), `dates.ts`, `notificationRouting.ts`.                                                                                            |
+| `src/device/`                                                          | Camera and gallery, resizing, local files, upload PUT, location.                                                                                                                                                             |
+| `src/push/`                                                            | Push availability, registration lifecycle, provider.                                                                                                                                                                         |
+| `src/storage/`                                                         | `keyValueStore.ts` (interface), `deviceStore.ts` (AsyncStorage), `draftStore.ts`, `localPhoto.ts`, `retention.ts`.                                                                                                           |
+| `src/i18n/`                                                            | Catalogue, translator, language and RTL.                                                                                                                                                                                     |
+| `src/auth/`                                                            | `AuthProvider.tsx`, `token-storage.ts` (SecureStore).                                                                                                                                                                        |
+| `src/api/client.ts`                                                    | `authSession` and `apiClient`, both `null` without an API URL; `DEVICE_NAME`.                                                                                                                                                |
+| `src/config/env.ts`                                                    | The only place the bundle reads environment variables: `apiUrl`, `brandName`, `organizationSlug`, `easProjectId`.                                                                                                            |
+| `src/config/brand.ts`                                                  | `brand`: name, app label, logo, the "Powered by" line.                                                                                                                                                                       |
+| `src/components/`                                                      | Large-target UI pieces: `Button`, `FormField`, `CustomFieldInput`, `ChoiceButtons`, `YesNoField`, `PickerField`, `DateTimeField`, `PhotoGrid`, `UploadList`, `FilterChips`, `StateViews`, `ScreenContainer`, `sizes.ts`, ... |
+| `jest.config.js`                                                       | `jest-expo` preset; tests are `src/**/*.test.ts(x)`.                                                                                                                                                                         |
 
 ## Expo configuration
 
-| Setting                                   | Value                                                                                                                                                                                                                                                          |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                                    | `EXPO_PUBLIC_BRAND_NAME`, or "Operations" when unset                                                                                                                                                                                                           |
-| `slug` / `scheme`                         | `operations-app` / `operationsapp` (not used for deep links yet)                                                                                                                                                                                               |
-| iOS `bundleIdentifier`, Android `package` | `EXPO_IOS_BUNDLE_IDENTIFIER` / `EXPO_ANDROID_PACKAGE`, default `ai.kaneri.operations`                                                                                                                                                                          |
-| `extra`                                   | `supportsRTL: true`; `eas.projectId` from `EXPO_PUBLIC_EAS_PROJECT_ID` when set                                                                                                                                                                                |
-| Plugins                                   | `expo-splash-screen`, `expo-system-ui`, `expo-secure-store`, `expo-image-picker` (camera and photos texts, no microphone), `expo-location` (when in use only, no background), `expo-notifications`, `expo-localization`, `expo-sqlite`, `expo-background-task` |
-| `userInterfaceStyle`, background          | `dark`, the `background` token                                                                                                                                                                                                                                 |
+| Setting                                   | Value                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                                    | `EXPO_PUBLIC_BRAND_NAME`, or "Operations" when unset                                                                                                                                                                                                                                                                                          |
+| `slug` / `scheme`                         | `operations-app` / `operationsapp` (not used for deep links yet)                                                                                                                                                                                                                                                                              |
+| iOS `bundleIdentifier`, Android `package` | `EXPO_IOS_BUNDLE_IDENTIFIER` / `EXPO_ANDROID_PACKAGE`, default `ai.kaneri.operations`                                                                                                                                                                                                                                                         |
+| `extra`                                   | `supportsRTL: true`; `eas.projectId` from `EXPO_PUBLIC_EAS_PROJECT_ID` when set                                                                                                                                                                                                                                                               |
+| Plugins                                   | `expo-splash-screen`, `expo-system-ui`, `expo-secure-store`, `expo-image-picker` (camera and photos texts), `expo-location` (when in use only, no background), `expo-notifications`, `expo-localization`, `expo-sqlite`, `expo-background-task`, `expo-audio` (microphone text, `RECORD_AUDIO`, no background recording or playback; Phase 7) |
+| `userInterfaceStyle`, background          | `dark`, the `background` token                                                                                                                                                                                                                                                                                                                |
 
 Expo Go ignores the config plugins and shows its own icon and splash; they apply to development
 and release builds.
@@ -200,6 +235,11 @@ section 5).
   drafts. Never delete a queued write silently (only accepted, discarded by the worker, or the
   explicit kept-queue rule).
 - A new API error code needs a `sync.reasons` text in `en.ts`.
+- SQLite migrations (`MIGRATIONS` in `sqliteDatabase.ts`) are append-only and spelled out; never
+  change a shipped step (step 1 lists its tables by name so adding to `OFFLINE_TABLES` does not
+  change it).
+- AI-suggested content is always marked as such and never saved without the worker saving the
+  form.
 - **Every user-facing string through `src/i18n`** (`t('...')`); no English in screens. Styles use
   `start` / `end`, never `left` / `right`.
 - **Tokens and the offline identity only in SecureStore**; form drafts, the kept-users register,
@@ -220,8 +260,14 @@ section 5).
 
 ## Known issues
 
-- **Not run on a phone or in the emulator.** The offline layer is covered only by fakes.
-  Accessibility (screen reader, dynamic type), sunlight readability, and glove use are unchecked.
+- **Not run on a phone or in the emulator.** The offline layer and smart capture are covered only
+  by fakes; recording with `expo-audio`, the microphone permission, and the m4a accepted by the
+  real speech-to-text are unchecked. Accessibility (screen reader, dynamic type), sunlight
+  readability, and glove use are unchecked.
+- A Snap photo used for a capture is uploaded again if the worker also attaches it to the log
+  (accepted, ADR-0010).
+- The Android emulator's microphone is silent unless the host microphone is enabled in its
+  extended controls.
 - **Android Expo Go has no remote push** (since SDK 53) and no background task; both need the
   development build, which has never been built. iOS Expo Go can receive push with an EAS
   project id.

@@ -11,8 +11,8 @@ Criteria for Phases 3 to 8 are the current plan and should be refined at the sta
 | 3     | Authentication & permissions | Accepted and committed (`8c8283a`); device checks wait for the phone test |
 | 4     | Mobile worker app            | Committed (`280c50a`); phone test and development build open              |
 | 5     | Offline mode & sync          | Committed (`2cf5a01`); emulator and phone test open                       |
-| 6     | Web manager dashboard        | Code complete and tested; browser test and commit open                    |
-| 7     | Intelligent layer v1         | Next                                                                      |
+| 6     | Web manager dashboard        | Committed (`713f592`); browser test open                                  |
+| 7     | Intelligent layer v1         | Code complete and tested with fakes; real keys, device, browser open      |
 | 8     | Hardening & release          | Planned                                                                   |
 
 ## Phase 1: Setup & architecture
@@ -533,30 +533,114 @@ Tests, review, verification
       tests in 21 suites) pass as reported by the coordinator.
 - [ ] The migration `20261028090000_phase6_dashboard` is applied to the development database
       (needs the owner's `pnpm db:reset`).
-- [ ] The owner's browser test (`docs/reports/phase-6.md`) as `aylin`, `selin`, and `murat`.
-- [ ] The Phase 6 work is committed and pushed.
+- [ ] The owner's browser test (`docs/reports/phase-6.md`; since 2026-11-02 part of the combined
+      Phases 4 to 7 test in `docs/reports/phase-7.md`) as `aylin`, `selin`, and `murat`.
+- [x] The Phase 6 work is committed and pushed (`713f592`, in sync with `origin/main` on
+      2026-11-02).
 
 ## Phase 7: Intelligent layer v1 (smart capture, daily AI summaries)
 
-**Goals**: the first AI features, built on top of the core without weakening permissions.
+**Goals**: the first AI features, built on top of the core without weakening permissions: smart
+capture (a voice note, photo, or typed note becomes a proposed work log the worker confirms) and
+daily summaries with rule-based anomaly flags for supervisors and managers.
+
+The criteria below were rewritten on 2026-11-02 to match the owner's Phase 7 prompt
+(`docs/prompts/phase-7.md`). "Verified" means by the unit and integration suites **with the
+deterministic fake providers**, the `test-writer`, and the `reviewer` during the session of
+2026-10-30 to 2026-11-02. **No real provider has been called (no keys yet), nothing has run on a
+phone or in the emulator, and the dashboard has not been used in a browser with data**, so items
+that need one of those stay open even where the code is complete.
 
 **Done when**
 
-- [ ] An ADR records the AI provider, the provider abstraction, and data-handling constraints.
-- [ ] The AI layer reads events through the outbox consumer (built in Phase 4, ADR-0007: it
-      re-reads a 60-second window so a late-committing event is not missed) by registering its own
-      handlers, and tests show it misses no event.
-- [ ] AI alerts reach users through `NotificationService` and the notification channels (the
-      in-app list and Expo push exist since Phase 4).
-- [ ] The core runs normally with the AI layer disabled.
-- [ ] Smart capture: the AI layer helps turn a worker's raw input into a structured work log, and
-      the worker confirms before it is saved.
-- [ ] Daily AI summaries are generated per scope and contain only data the recipient may see.
-- [ ] Tests prove a summary for one scope never includes data from another.
-- [ ] Any AI-proposed action requires human approval before it is executed.
-- [ ] Prompts, model responses, proposals, approvals, and executed actions are audited.
-- [ ] Provider failures and timeouts degrade gracefully and are logged.
-- [ ] Cost and rate limits are configurable through environment variables.
+Decisions and documentation
+
+- [x] [ADR-0010](docs/decisions/0010-ai-layer-architecture.md) records the AI layer, the providers
+      (Anthropic Claude, OpenAI `gpt-4o-transcribe` for speech-to-text, with the comparison), the
+      data sent and never sent, prompt-injection safety, retention, and cost controls;
+      [ADR-0011](docs/decisions/0011-daily-summaries-and-anomaly-rules.md) the summaries, their
+      scope rule, and the anomaly rules.
+- [x] `.env.example` lists the keys (empty) and every AI setting; README section 9 says which keys
+      to get and where to put them.
+- [x] MEMORY.md, ARCHITECTURE.md, ROADMAP.md, README.md, AGENTS.md, and the folder `memory.md`
+      files describe Phase 7 (docs-keeper, 2026-11-02).
+
+Architecture and safety (verified with fakes)
+
+- [x] The core works fully with the AI switched off or failing (`ai-off` suite; every earlier
+      suite unchanged).
+- [x] The AI layer writes only its own records through `ChangeRecorder` (audit and outbox) and
+      reacts to outbox events through a registered handler (`daily_summary.created` to the
+      notification, idempotent on re-processing); a work log exists only when the worker sends
+      `POST /work-logs`.
+- [x] Providers sit behind `LlmProvider` and `SpeechToTextProvider` in `src/platform/ai/`
+      (no Operations import), selected by `AI_PROVIDER` and the keys, with a deterministic fake for
+      each; everything runs and passes without keys.
+- [x] Structured output validated against a schema built from the log type's fields; invalid
+      output is retried once, then the capture ends "couldn't understand, please fill in
+      manually" with the transcript kept.
+- [x] Every AI call is traced (`AiTrace`: provider, model, prompt id, version and hash, input
+      references, output, latency, tokens, cost estimate, the person who confirmed or discarded);
+      confirmed logs are `source: ai_assisted` with `aiMetadata` written by the API.
+- [x] Per-organization switches (both off by default), daily request and cost limits (environment
+      ceiling, organization may lower), per-call timeout, per-user rate limit; no names, e-mail
+      addresses, or phone numbers sent to a model.
+- [x] Prompts are versioned files; user text, transcripts, task titles, and site names reach the
+      model only inside escaped data blocks; injection attempts change nothing beyond the proposal
+      the worker reviews (`smart-capture-safety` suite).
+- [x] Provider failures and timeouts degrade gracefully and are logged (capture 503 and retry,
+      summary template; a provider refusing the request itself is `provider_rejected`).
+- [ ] Real providers checked with keys: Claude accepts the structured-output request
+      (`output_config`), the photo path, and a summary narrative; OpenAI transcribes the phone's
+      m4a in Turkish, English, and Arabic; the refusal fallback beta before
+      `AI_ANTHROPIC_REFUSAL_FALLBACK` is turned on. **Needs the owner's keys.**
+
+Smart capture
+
+- [x] API: create, upload, process, read, discard own captures (others 404); confirm through
+      `POST /work-logs` with `aiProposalId` (a second confirm 409); hourly retention of inputs and
+      content.
+- [x] Phone (code complete and tested with fakes): Speak, Snap, and Type a note on Home and the
+      New log screen when the switch is on; the review in the New log form with the transcript,
+      the "AI-suggested" marker, and a confidence hint per field; discard; offline captures queued
+      and processed when online; manual filling always possible; unreviewed captures counted at
+      sign-out.
+- [ ] Seen on a device: recording with the microphone permission, Snap with the camera, the
+      review form, the offline queue in airplane mode (emulator `hz_pixel` or phone).
+
+Daily summaries and anomaly flags
+
+- [x] Scheduled per organization time zone (default 18:00, configurable), one summary per
+      recipient and day, recipients by role; numbers computed in code, the narrative checked
+      against them (template fallback); stored with history; notification `ai.daily_summary`
+      (in-app and generic push).
+- [x] Tests prove a summary for one scope never includes data from another, including after a
+      membership change (`ai-summaries-scope` suite); flags are visible only when every subject
+      is.
+- [x] Anomaly rules v1 (no activity at an active site, slow task, repeated rejections, far
+      location) with the numbers behind each flag; suggestions only.
+- [ ] Seen in a browser with data: the Overview's summary and anomaly panels, `/summaries`, the
+      AI section of Settings, `/ai-usage` (as `aylin`, `selin`, `murat`).
+
+Tests, review, verification
+
+- [x] The `test-writer` added 46 tests (`ai-off`, `ai-summaries-scope`, `smart-capture-safety`,
+      mobile smart capture) and found no bug.
+- [x] The `reviewer` returned "pass with fixes", nothing blocking; the fixes are in the MEMORY.md
+      session log of 2026-10-30 to 2026-11-02.
+- [x] `pnpm test` passes (re-run by the docs-keeper, 2026-11-02): 764 shared, 706 api, 191 web,
+      332 mobile. `build`, `lint`, `typecheck`, `format:check`, `test:integration` (1,681 tests
+      in 26 suites plus 6 in `storage-minio`), and `npx expo install --check` pass as reported by
+      the coordinator.
+- [ ] The migration `20261030090000_phase7_ai` is applied to the development database (needs the
+      owner's `pnpm db:reset`).
+- [ ] The owner's combined manual test of Phases 4 to 7 (`docs/reports/phase-7.md`).
+- [ ] The Phase 7 work is committed and pushed.
+
+Deferred (not in the v1 prompt or needing the owner): autonomous actions and natural-language
+questions over data (v2); other notification channels; Turkish and Arabic summary and
+notification catalogues and a prompt review with real samples; provider data agreements and zero
+data retention (Phase 8).
 
 ## Phase 8: Hardening & release
 
@@ -606,3 +690,7 @@ Tests, review, verification
 - [ ] Decide whether a lockout needs more than the per-identifier rate limit and an admin reset
       (anyone who knows an identifier can keep that account locked; finding F4, ADR-0004).
 - [ ] Runbook written: deploy, roll back, restore, rotate secrets.
+- [ ] AI providers in production (ADR-0010): data processing agreements with Anthropic and
+      OpenAI, zero data retention where available, the price table in
+      `apps/api/src/platform/ai/ai-prices.ts` re-checked, the prompts reviewed with real Turkish
+      and Arabic samples, and the per-user AI rate limit on the shared store (added 2026-11-02).

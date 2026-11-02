@@ -12,6 +12,8 @@ import type {
 import type { LocalPhoto } from '../storage/localPhoto';
 import { createMemoryDatabase } from './db';
 import { createLocalStore } from './localStore';
+import { createLocalAudioStore } from './audioStore';
+import { createLocalCaptureStore } from './captureStore';
 import { createLocalPhotoStore, createMemoryPhotoFiles } from './photoStore';
 import { createWriteQueue } from './writeQueue';
 
@@ -169,13 +171,18 @@ export function memoryLayer(userId = USER_A, options: { limitBytes?: number } = 
   const newId = idSequence();
   const store = createLocalStore(db, userId);
   const photos = createLocalPhotoStore(files, userId, options.limitBytes);
+  const audioFiles = createMemoryPhotoFiles();
+  const audio = createLocalAudioStore(audioFiles, userId);
+  const captures = createLocalCaptureStore(db);
   const queue = createWriteQueue({
     db,
     userId,
     newId,
     deletePhoto: (localId) => photos.delete(localId),
     clearPhotos: () => photos.clear(),
+    deleteAudio: (localId) => audio.delete(localId),
+    clearAudio: () => audio.clear(),
     lookupWorkLog: (clientId) => store.getWorkLogByClientId(clientId),
   });
-  return { db, files, newId, store, photos, queue };
+  return { db, files, audioFiles, newId, store, photos, audio, captures, queue };
 }

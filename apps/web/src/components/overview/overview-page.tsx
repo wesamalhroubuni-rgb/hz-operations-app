@@ -1,15 +1,16 @@
 'use client';
 
-import type { DashboardOverview } from '@ops/shared';
+import { aiFeaturesOf, type DashboardOverview } from '@ops/shared';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
+import { AnomalyPanel, LatestSummaryPanel } from '@/components/ai/summary-panels';
 import { Button } from '@/components/ui/button';
 import { FormField, Input } from '@/components/ui/form-field';
 import { PageHeader } from '@/components/ui/layout';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
-import { useOrgTime } from '@/hooks/use-organization';
+import { useOrganization, useOrgTime } from '@/hooks/use-organization';
 import { formatNumber, t } from '@/i18n';
 import { requireApiClient } from '@/lib/api/client';
 import { unwrap } from '@/lib/api/errors';
@@ -24,10 +25,14 @@ const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 /**
  * `/`: the caller's scope at a glance (`GET /dashboard/overview`). Every number is a link to the
  * list it counts, built from the API's `filter`. "Today" is today in the organization's time
- * zone; `?day=YYYY-MM-DD` looks at another day. Refreshes every minute while open.
+ * zone; `?day=YYYY-MM-DD` looks at another day. Refreshes every minute while open. With daily
+ * summaries on (Phase 7), the caller's latest summary and the unusual items follow.
  */
 export function OverviewPage() {
   const orgTime = useOrgTime();
+  const organization = useOrganization();
+  // Phase 7 (ADR-0011): the daily summary and the unusual items, when the feature is on.
+  const summariesOn = aiFeaturesOf(organization.data ?? null).dailySummary;
   const params = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
@@ -74,6 +79,12 @@ export function OverviewPage() {
         <ErrorState error={query.error} onRetry={() => void query.refetch()} />
       ) : null}
       {data ? <OverviewContent data={data} /> : null}
+      {summariesOn ? (
+        <>
+          <LatestSummaryPanel />
+          <AnomalyPanel lastDay={day ?? orgTime.today()} />
+        </>
+      ) : null}
     </div>
   );
 }

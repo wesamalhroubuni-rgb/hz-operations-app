@@ -6,6 +6,7 @@ import {
   type ChangeWorkLogStatus,
   type CreateWorkLogInput,
   type RegisterPushToken,
+  type SmartCaptureContext,
   type Task,
   type UpdateWorkLog,
   type WorkLog,
@@ -19,9 +20,16 @@ import {
   viewWorkLogs,
   type ViewUser,
 } from '../offline/localView';
+import type { LocalCaptureStore } from '../offline/captureStore';
 import type { OfflineLocalStore } from '../offline/localStore';
-import type { LocalPhotoStore, QueuedMutation } from '../offline/types';
-import type { OfflineWriteQueue } from '../offline/writeQueue';
+import type {
+  LocalAudioStore,
+  LocalPhotoStore,
+  QueuedMutation,
+  SmartCaptureInput,
+} from '../offline/types';
+import { smartCaptureRecordKey, type OfflineWriteQueue } from '../offline/writeQueue';
+import { confirmationBody } from '../logic/smartCapture';
 import type { LocalPhoto } from '../storage/localPhoto';
 import { fromApiResult, type WriteError, type WriteResult } from './results';
 
@@ -69,11 +77,40 @@ export interface NotificationsRepository {
   unregisterPushToken(token: string): Promise<WriteResult<unknown>>;
 }
 
+/**
+ * Smart capture (Phase 7, ADR-0010): "Speak", "Snap" or a typed note becomes a proposed log the
+ * worker reviews. The capture is queued like any write (it is processed when the phone is
+ * online); the result is kept on the phone for review. Nothing becomes a log until `confirm`.
+ */
+export interface CapturesRepository {
+  /**
+   * Keeps the voice note or photo in the user's folders and queues the capture. Answers the
+   * capture's clientId at once, online or offline.
+   */
+  start(
+    input: SmartCaptureInput,
+    context: SmartCaptureContext,
+  ): Promise<WriteResult<{ captureClientId: string }>>;
+  /**
+   * The worker saved the reviewed form: an ordinary queued log create, `ai_assisted` with the
+   * capture's id when the server processed it (manual otherwise, e.g. smart capture was off or
+   * over its limit). `photos` may include the Snap photo. The capture then leaves the phone.
+   */
+  confirm(
+    captureClientId: string,
+    body: CreateWorkLogInput,
+    photos?: readonly LocalPhoto[],
+  ): Promise<WriteResult<SavedWorkLog>>;
+  /** The worker does not want it: removed from the phone (and discarded on the server). */
+  discard(captureClientId: string): Promise<WriteResult<{ discarded: true }>>;
+}
+
 export interface Repositories {
   workLogs: WorkLogsRepository;
   tasks: TasksRepository;
   attachments: AttachmentsRepository;
   notifications: NotificationsRepository;
+  captures: CapturesRepository;
 }
 
 /**
@@ -89,6 +126,9 @@ export interface OfflineRepositoryDeps {
   store: OfflineLocalStore;
   queue: OfflineWriteQueue;
   photos: LocalPhotoStore;
+  /** Phase 7: voice notes waiting to be sent, and the captures kept for review. */
+  audio: LocalAudioStore;
+  captures: LocalCaptureStore;
   /** For records the cache does not hold, and for the writes that are not queued. */
   client: Client;
   newId: () => string;
@@ -319,5 +359,113 @@ export function createOfflineRepositories(deps: OfflineRepositoryDeps): Reposito
     },
   };
 
-  return { workLogs, tasks, attachments, notifications };
+  /** The capture's queue item that has not been processed yet, if any. */
+  async function captureItemOf(captureClientId: string) {
+    const recordKey = smartCaptureRecordKey(captureClientId);
+    return (
+      (await queue.list()).find(
+        (item) => item.recordKey === recordKey && item.mutation.kind === 'smartCapture',
+      ) ?? null
+    );
+  }
+
+  const busy: WriteError = {
+    kind: 'conflict',
+    message: 'The capture is being sent right now',
+    details: [],
+  };
+
+  const captures: CapturesRepository = {
+    async start(input, context) {
+      const now = clock();
+      let kept: SmartCaptureInput = input;
+      if (input.kind === 'photo') {
+        const photo = await keepPhotos([input.photo]);
+        if (!photo.ok) return photo;
+        kept = { ...input, photo: photo.photos[0] ?? input.photo };
+      } else if (input.kind === 'voice') {
+        kept = { ...input, audio: await deps.audio.save(input.audio) };
+      }
+      const captureClientId = deps.newId();
+      // The local record first: a capture never disappears from the worker's list unseen.
+      await deps.captures.put({
+        captureClientId,
+        input: kept,
+        context,
+        capture: null,
+        createdAt: now.toISOString(),
+      });
+      await queue.enqueue(
+        {
+          kind: 'smartCapture',
+          captureClientId,
+          input: kept,
+          context,
+          checkpoint: { captureId: null, uploaded: kept.kind === 'text', processed: false },
+        },
+        now,
+      );
+      return { ok: true, data: { captureClientId } };
+    },
+
+    async confirm(captureClientId, body, list = []) {
+      const local = await deps.captures.get(captureClientId);
+      if (!local) return { ok: false, error: notFound };
+      const item = await captureItemOf(captureClientId);
+      if (item?.state === 'sending') return { ok: false, error: busy };
+      const created = await workLogs.create(confirmationBody(local, body), list);
+      if (!created.ok) return created;
+      if (item) {
+        // Never processed (switched off, over the limit, still waiting): the worker filled the
+        // form by hand. Files the new log uses are kept by the queue.
+        await queue.discard(item.id);
+      }
+      await deps.captures.remove(captureClientId);
+      if (local.input.kind === 'photo') {
+        const photoId = local.input.photo.localId;
+        if (!list.some((photo) => photo.localId === photoId)) {
+          const used = await queue.referencedPhotoIds();
+          if (!used.includes(photoId)) await photos.delete(photoId);
+        }
+      }
+      return created;
+    },
+
+    async discard(captureClientId) {
+      const local = await deps.captures.get(captureClientId);
+      const item = await captureItemOf(captureClientId);
+      if (item) {
+        if (item.state === 'sending') return { ok: false, error: busy };
+        // Removes the capture, its files, and asks the server to discard it if it has it.
+        await queue.discard(item.id);
+      } else if (local?.capture) {
+        await queue.enqueue(
+          {
+            kind: 'discardSmartCapture',
+            captureClientId,
+            captureId: local.capture.id,
+          },
+          clock(),
+        );
+      }
+      if (local) {
+        await deps.captures.remove(captureClientId);
+        if (local.input.kind === 'photo') {
+          const used = await queue.referencedPhotoIds();
+          if (!used.includes(local.input.photo.localId)) {
+            await photos.delete(local.input.photo.localId);
+          }
+        }
+        if (local.input.kind === 'voice') {
+          const used = await queue.referencedAudioIds();
+          if (!used.includes(local.input.audio.localId)) {
+            await deps.audio.delete(local.input.audio.localId);
+          }
+        }
+      }
+      return { ok: true, data: { discarded: true } };
+    },
+  };
+
+  return { workLogs, tasks, attachments, notifications, captures };
 }

@@ -16,6 +16,8 @@ registerSyncEngineFactory((context) =>
         store: context.store,
         queue: context.queue,
         photos: context.photos,
+        audio: context.audio,
+        captures: context.captures,
         api: context.api,
         onNeedsSignIn: context.onNeedsSignIn,
       }),

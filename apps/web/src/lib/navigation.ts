@@ -11,7 +11,17 @@ import type { Capabilities, PageCapability } from './permissions';
  * report) and map; agent C owns tasks, people, structure, audit and settings.
  */
 export interface NavItem {
-  key: 'overview' | 'workLogs' | 'tasks' | 'map' | 'people' | 'structure' | 'audit' | 'settings';
+  key:
+    | 'overview'
+    | 'workLogs'
+    | 'tasks'
+    | 'map'
+    | 'summaries'
+    | 'people'
+    | 'structure'
+    | 'audit'
+    | 'settings'
+    | 'aiUsage';
   href: string;
   label: TranslationKey;
   /** The capability that shows the entry and opens the page. */
@@ -23,10 +33,13 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { key: 'workLogs', href: '/work-logs', label: 'nav.workLogs', requires: 'usesDashboard' },
   { key: 'tasks', href: '/tasks', label: 'nav.tasks', requires: 'usesDashboard' },
   { key: 'map', href: '/map', label: 'nav.map', requires: 'viewOverview' },
+  // Phase 7 (ADR-0011): own daily summaries (supervisor and above) and AI usage (admins).
+  { key: 'summaries', href: '/summaries', label: 'ai.nav.summaries', requires: 'readSummaries' },
   { key: 'people', href: '/people', label: 'nav.people', requires: 'viewPeople' },
   { key: 'structure', href: '/structure', label: 'nav.structure', requires: 'viewStructure' },
   { key: 'audit', href: '/audit', label: 'nav.audit', requires: 'readAudit' },
   { key: 'settings', href: '/settings', label: 'nav.settings', requires: 'editSettings' },
+  { key: 'aiUsage', href: '/ai-usage', label: 'ai.nav.usage', requires: 'viewAiUsage' },
 ];
 
 export function visibleNavItems(capabilities: Capabilities): NavItem[] {

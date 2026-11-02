@@ -150,15 +150,15 @@ describe('work logs', () => {
       expect(response.body.customFields).toEqual({ area: 'Roof', quantity: 0 });
     });
 
-    it('accepts a draft and another source, and a location without accuracy', async () => {
+    it('accepts a draft and a location without accuracy', async () => {
       const response = await api.post(
         '/work-logs',
-        body({ status: 'draft', source: 'voice', location: { latitude: -33.9, longitude: 151.2 } }),
+        body({ status: 'draft', location: { latitude: -33.9, longitude: 151.2 } }),
       );
       expect(response.status).toBe(201);
       expect(response.body).toMatchObject({
         status: 'draft',
-        source: 'voice',
+        source: 'manual',
         location: { latitude: -33.9, longitude: 151.2, accuracy: null },
       });
     });
@@ -417,6 +417,10 @@ describe('work logs', () => {
         ['a clientId that is not a UUID', { clientId: 'device-1-log-7' }],
         ['an unknown status', { status: 'sent' }],
         ['an unknown source', { source: 'drone' }],
+        // Phase 7 (ADR-0010): a client may send only manual or ai_assisted (with aiProposalId).
+        ['a reserved source', { source: 'voice' }],
+        ['ai_assisted without aiProposalId', { source: 'ai_assisted' }],
+        ['aiProposalId without ai_assisted', { aiProposalId: randomUUID() }],
         ['aiMetadata, which is reserved', { aiMetadata: { summary: 'x' } }],
         ['a text over 10000 characters', { text: 'x'.repeat(10_001) }],
         ['an authorId that is not a UUID', { authorId: 'me' }],

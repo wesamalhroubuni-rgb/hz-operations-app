@@ -102,6 +102,7 @@ function phone(options: { photoLimitBytes?: number } = {}) {
         databases.delete(userId);
       },
       photoFiles: files,
+      audioFiles: createMemoryPhotoFiles(),
       kept: createKeptUsersRegister(kv),
       legacy: kv,
       newId: idSequence('e'),
@@ -137,6 +138,8 @@ function phone(options: { photoLimitBytes?: number } = {}) {
       store: session.store,
       queue: session.queue,
       photos: session.photos,
+      audio: session.audio,
+      captures: session.captures,
       client: {
         workLogs: { get: async () => ({ ok: false, failure: network }) },
         tasks: { get: async () => ({ ok: false, failure: network }) },

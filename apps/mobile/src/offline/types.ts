@@ -12,6 +12,7 @@
 //   (kept until the worker discards it, copies it, or resubmits it as a new log).
 
 import type {
+  AiCaptureAudioMimeType,
   ApiClient,
   ApiErrorCode,
   AppNotification,
@@ -19,6 +20,8 @@ import type {
   ChangeTaskStatus,
   ChangeWorkLogStatus,
   CreateWorkLogInput,
+  SmartCapture,
+  SmartCaptureContext,
   LogType,
   OrganizationSummary,
   Site,
@@ -152,8 +155,119 @@ export type QueuedMutation =
       photo: LocalPhoto;
       /** Upload progress across attempts (`UploadCheckpoint` of @ops/shared). */
       checkpoint: { attachmentId: string | null; stored: boolean };
-    };
+    }
+  | SmartCaptureMutation
+  | DiscardSmartCaptureMutation;
 export type QueuedMutationKind = QueuedMutation['kind'];
+
+// ---------------------------------------------------------------------------------------------
+// Smart capture in the queue (Phase 7, ADR-0010): `SmartCaptureMutation` and
+// `DiscardSmartCaptureMutation` are part of `QueuedMutation`; record key
+// `smartCapture:<captureClientId>` (`src/offline/smartCaptureSteps.ts` runs them).
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A voice note recorded on the phone, kept in the app's private documents (per user, like the
+ * offline photos) until the capture is processed, then deleted.
+ */
+export interface LocalAudio {
+  localId: string;
+  /** `file://` URI in the app's document folder. */
+  uri: string;
+  fileName: string;
+  mimeType: AiCaptureAudioMimeType;
+  sizeBytes: number;
+  durationMs: number;
+}
+
+/** What the worker captured. A photo is the prepared JPEG of `LocalPhoto`. */
+export type SmartCaptureInput =
+  | { kind: 'voice'; audio: LocalAudio }
+  | { kind: 'photo'; photo: LocalPhoto; note: string | null }
+  | { kind: 'text'; text: string };
+
+/**
+ * "Speak" or "Snap" (or a typed note) made while offline, or not yet processed. Record key
+ * `smartCapture:<captureClientId>`; its own record, so it never waits for, or blocks, a log.
+ *
+ * The engine runs it in steps, saving `checkpoint` between them, each safe to repeat:
+ * 1. `POST /ai/capture` with `clientId = captureClientId` (a repeat returns the same capture);
+ * 2. for voice and photo, PUT the bytes to `upload` (renew with `POST /ai/capture/:id/upload-url`
+ *    when expired), then
+ * 3. `POST /ai/capture/:id/process`.
+ * The item is `done` when the capture is `proposed` or `failed`: the phone then shows the
+ * proposal (or "couldn't understand, please fill in manually" with the transcript) for review.
+ * Confirming is an ordinary `createWorkLog` with `source: 'ai_assisted'` and `aiProposalId`,
+ * queued like any log. `ai_disabled` and `ai_limit_reached` are final (`failed_permanent`: the
+ * worker fills the form by hand, the recording stays until discarded); `ai_unavailable`,
+ * `rate_limited` and network errors are retried. The worker can always fill the form manually
+ * while it waits.
+ */
+export interface SmartCaptureMutation {
+  kind: 'smartCapture';
+  /** The capture's clientId, generated when the worker recorded it. */
+  captureClientId: string;
+  input: SmartCaptureInput;
+  /** `capturedAt` is the phone's clock at recording time, not at sending time. */
+  context: SmartCaptureContext;
+  /** Progress across attempts. */
+  checkpoint: SmartCaptureCheckpoint;
+}
+
+/** Progress of a queued smart capture across attempts. */
+export interface SmartCaptureCheckpoint {
+  /** The server's capture id once `POST /ai/capture` answered. */
+  captureId: string | null;
+  /** The bytes of a voice note or photo reached the storage (always true for text). */
+  uploaded: boolean;
+  processed: boolean;
+}
+
+/**
+ * The worker discarded a capture the server already has (`POST /ai/capture/:id/discard`). A
+ * capture still waiting in the queue is simply removed from it instead. Same record key as the
+ * capture, so it is sent after it.
+ */
+export interface DiscardSmartCaptureMutation {
+  kind: 'discardSmartCapture';
+  captureClientId: string;
+  captureId: string;
+}
+
+/**
+ * A capture as the phone keeps it (table `smart_captures` of the user's database, key
+ * `captureClientId`): what was captured, and the server's answer once processed. Removed when the
+ * worker confirms (the log takes over) or discards it.
+ */
+export interface LocalSmartCapture {
+  captureClientId: string;
+  input: SmartCaptureInput;
+  context: SmartCaptureContext;
+  /** The processed capture (`proposed` or `failed`), or null while it waits in the queue. */
+  capture: SmartCapture | null;
+  /** The phone's clock when the worker captured it (ISO). */
+  createdAt: string;
+}
+
+/** Where the engine puts a processed capture (the user's `smart_captures` table). */
+export interface SmartCaptureResults {
+  saveResult(captureClientId: string, capture: SmartCapture): Promise<void>;
+}
+
+/**
+ * Voice notes waiting to be sent, as files in a folder per user (`offline-audio/<userId>/`), like
+ * the offline photos. A file is deleted once its capture was processed, or when it is discarded.
+ */
+export interface LocalAudioStore {
+  readonly userId: string;
+  /** Moves a recorded file into the store (`audio.uri` is where the recorder left it). */
+  save(audio: LocalAudio): Promise<LocalAudio>;
+  exists(audio: LocalAudio): Promise<boolean>;
+  delete(localId: string): Promise<void>;
+  /** Deletes every file not referenced by `keepLocalIds` (start-up cleanup of orphans). */
+  deleteAllExcept(keepLocalIds: readonly string[]): Promise<number>;
+  clear(): Promise<void>;
+}
 
 /**
  * - `pending`: waiting for its turn (or for `nextAttemptAt`).
@@ -171,7 +285,8 @@ export type QueueItemState =
 /** Why the last attempt failed. Never holds a token or a password. */
 export interface QueueItemError {
   /** The API's code; `network` / `timeout` / `invalid_response` when there was no API error body. */
-  code: ApiErrorCode | 'network' | 'timeout' | 'invalid_response' | 'photo_missing';
+  code:
+    ApiErrorCode | 'network' | 'timeout' | 'invalid_response' | 'photo_missing' | 'audio_missing';
   /** For logs and as a fallback; the screen shows `t(...)` by `code`. */
   message: string;
   /** HTTP status, or null without one. */
@@ -256,6 +371,8 @@ export interface WriteQueue {
     id: string,
     checkpoint: { attachmentId: string | null; stored: boolean },
   ): Promise<void>;
+  /** Saves the progress of a `smartCapture` item between steps (Phase 7). */
+  saveCaptureCheckpoint(id: string, checkpoint: SmartCaptureCheckpoint): Promise<void>;
   /** Rewrites `expectedVersion` of the next unsent items of a record after a success. */
   rebaseVersion(recordKey: string, version: number): Promise<void>;
   /** Sets every `sending` item back to `pending` (app start). */
@@ -389,6 +506,10 @@ export interface SyncEngineDeps {
   retry: RetryPolicy;
   /** Called when the session cannot be renewed; the app shows sign-in for the same user. */
   onNeedsSignIn: () => void;
+  /** Phase 7: the user's voice notes waiting to be sent (smart capture). */
+  audio?: LocalAudioStore;
+  /** Phase 7: where processed captures go, for the review screen. */
+  captures?: SmartCaptureResults;
 }
 
 /** Connectivity, from @react-native-community/netinfo (or a fake in tests). */
