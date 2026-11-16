@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import * as Notifications from 'expo-notifications';
+import type { NotificationResponse } from 'expo-notifications';
 import {
   createContext,
   useContext,
@@ -14,6 +14,7 @@ import { useRepositories } from '../data/DataProvider';
 import { queryKeys } from '../data/queryKeys';
 import { notificationTarget } from '../logic/notificationRouting';
 import { openTarget } from '../navigation/navigationRef';
+import { Notifications } from './notificationsModule';
 import { configureForegroundPresentation, pushDevice } from './pushDevice';
 import { createPushService, type PushService, type PushState } from './pushService';
 
@@ -47,7 +48,11 @@ export function PushProvider({ children }: Readonly<{ children: ReactNode }>) {
   }, [service]);
 
   useEffect(() => {
-    function handleTap(response: Notifications.NotificationResponse): void {
+    // Not loaded in Android Expo Go (no remote push there); the in-app list still refreshes on use.
+    if (!Notifications) return undefined;
+    const notifications = Notifications;
+
+    function handleTap(response: NotificationResponse): void {
       const content = response.notification.request.content;
       const data = (content.data ?? {}) as Record<string, unknown>;
       if (typeof data.notificationId === 'string' && UUID.test(data.notificationId)) {
@@ -58,15 +63,15 @@ export function PushProvider({ children }: Readonly<{ children: ReactNode }>) {
       if (target) openTarget(target);
     }
 
-    const received = Notifications.addNotificationReceivedListener(() => {
+    const received = notifications.addNotificationReceivedListener(() => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.notifications });
     });
-    const tapped = Notifications.addNotificationResponseReceivedListener(handleTap);
+    const tapped = notifications.addNotificationResponseReceivedListener(handleTap);
     // A tap that launched the app arrived before this listener existed.
-    const last = Notifications.getLastNotificationResponse();
+    const last = notifications.getLastNotificationResponse();
     if (last) {
       handleTap(last);
-      Notifications.clearLastNotificationResponse();
+      notifications.clearLastNotificationResponse();
     }
     return () => {
       received.remove();

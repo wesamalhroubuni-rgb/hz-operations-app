@@ -636,6 +636,15 @@ function pastMoment(now: Date, daysAgo: number, hour: number): Date {
   return new Date(Math.min(day.getTime(), now.getTime() - 60_000));
 }
 
+/**
+ * The `occurredAt` the demo log is created with: its real moment when the API accepts it, else
+ * the oldest moment it accepts (the service refuses logs older than `offlineMaxBackdateDays`,
+ * default 7, ADR-0008). The real moment is written afterwards, seed only.
+ */
+function acceptedOccurredAt(now: Date, occurredAt: Date): Date {
+  return new Date(Math.max(occurredAt.getTime(), now.getTime() - 6 * DAY_MS));
+}
+
 function describeMembership(membership: DemoMembership): string {
   const scope = [
     ...(membership.orgWide ? ['whole organization'] : []),
@@ -819,7 +828,7 @@ export async function seedDemo(app: INestApplicationContext): Promise<DemoSeedRe
       workLogsService.create(
         createWorkLogSchema.parse({
           clientId: randomUUID(),
-          occurredAt: occurredAt.toISOString(),
+          occurredAt: acceptedOccurredAt(now, occurredAt).toISOString(),
           taskId: demo.task === undefined ? undefined : taskIds[demo.task],
           siteId: demo.site ? siteIds[demo.site] : undefined,
           teamId: demo.team ? teamIds[demo.team] : undefined,
@@ -840,10 +849,12 @@ export async function seedDemo(app: INestApplicationContext): Promise<DemoSeedRe
     );
     // SEED ONLY: a log is stored when it is written, so the demo logs get the `createdAt` they
     // would have had (ten minutes after the work). That puts the older ones outside the edit
-    // window, and keeps today's inside it, so both cases can be tried. No service does this.
+    // window, and keeps today's inside it, so both cases can be tried. Logs older than the
+    // backdate limit also get their real `occurredAt` here (see `acceptedOccurredAt`), so the
+    // history spans two weeks. No service does this.
     await prisma.workLog.update({
       where: { id: workLog.id },
-      data: { createdAt: new Date(occurredAt.getTime() + 10 * 60_000) },
+      data: { occurredAt, createdAt: new Date(occurredAt.getTime() + 10 * 60_000) },
     });
     if (demo.status === 'approved' || demo.status === 'rejected') {
       // Reviewed by the manager: a reviewer who can see every log and wrote none of them.

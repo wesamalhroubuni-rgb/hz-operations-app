@@ -119,7 +119,8 @@ Ports: API 3001 on `127.0.0.1` (`/health`; in development also `/docs`, `/docs-j
 Calling the API in development: `POST /auth/login` with `"client": "mobile"` and send
 `Authorization: Bearer <tokens.accessToken>`. Identifiers per seeded role and PowerShell examples
 are in [README.md](README.md) section 4. The seed's development passwords are in `DEV_PASSWORDS` in
-`apps/api/src/operations/seed/demo-seed.ts`; never print or copy them.
+`apps/api/src/operations/seed/demo-seed.ts`; show them to the owner in chat only when asked
+(see Auth and permissions), never anywhere else.
 
 If `node`, `pnpm`, or `git` are not found in an agent shell, prefix the command with:
 
@@ -186,7 +187,9 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   body. Business modules touch credentials, codes, and sessions only through `AuthAdminService`,
   inside their own transaction.
 - **Never print, log, or write into a document a password, one-time code, or token**, including
-  the seed's `DEV_PASSWORDS` and codes from the development log.
+  codes from the development log. One exception, granted by the owner on 2026-11-16: the seed's
+  `DEV_PASSWORDS` (demo accounts, development only) may be shown to the owner in chat when asked.
+  They still never go into a log, a document, a report, or a commit message.
 - Login without `organizationSlug` works only while exactly one active organization exists. The
   clients send `NEXT_PUBLIC_ORGANIZATION_SLUG` / `EXPO_PUBLIC_ORGANIZATION_SLUG` (`hz-demo`).
 - Cookie-authenticated writes need an allowed `Origin` and `x-csrf-token`; scripts should sign in
