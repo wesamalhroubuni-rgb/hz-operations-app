@@ -90,8 +90,50 @@ export const darkTheme: Theme = {
   },
 };
 
-/** Every available theme. Only a dark one exists today. */
-export const themes = { dark: darkTheme } as const;
+/**
+ * The light theme, used when the device or browser is set to light mode. Warm neutrals that sit
+ * well next to the logo (a black tile with gold lettering); the gold is darkened until it passes
+ * AA as text on white, and the logo red keeps its sampled value as a decorative accent.
+ */
+export const lightTheme: Theme = {
+  name: 'light',
+  scheme: 'light',
+  colors: {
+    background: '#F7F6F3',
+    surface: '#FFFFFF',
+    surfaceRaised: '#F1EFEA',
+
+    border: '#E3E0D8',
+    borderStrong: '#8A8578',
+
+    textPrimary: '#1A1814',
+    textSecondary: '#4A463E',
+    textMuted: '#625D53',
+
+    brandGold: '#D4A454',
+    brandRed: '#D80611',
+
+    primary: '#8A6416',
+    primaryHover: '#6F500F',
+    onPrimary: '#FFFFFF',
+
+    accent: '#D80611',
+    accentText: '#B0050E',
+
+    success: '#1D7046',
+    warning: '#9A4F06',
+    danger: '#B42318',
+    info: '#1F64AD',
+  },
+};
+
+/** Every available theme. The apps follow the device's light or dark setting. */
+export const themes = { dark: darkTheme, light: lightTheme } as const;
+
+/** The theme for a colour scheme reported by the device or browser (unknown = dark). */
+export function themeForScheme(scheme: 'light' | 'dark' | null | undefined): Theme {
+  return scheme === 'light' ? lightTheme : darkTheme;
+}
 
 export const defaultTheme: Theme = darkTheme;
 

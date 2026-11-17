@@ -1,7 +1,11 @@
 'use client';
 
 import {
+  AI_LLM_MODEL_CHOICES,
+  AI_STT_MODEL_CHOICES,
   AI_SUMMARY_RECIPIENT_ROLES,
+  type AiLlmModel,
+  type AiSttModel,
   MAX_AI_DAILY_COST_LIMIT_USD,
   MAX_AI_DAILY_REQUEST_LIMIT,
   type OrganizationFull,
@@ -12,7 +16,7 @@ import { useState, type FormEvent } from 'react';
 
 import { FormAlert, Notice } from '@/components/manage/parts';
 import { Button } from '@/components/ui/button';
-import { Checkbox, FormField, Input } from '@/components/ui/form-field';
+import { Checkbox, FormField, Input, Select } from '@/components/ui/form-field';
 import { t, type TranslationKey } from '@/i18n';
 import {
   AI_USAGE_PATH,
@@ -63,6 +67,7 @@ export function AiSettingsSection({ organization }: Readonly<{ organization: Org
       const saved = unwrap(await requireApiClient().organization.update(built.body));
       queryClient.setQueryData(queryKeys.organization, saved);
       setForm(aiSettingsFormFrom(saved));
+      // The keys card and the usage page show the model in force.
       await queryClient.invalidateQueries({ queryKey: queryKeys.ai.all });
       setNotice(t('ai.settings.saved'));
     } catch (error) {
@@ -141,6 +146,36 @@ export function AiSettingsSection({ organization }: Readonly<{ organization: Org
                   step="any"
                   value={form.dailyCostLimitUsd}
                   onChange={(event) => update({ dailyCostLimitUsd: event.target.value })}
+                />
+              )}
+            </FormField>
+          </div>
+          <div className={styles.formGrid}>
+            <FormField label={t('ai.settings.llmModel')} hint={t('ai.settings.llmModelHint')}>
+              {(control) => (
+                <Select
+                  {...control}
+                  value={form.llmModel}
+                  placeholder={t('ai.settings.serverModel')}
+                  options={AI_LLM_MODEL_CHOICES.map((model) => ({
+                    value: model,
+                    label: t(`ai.settings.llmModels.${model}` as TranslationKey),
+                  }))}
+                  onChange={(event) => update({ llmModel: event.target.value as AiLlmModel | '' })}
+                />
+              )}
+            </FormField>
+            <FormField label={t('ai.settings.sttModel')} hint={t('ai.settings.sttModelHint')}>
+              {(control) => (
+                <Select
+                  {...control}
+                  value={form.sttModel}
+                  placeholder={t('ai.settings.serverModel')}
+                  options={AI_STT_MODEL_CHOICES.map((model) => ({
+                    value: model,
+                    label: t(`ai.settings.sttModels.${model}` as TranslationKey),
+                  }))}
+                  onChange={(event) => update({ sttModel: event.target.value as AiSttModel | '' })}
                 />
               )}
             </FormField>

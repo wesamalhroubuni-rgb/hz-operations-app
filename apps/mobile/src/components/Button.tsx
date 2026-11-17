@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { colors, fontSizes, fontWeights, radii, spacing } from '@ops/shared';
+import { fontSizes, fontWeights, radii, spacing } from '@ops/shared';
 import type { ComponentProps } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 
+import { makeStyles, useTheme } from '../theme';
 import { iconSize, touch } from './sizes';
 
 export type IconName = ComponentProps<typeof Ionicons>['name'];
@@ -33,6 +34,9 @@ export function Button({
   accessibilityHint,
   accessibilityLabel,
 }: Readonly<ButtonProps>) {
+  const styles = useStyles();
+  const pressedStyles = usePressedStyles();
+  const { colors } = useTheme();
   const inactive = disabled || busy;
   const textColor = inactive
     ? colors.textMuted
@@ -83,7 +87,7 @@ export function Button({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   base: {
     minHeight: touch.comfortable,
     alignItems: 'center',
@@ -133,9 +137,9 @@ const styles = StyleSheet.create({
   linkText: {
     textDecorationLine: 'underline',
   },
-});
+}));
 
-const pressedStyles = StyleSheet.create({
+const usePressedStyles = makeStyles((colors) => ({
   primary: {
     borderColor: colors.primaryHover,
     backgroundColor: colors.primaryHover,
@@ -147,4 +151,4 @@ const pressedStyles = StyleSheet.create({
   link: {
     backgroundColor: colors.surfaceRaised,
   },
-});
+}));

@@ -224,7 +224,17 @@ describe('AI settings: PATCH keeps every other setting and replaces settings.ai'
       summaryRecipientRoles: ['supervisor', 'manager'],
       dailyRequestLimit: '',
       dailyCostLimitUsd: '',
+      llmModel: '',
+      sttModel: '',
     });
+  });
+
+  it("sends a chosen model and leaves it out for the server's default (ADR-0012)", () => {
+    const base = aiSettingsFormFrom(ORG);
+    const chosen = aiSettingsUpdateBody(ORG, { ...base, llmModel: 'claude-sonnet-5-5' });
+    expect(chosen.ok && chosen.body.settings.ai).toMatchObject({ llmModel: 'claude-sonnet-5-5' });
+    const fallback = aiSettingsUpdateBody(ORG, base);
+    expect(fallback.ok && 'llmModel' in (fallback.body.settings.ai as object)).toBe(false);
   });
 
   it('sends the other keys unchanged and a valid ai object', () => {

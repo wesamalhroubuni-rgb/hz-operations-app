@@ -1,17 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
-import { colors, fontSizes, fontWeights, spacing } from '@ops/shared';
+import { fontSizes, fontWeights, spacing, type ThemeColors } from '@ops/shared';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import {
   createNativeStackNavigator,
   type NativeStackNavigationOptions,
 } from '@react-navigation/native-stack';
-import type { ComponentProps } from 'react';
+import { useMemo, type ComponentProps } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { touch } from '../components/sizes';
 import { SyncIndicator } from '../components/SyncIndicator';
 import { SyncProvider } from '../components/SyncProvider';
 import { useNotifications } from '../data/queries';
+import { useLiveUser } from '../hooks/useLiveUser';
 import { t } from '../i18n';
 import { CaptureScreen } from '../screens/CaptureScreen';
 import { HomeScreen } from '../screens/HomeScreen';
@@ -24,6 +25,7 @@ import { ProfileScreen } from '../screens/ProfileScreen';
 import { SyncScreen } from '../screens/SyncScreen';
 import { TaskDetailScreen } from '../screens/TaskDetailScreen';
 import { TasksScreen } from '../screens/TasksScreen';
+import { useTheme } from '../theme';
 import type { SignedInStackParamList, TabParamList } from './types';
 
 const Stack = createNativeStackNavigator<SignedInStackParamList>();
@@ -39,23 +41,33 @@ const TAB_ICONS: Record<keyof TabParamList, [IconName, IconName]> = {
   Profile: ['person-circle', 'person-circle-outline'],
 };
 
-export const headerOptions: NativeStackNavigationOptions = {
-  headerStyle: { backgroundColor: colors.background },
-  headerTintColor: colors.primary,
-  headerTitleStyle: {
-    color: colors.textPrimary,
-    fontWeight: fontWeights.semibold,
-    fontSize: fontSizes.lg,
-  },
-  headerShadowVisible: false,
-  contentStyle: { backgroundColor: colors.background },
-};
+/** The stack headers in a theme's colours. */
+export function headerOptionsFor(colors: ThemeColors): NativeStackNavigationOptions {
+  return {
+    headerStyle: { backgroundColor: colors.background },
+    headerTintColor: colors.primary,
+    headerTitleStyle: {
+      color: colors.textPrimary,
+      fontWeight: fontWeights.semibold,
+      fontSize: fontSizes.lg,
+    },
+    headerShadowVisible: false,
+    contentStyle: { backgroundColor: colors.background },
+  };
+}
+
+/** The stack headers in the active theme's colours. */
+export function useHeaderOptions(): NativeStackNavigationOptions {
+  const { colors } = useTheme();
+  return useMemo(() => headerOptionsFor(colors), [colors]);
+}
 
 function TabNavigator() {
   const insets = useSafeAreaInsets();
   const notifications = useNotifications();
   const unread = notifications.data?.unreadCount ?? 0;
   const tabBarHeight = touch.primary + insets.bottom;
+  const { colors } = useTheme();
 
   return (
     <Tabs.Navigator
@@ -128,6 +140,9 @@ function TabNavigator() {
  * state of the user's offline session (indicator, banners, Sync screen).
  */
 export function SignedInNavigator() {
+  // Live updates: the signed-in user (role, scope, name) is re-checked after the sync pulls.
+  useLiveUser();
+  const headerOptions = useHeaderOptions();
   return (
     <SyncProvider>
       <Stack.Navigator screenOptions={headerOptions}>

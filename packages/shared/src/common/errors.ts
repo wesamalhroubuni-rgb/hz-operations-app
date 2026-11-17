@@ -34,6 +34,9 @@ export const API_ERROR_CODES = [
   'ai_disabled',
   'ai_limit_reached',
   'ai_unavailable',
+  // ADR-0012
+  'ai_key_invalid',
+  'ai_key_storage_unavailable',
 ] as const;
 
 export const apiErrorCodeSchema = z.enum(API_ERROR_CODES);
@@ -67,6 +70,10 @@ export type ApiErrorCode = z.infer<typeof apiErrorCodeSchema>;
  *   limit is the ordinary, retryable `rate_limited` with `Retry-After`.
  * - `ai_unavailable` (503, Phase 7): the AI provider failed or timed out; the capture is kept
  *   and may be processed again later. Retryable.
+ * - `ai_key_invalid` (422, ADR-0012): the provider refused the pasted API key (wrong, revoked,
+ *   or without access to the configured model); nothing was stored.
+ * - `ai_key_storage_unavailable` (503, ADR-0012): the server has no `AI_KEYS_ENCRYPTION_SECRET`,
+ *   so it cannot store an organization's key. The operator must set it.
  *
  * Unusable model output is not an error code: the capture answers 200 with status `failed`,
  * `failureReason: 'output_invalid'` and the transcript kept (ADR-0010).
@@ -95,6 +102,8 @@ export const API_ERROR_STATUS: Readonly<Record<ApiErrorCode, number>> = {
   ai_disabled: 403,
   ai_limit_reached: 429,
   ai_unavailable: 503,
+  ai_key_invalid: 422,
+  ai_key_storage_unavailable: 503,
 };
 
 /**

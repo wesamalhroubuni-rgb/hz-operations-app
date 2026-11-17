@@ -97,6 +97,8 @@ export class SyncService {
       organizationId,
       recipientId: userId,
       createdAt: { gte: windowStart },
+      // A resolved notification leaves the phone (the pull's id list no longer has it).
+      resolvedAt: null,
     };
     const idOnly = { select: { id: true }, orderBy: { id: 'asc' as const } };
 

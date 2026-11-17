@@ -1,6 +1,6 @@
 # packages/shared memory
 
-Package `@ops/shared`. Last updated: 2026-11-02.
+Package `@ops/shared`. Last updated: 2026-11-16.
 
 ## Purpose
 
@@ -12,7 +12,8 @@ and wording that must behave the same on the server and in both apps, and the de
 
 Seven areas plus the health schema, all re-exported from `src/index.ts`. Phase 6 (2026-10-28)
 added the dashboard contracts, the time-zone, CSV, and locale helpers, and `src/i18n/`; Phase 7
-(2026-10-30 to 2026-11-02) the AI contracts (below).
+(2026-10-30 to 2026-11-02) the AI contracts (below); 2026-11-16 (uncommitted) the AI keys
+contract, the model choices, `refreshUser`, and the light theme (below).
 
 | Area              | Contents                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -20,13 +21,31 @@ added the dashboard contracts, the time-zone, CSV, and locale helpers, and `src/
 | `src/common/`     | `apiErrorSchema`, `API_ERROR_CODES` with `API_ERROR_STATUS` and `RETRYABLE_API_ERROR_CODES`; pagination, sort, id, date, and query-boolean schemas; `time-zone.ts`, `csv.ts`, `locale.ts` (Phase 6).                                                                                                                                                                                                         |
 | `src/domain/`     | One file per resource (`organization`, `users`, `memberships`, `sites`, `teams`, `log-types`, `tasks`, `work-logs`, `attachments`, `scope`, `sync`, from Phase 6 `dashboard`, `directory`, `exports`, `history`, `reports`, and from Phase 7 `ai-capture`, `ai-capture-output`, `ai-settings`, `ai-summaries`), plus `enums.ts` (with `roleRank`, `rolesHighestFirst`), `custom-fields.ts`, and `shared.ts`. |
 | `src/i18n/`       | `translate.ts`: `createTranslator` (plurals by `Intl.PluralRules`, `{{name}}`, fallback catalogue then the key), `pickLanguage`, `isRtlLanguage`, catalogue types. Used by web and mobile (moved from mobile in Phase 6).                                                                                                                                                                                    |
-| `src/platform/`   | `auth.ts` (the sign-in wire contract), `notifications.ts` (Phase 4), `offline-sync.ts` (Phase 5), `ai.ts` (Phase 7: usage report, trace enums), `audit.ts`, `outbox.ts`. `AUDIT_REDACTED`.                                                                                                                                                                                                                   |
+| `src/platform/`   | `auth.ts` (the sign-in wire contract), `notifications.ts` (Phase 4), `offline-sync.ts` (Phase 5), `ai.ts` (Phase 7: usage report, trace enums), `ai-keys.ts` (ADR-0012), `audit.ts`, `outbox.ts`. `AUDIT_REDACTED`.                                                                                                                                                                                          |
 | `src/forms/`      | `custom-field-form.ts` (Phase 4): form descriptors, initial values, reconciling with a changed log type, number parsing, conversion to wire values through `validateCustomFieldValues`, mapping API error details back to fields.                                                                                                                                                                            |
 | `src/theme/`      | `tokens.ts`, `contrast.ts`, `css.ts`.                                                                                                                                                                                                                                                                                                                                                                        |
 | `src/api-client/` | `client.ts` (transport with auth hooks and refresh-once, `ApiResult`, `CSRF_HEADER`, `REQUEST_ID_HEADER`), `create-api-client.ts` (`createApiClient`), `auth-session.ts` (`createAuthSessionManager`), `auth-text.ts`, `auth-forms.ts`, `attachment-upload.ts` (Phase 4), `health-monitor.ts`, `health-status.ts`, `index.ts`.                                                                               |
 
-764 unit tests in 18 files, confirmed on 2026-11-02 (Phase 6 added `csv.test.ts`,
-`time-zone.test.ts`, `dashboard-contracts.test.ts`; Phase 7 `domain/ai-contracts.test.ts`).
+815 unit tests in 18 files, confirmed on 2026-11-16 (Phase 6 added `csv.test.ts`,
+`time-zone.test.ts`, `dashboard-contracts.test.ts`; Phase 7 `domain/ai-contracts.test.ts`;
+2026-11-16 added cases to `auth-session.test.ts` and `ai-contracts.test.ts`).
+
+## Changes of 2026-11-16 (ADR-0012, live updates, light theme; uncommitted)
+
+- **AI keys** (`platform/ai-keys.ts`): `AI_KEY_PROVIDERS` (`anthropic`, `openai`; must match the
+  Prisma enum `AiKeyProvider`), `AI_KEY_SOURCES` (`organization`, `environment`, `test`, `none`),
+  `aiProviderKeyStatusSchema` (`provider`, `source`, `hint`, `updatedAt`, `unreadable`, `model`;
+  never the key), `aiProviderKeysSchema` (`storageAvailable`, `keys`), `setAiProviderKeySchema`
+  (strict `{ apiKey }`, 20 to `AI_KEY_MAX_LENGTH` 500 printable characters), `aiKeyHint`,
+  `aiKeysEndpoints` (`get`, `set`, `remove`; `createApiClient` group `aiKeys`).
+- **Model choice** (`domain/ai-settings.ts`): `AI_LLM_MODEL_CHOICES` (`claude-opus-5-5`,
+  `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-fable-5-2`) and `AI_STT_MODEL_CHOICES`
+  (`gpt-4o-transcribe`, `gpt-4o-mini-transcribe`, `whisper-1`); optional `settings.ai.llmModel` /
+  `sttModel`; `aiSettingsOf` returns them (null = the server's model). Each choice needs a row in
+  the API's price table.
+- **Error codes**: `ai_key_invalid` (422), `ai_key_storage_unavailable` (503).
+- **Theme**: `lightTheme`, `themes.light`, `themeForScheme(scheme)` (unknown = dark);
+  `themeCss(theme, selector)` is what the web layout uses for both schemes.
 
 ## Phase 7 contract changes (ADR-0010, ADR-0011, 2026-10-30)
 
@@ -168,7 +187,8 @@ put, onProgress, checkpoint })` runs start, PUT, and complete and returns an
 | `src/common/errors.ts`                | The error body of every non-2xx API response (except `/health`).                                                                                                    |
 | `src/domain/enums.ts`                 | `ROLES` (with `roleRank`, `rolesHighestFirst`), `TASK_STATUSES`, `TASK_PRIORITIES`, `WORK_LOG_STATUSES`, `WORK_LOG_SOURCES`. Must match the Prisma enums, in order. |
 | `src/domain/ai-capture-output.ts`     | The per-capture output schema, its JSON Schema form, interpretation into a proposal, and comparison with the saved log (Phase 7).                                   |
-| `src/domain/ai-settings.ts`           | `settings.ai` schema, defaults (`aiSettingsOf`), the `aiFeatures` of the organization summary (Phase 7).                                                            |
+| `src/domain/ai-settings.ts`           | `settings.ai` schema (with the model choices), defaults (`aiSettingsOf`), the `aiFeatures` of the organization summary (Phase 7).                                   |
+| `src/platform/ai-keys.ts`             | The organization AI keys contract and endpoints (ADR-0012).                                                                                                         |
 | `src/domain/custom-fields.ts`         | Custom field definitions and `validateCustomFieldValues` (ADR-0003).                                                                                                |
 | `src/platform/auth.ts`                | The sign-in wire contract (above).                                                                                                                                  |
 | `src/api-client/client.ts`            | `createApiTransport`: the one place that performs HTTP. Bearer token, CSRF header on non-GET, `credentials`, refresh once on a 401.                                 |
@@ -184,7 +204,7 @@ put, onProgress, checkpoint })` runs start, PUT, and complete and returns an
 | `src/platform/offline-sync.ts`        | Offline sync headers, clock skew helpers, idempotency constants, audit metadata schema (Phase 5).                                                                   |
 | `src/domain/sync.ts`                  | `GET /sync/pull` schemas, constants, and endpoint (Phase 5).                                                                                                        |
 | `src/api-client/health-monitor.ts`    | `createHealthMonitor` with retries after 2, 4, 8, 16 seconds.                                                                                                       |
-| `src/theme/tokens.ts`                 | `darkTheme`, `colors`, `spacing`, `radii`, `fontSizes`, `fontWeights`, `CONTRAST_REQUIREMENTS`.                                                                     |
+| `src/theme/tokens.ts`                 | `darkTheme`, `lightTheme`, `themeForScheme`, `colors`, `spacing`, `radii`, `fontSizes`, `fontWeights`, `CONTRAST_REQUIREMENTS`.                                     |
 | `tsconfig.json`                       | Extends `@ops/config/tsconfig/library.json`. Adds the `DOM` lib, only for `fetch`, `AbortController`, and timers.                                                   |
 
 ## The API client and the session manager
@@ -209,6 +229,11 @@ const logs = await session.client.workLogs.list({ sort: 'occurredAt:desc' });
   `sign_out_unconfirmed`), `signedIn` (with `AuthUser`). `signOut()` always ends signed out;
   `signOutEverywhere()` stays signed in when the server could not confirm. A failed refresh that
   is not a 400 or 401 keeps the session.
+- `refreshUser({ maxAgeMs? })` (2026-11-16, live updates): re-asks `/auth/me` while signed in,
+  single flight, optional throttle since the user was last confirmed; never shows `loading`, never
+  bumps the session epoch (so it cannot race a token rotation), updates the state only when the
+  user differs, keeps the user on a failure, and re-runs `start()` if the session now belongs
+  to another user (web, another tab).
 - The manager never logs and never puts a password, code, or token in a message.
 - To add a resource: write its schemas and `xxxEndpoints(transport)` in `src/domain/` (or
   `src/platform/`), export it, and add it to `createApiClient` in `create-api-client.ts`.
@@ -217,6 +242,9 @@ const logs = await session.client.workLogs.list({ sort: 'occurredAt:desc' });
 
 - Palette from the client's logo: `background` `#000000`, `primary` / `brandGold` `#D4A454`,
   `brandRed` / `accent` `#D80611`, `accentText` / `danger` `#FF6B6E`, `textPrimary` `#F5F1E8`.
+- `lightTheme` (2026-11-16): warm neutrals (`background` `#F7F6F3`, `surface` `#FFFFFF`), a darker
+  gold `primary` `#8A6416` that passes AA as text on white, `accentText` `#B0050E`. The web
+  follows `prefers-color-scheme`; the phone still uses `darkTheme` only.
 - `brandRed` fails WCAG AA as normal text on black; use it only for decoration.
 - `CONTRAST_REQUIREMENTS` lists the allowed pairings; `theme.test.ts` checks every one.
 
@@ -257,7 +285,8 @@ const logs = await session.client.workLogs.list({ sort: 'occurredAt:desc' });
   rules stay in the API.
 - `ATTACHMENT_STATUSES`, `PUSH_PLATFORMS`, and the Phase 7 arrays (`SMART_CAPTURE_INPUT_KINDS`,
   `SMART_CAPTURE_STATUSES`, `ANOMALY_KINDS`, `ANOMALY_SEVERITIES`, `SUMMARY_NARRATIVE_SOURCES`,
-  `AI_TRACE_STATUSES`, `AI_DECISIONS`) must match the Prisma enums, like `enums.ts`
+  `AI_TRACE_STATUSES`, `AI_DECISIONS`) and `AI_KEY_PROVIDERS` must match the Prisma enums, like
+  `enums.ts`
   (`apps/api/src/prisma-enums.spec.ts` checks them).
 - The capture output schema must stay within the JSON Schema subset structured outputs accept;
   `toStructuredOutputJsonSchema` is the one conversion, tested in `ai-contracts.test.ts`.

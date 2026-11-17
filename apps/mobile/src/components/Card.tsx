@@ -1,7 +1,8 @@
-import { colors, radii, spacing } from '@ops/shared';
+import { radii, spacing } from '@ops/shared';
 import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
 
+import { makeStyles } from '../theme';
 import { touch } from './sizes';
 
 interface CardProps {
@@ -21,6 +22,7 @@ export function Card({
   accessibilityHint,
   style,
 }: Readonly<CardProps>) {
+  const styles = useStyles();
   if (!onPress) {
     return <View style={[styles.card, style]}>{children}</View>;
   }
@@ -37,7 +39,7 @@ export function Card({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   card: {
     gap: spacing.sm,
     padding: spacing.lg,
@@ -53,4 +55,4 @@ const styles = StyleSheet.create({
     borderColor: colors.primary,
     backgroundColor: colors.surfaceRaised,
   },
-});
+}));

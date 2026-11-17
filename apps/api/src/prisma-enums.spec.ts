@@ -1,5 +1,6 @@
 import {
   AI_DECISIONS,
+  AI_KEY_PROVIDERS,
   AI_TRACE_STATUSES,
   ANOMALY_KINDS,
   ANOMALY_SEVERITIES,
@@ -34,6 +35,7 @@ describe('shared enum arrays equal the Prisma enums', () => {
     ['SummaryNarrativeSource', SUMMARY_NARRATIVE_SOURCES],
     ['AiTraceStatus', AI_TRACE_STATUSES],
     ['AiDecision', AI_DECISIONS],
+    ['AiKeyProvider', AI_KEY_PROVIDERS],
   ] as const)('%s', (name, values) => {
     const prismaEnum = (prismaEnums as unknown as Record<string, Record<string, string>>)[name];
     expect(Object.values(prismaEnum ?? {})).toEqual([...values]);

@@ -355,6 +355,21 @@ describe('permissions matrix: who sees what', () => {
     });
   });
 
+  // ADR-0012: ai_key.manage is admin-only (no key is stored: the harness has no encryption
+  // secret, so a save answers 503 for an admin and 403 for everyone else).
+  describe('AI provider keys (ADR-0012)', () => {
+    it.each(VIEWERS)('the /ai/keys routes as %s: admins only', async (viewer) => {
+      const caller = api(viewer);
+      const admin = ADMINS.includes(viewer);
+      expect((await caller.get('/ai/keys')).status).toBe(admin ? 200 : 403);
+      expect(
+        (await caller.put('/ai/keys/anthropic', { apiKey: 'sk-ant-matrix-example-key-0000' }))
+          .status,
+      ).toBe(admin ? 503 : 403);
+      expect((await caller.delete('/ai/keys/anthropic')).status).toBe(admin ? 200 : 403);
+    });
+  });
+
   // Phase 7 (ADR-0011): ai_summary.read and ai_anomaly.read are supervisor+ (own summaries only,
   // so any other id is 404); ai_summary.generate is admin-only and, while daily summaries are
   // off (the fixture's default), answers 403 `ai_disabled`.

@@ -4,6 +4,8 @@ import {
   MAX_AI_DAILY_COST_LIMIT_USD,
   MAX_AI_DAILY_REQUEST_LIMIT,
   updateOrganizationSchema,
+  type AiLlmModel,
+  type AiSttModel,
   type AiSummaryRecipientRole,
   type AnomalyFlag,
   type AnomalySeverity,
@@ -222,6 +224,9 @@ export interface AiSettingsFormState {
   /** Empty: no organization limit (the server's ceiling applies). */
   dailyRequestLimit: string;
   dailyCostLimitUsd: string;
+  /** Empty: the server's model applies (ADR-0012). */
+  llmModel: AiLlmModel | '';
+  sttModel: AiSttModel | '';
 }
 
 export type AiSettingsErrorCode = 'time' | 'wholeNumber' | 'number' | 'range';
@@ -240,6 +245,8 @@ export function aiSettingsFormFrom(organization: OrganizationFull): AiSettingsFo
     summaryRecipientRoles: [...current.summaryRecipientRoles],
     dailyRequestLimit: current.dailyRequestLimit === null ? '' : String(current.dailyRequestLimit),
     dailyCostLimitUsd: current.dailyCostLimitUsd === null ? '' : String(current.dailyCostLimitUsd),
+    llmModel: current.llmModel ?? '',
+    sttModel: current.sttModel ?? '',
   };
 }
 
@@ -302,6 +309,8 @@ export function aiSettingsUpdateBody(
     ),
     ...(requests === null ? {} : { dailyRequestLimit: requests }),
     ...(cost === null ? {} : { dailyCostLimitUsd: cost }),
+    ...(form.llmModel === '' ? {} : { llmModel: form.llmModel }),
+    ...(form.sttModel === '' ? {} : { sttModel: form.sttModel }),
   };
   const settings: Record<string, unknown> = {
     ...(organization.settings as Record<string, unknown>),

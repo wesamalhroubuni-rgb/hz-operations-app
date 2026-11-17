@@ -11,6 +11,11 @@ import {
 } from '@ops/shared';
 import { HealthModule } from '../../src/health/health.module';
 import { AccessClock } from '../../src/operations/access/clock';
+import {
+  AI_REAL_PROVIDER_FACTORIES,
+  AiProviderError,
+  type RealProviderFactories,
+} from '../../src/platform/ai';
 import { AiUsageLimiter } from '../../src/platform/ai/usage-limiter';
 import { OperationsModule } from '../../src/operations/operations.module';
 import {
@@ -424,6 +429,22 @@ function createBrowser(baseUrl: string, jar: CookieJar, options: BrowserOptions)
   };
 }
 
+/**
+ * The harness's real-provider factories: they refuse to build or check anything, so no test can
+ * reach a provider's network even with an organization key stored. A test that needs them binds
+ * scripted ones through `configure` (`overrideProvider(AI_REAL_PROVIDER_FACTORIES)`).
+ */
+export const NETWORK_FREE_PROVIDER_FACTORIES: RealProviderFactories = {
+  llm: () => {
+    throw new Error('Tests never build a real LLM provider');
+  },
+  speechToText: () => {
+    throw new Error('Tests never build a real speech-to-text provider');
+  },
+  checkLlmKey: () => Promise.reject(new AiProviderError('network', 'No network in tests')),
+  checkSpeechToTextKey: () => Promise.reject(new AiProviderError('network', 'No network in tests')),
+};
+
 interface HarnessSession {
   sessionId: string;
   accessToken: string;
@@ -514,7 +535,10 @@ export async function startTestApp(options: TestAppOptions = {}): Promise<TestAp
     .overrideProvider(AccessClock)
     .useValue(clock)
     .overrideProvider(FILE_STORAGE)
-    .useValue(options.storage ?? storage);
+    .useValue(options.storage ?? storage)
+    // ADR-0012: an organization key would build a real provider; tests never reach the network.
+    .overrideProvider(AI_REAL_PROVIDER_FACTORIES)
+    .useValue(NETWORK_FREE_PROVIDER_FACTORIES);
   const moduleRef = await (options.configure ? options.configure(builder) : builder).compile();
 
   const app: INestApplication = moduleRef.createNestApplication({

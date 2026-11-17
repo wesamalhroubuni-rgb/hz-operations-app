@@ -491,6 +491,20 @@ export interface SyncEngine {
   getStatus(): SyncStatus;
   /** Calls the listener with the current status at once and on every change. */
   subscribe(listener: (status: SyncStatus) => void): () => void;
+  /**
+   * Calls the listener after every successful pull (live updates: the app re-checks the
+   * signed-in user). Optional: the inert engine of tests has no pulls.
+   */
+  subscribePulls?(listener: (pull: SyncPullEvent) => void): () => void;
+}
+
+/** A successful pull, as the engine reports it to `subscribePulls` listeners. */
+export interface SyncPullEvent {
+  /**
+   * The server answered the stored cursor with a full pull: the caller's roles or scope changed
+   * since the last pull (or the cursor had become unusable).
+   */
+  scopeChanged: boolean;
 }
 
 /** What the engine needs from the outside, so tests can drive it without a phone. */

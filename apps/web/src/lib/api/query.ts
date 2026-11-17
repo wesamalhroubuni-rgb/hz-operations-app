@@ -1,12 +1,15 @@
 import { QueryClient } from '@tanstack/react-query';
 
 import { shouldRetry } from './errors';
+import { liveRefetchInterval } from './live';
 
 /**
  * Data fetching (ADR-0009): TanStack Query over the typed `apiClient`. One `QueryClient` per
  * browser tab (created in `QueryProvider`), never shared between users: signing out clears it.
  *
  * - `staleTime` 30 s: lists refresh on focus and on navigation back, not on every render.
+ * - Live updates: work logs, tasks, the overview, people and memberships are fetched again
+ *   every 15 s while the tab is visible (`liveRefetchInterval`, `lib/api/live.ts`).
  * - Retries only for failures that may pass by themselves (network, timeout, 429, 5xx); a 4xx is
  *   final, so a 404 (outside scope) shows at once.
  * - Mutations never retry (a write is not repeated without the user).
@@ -20,6 +23,7 @@ export function createQueryClient(): QueryClient {
         staleTime: 30_000,
         gcTime: 5 * 60_000,
         refetchOnWindowFocus: true,
+        refetchInterval: liveRefetchInterval,
         retry: shouldRetry,
       },
       mutations: { retry: false },
@@ -92,5 +96,6 @@ export const queryKeys = {
     summaries: (query: Record<string, unknown>) => ['ai', 'summaries', query] as const,
     anomalies: (query: Record<string, unknown>) => ['ai', 'anomalies', query] as const,
     usage: (query: Record<string, unknown>) => ['ai', 'usage', query] as const,
+    keys: ['ai', 'keys'] as const,
   },
 } as const;

@@ -36,8 +36,10 @@ const config: ExpoConfig = {
   scheme: 'operationsapp',
   platforms: ['ios', 'android'],
   orientation: 'portrait',
-  // Dark only, like the brand. expo-system-ui applies this and the background on Android.
-  userInterfaceStyle: defaultTheme.scheme,
+  // Follows the phone's light or dark setting, so `useColorScheme()` reports it and its changes
+  // (src/theme/). The worker can override it in Profile. The native root background stays the
+  // dark brand colour until the app sets the theme's own at start-up (expo-system-ui).
+  userInterfaceStyle: 'automatic',
   backgroundColor,
   icon: './assets/brand/icon-1024.png',
   ios: {

@@ -12,6 +12,7 @@ import { FormAlert, Notice } from '@/components/manage/parts';
 import { Button } from '@/components/ui/button';
 import { FormField, Input, Select } from '@/components/ui/form-field';
 import { ApiStatus } from '@/components/api-status';
+import { AiKeysSection } from '@/components/settings/ai-keys-section';
 import { AiSettingsSection } from '@/components/settings/ai-settings-section';
 import { PageHeader } from '@/components/ui/layout';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
@@ -193,6 +194,7 @@ function SettingsForm({ organization }: Readonly<{ organization: OrganizationFul
         </div>
       </form>
       <AiSettingsSection organization={organization} />
+      <AiKeysSection />
       <ApiStatus />
     </>
   );

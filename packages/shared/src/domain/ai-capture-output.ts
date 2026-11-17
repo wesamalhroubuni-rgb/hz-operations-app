@@ -38,25 +38,42 @@ export interface CaptureOutputOptions {
   siteRefs: readonly string[];
 }
 
-/** The model's answer, as validated by the schema of {@link buildCaptureOutputSchema}. */
+/** One custom-field value the model filled: `field` is `<logTypeKey>.<fieldKey>`. */
+export interface CaptureModelField {
+  field: string;
+  value: CustomFieldValue;
+  confidence: AiConfidenceLevel;
+}
+
+/**
+ * The model's answer, as validated by the schema of {@link buildCaptureOutputSchema}.
+ *
+ * Shaped for Anthropic's structured-output limit of 16 union-typed (nullable or `anyOf`)
+ * parameters per schema (found with the first real call, 2026-11-17): the schema has at most six,
+ * however many log types and fields are offered. Field values are a list (a value not said is
+ * simply absent), and confidences are never null (the code ignores the confidence of a value
+ * left null).
+ */
 export interface CaptureModelOutput {
-  logType: {
-    /** A key of the offered log types, or null when none fits. */
-    key: string | null;
-    /** Every field of that log type; null = not said. Empty when `key` is null. */
-    customFields: Record<string, CustomFieldValue | null>;
-    fieldConfidence: Record<string, AiConfidenceLevel | null>;
-  };
-  logTypeConfidence: AiConfidenceLevel | null;
+  /** A key of the offered log types, or null when none fits. */
+  logTypeKey: string | null;
+  logTypeConfidence: AiConfidenceLevel;
+  /** The values the input states, for fields of the chosen log type. */
+  fields: CaptureModelField[];
   taskRef: string | null;
-  taskConfidence: AiConfidenceLevel | null;
+  taskConfidence: AiConfidenceLevel;
   siteRef: string | null;
-  siteConfidence: AiConfidenceLevel | null;
+  siteConfidence: AiConfidenceLevel;
   /** The log's free text, in the worker's language, cleaned of filler words. */
   text: string | null;
-  textConfidence: AiConfidenceLevel | null;
+  textConfidence: AiConfidenceLevel;
   /** When the work happened, if the input says so (ISO date-time with offset). */
   occurredAt: string | null;
+}
+
+/** The `field` name of a log type's custom field in the model's answer. */
+export function captureFieldName(logTypeKey: string, fieldKey: string): string {
+  return `${logTypeKey}.${fieldKey}`;
 }
 
 /** Longest free text kept from the model (the work log's own limit). */
@@ -84,25 +101,26 @@ function referenceSchema(refs: readonly string[]): z.ZodType {
   return first === undefined ? z.null() : z.enum([first, ...rest]).nullable();
 }
 
-function logTypeVariant(logType: CaptureOutputLogType) {
-  // Field keys are slugs (`customFieldKeySchema`), safe as property names.
-  const values: Record<string, z.ZodType> = {};
-  const confidence: Record<string, z.ZodType> = {};
-  for (const field of logType.fields) {
-    values[field.key] = fieldValueSchema(field).nullable();
-    confidence[field.key] = aiConfidenceLevelSchema.nullable();
-  }
-  return z.strictObject({
-    key: z.literal(logType.key),
-    customFields: z.strictObject(values),
-    fieldConfidence: z.strictObject(confidence),
-  });
+/** One list entry per offered field: its name as a constant, its typed value, a confidence. */
+function fieldEntrySchemas(logTypes: readonly CaptureOutputLogType[]): z.ZodType[] {
+  return logTypes.flatMap((logType) =>
+    logType.fields
+      .filter((field) => field.type !== 'select' || (field.options ?? []).length > 0)
+      .map((field) =>
+        z.strictObject({
+          field: z.literal(captureFieldName(logType.key, field.key)),
+          value: fieldValueSchema(field),
+          confidence: aiConfidenceLevelSchema,
+        }),
+      ),
+  );
 }
 
 /**
- * The Zod schema of the model's answer for one capture: a union over the offered log types (each
- * with its own fields, select options as enums, dates as ISO dates) plus "no log type", and the
- * offered task and site references. Throws when two log types share a key.
+ * The Zod schema of the model's answer for one capture: the offered log type keys, a list of
+ * field values (one entry shape per offered field, select options as enums, dates as ISO dates),
+ * and the offered task and site references. At most six union-typed parameters whatever is
+ * offered (see {@link CaptureModelOutput}). Throws when two log types share a key.
  */
 export function buildCaptureOutputSchema(
   options: CaptureOutputOptions,
@@ -114,24 +132,22 @@ export function buildCaptureOutputSchema(
     }
     keys.add(logType.key);
   }
-  const none = z.strictObject({
-    key: z.null(),
-    customFields: z.strictObject({}),
-    fieldConfidence: z.strictObject({}),
-  });
-  const variants = options.logTypes.map(logTypeVariant);
-  const [first, ...rest] = variants;
-  const logType = first === undefined ? none : z.union([first, ...rest, none]);
-  const level = aiConfidenceLevelSchema.nullable();
+  const entries = fieldEntrySchemas(options.logTypes);
+  const [firstEntry, ...otherEntries] = entries;
+  const fields =
+    firstEntry === undefined
+      ? z.array(z.string()).max(0)
+      : z.array(otherEntries.length === 0 ? firstEntry : z.union([firstEntry, ...otherEntries]));
   return z.strictObject({
-    logType,
-    logTypeConfidence: level,
+    logTypeKey: referenceSchema([...keys]),
+    logTypeConfidence: aiConfidenceLevelSchema,
+    fields,
     taskRef: referenceSchema(options.taskRefs),
-    taskConfidence: level,
+    taskConfidence: aiConfidenceLevelSchema,
     siteRef: referenceSchema(options.siteRefs),
-    siteConfidence: level,
+    siteConfidence: aiConfidenceLevelSchema,
     text: z.string().nullable(),
-    textConfidence: level,
+    textConfidence: aiConfidenceLevelSchema,
     occurredAt: z.iso.datetime({ offset: true }).nullable(),
   }) as unknown as z.ZodType<CaptureModelOutput>;
 }
@@ -213,9 +229,16 @@ export function interpretCaptureOutput(
   fallbackOccurredAt: string,
 ): InterpretedCapture {
   const logType =
-    output.logType.key === null
+    output.logTypeKey === null
       ? undefined
-      : refs.logTypes.find((candidate) => candidate.key === output.logType.key);
+      : refs.logTypes.find((candidate) => candidate.key === output.logTypeKey);
+  // The first entry per field name wins; entries of other log types are ignored.
+  const entries = new Map<string, CaptureModelField>();
+  for (const entry of output.fields) {
+    if (!entries.has(entry.field)) {
+      entries.set(entry.field, entry);
+    }
+  }
   const taskId = output.taskRef === null ? null : (refs.tasks.get(output.taskRef) ?? null);
   const siteId = output.siteRef === null ? null : (refs.sites.get(output.siteRef) ?? null);
 
@@ -223,7 +246,8 @@ export function interpretCaptureOutput(
   const fieldConfidence: Record<string, AiConfidenceLevel> = {};
   const droppedFields: string[] = [];
   for (const field of logType?.fields ?? []) {
-    const value = output.logType.customFields[field.key];
+    const entry = logType ? entries.get(captureFieldName(logType.key, field.key)) : undefined;
+    const value = entry?.value;
     if (value === null || value === undefined) {
       continue;
     }
@@ -232,9 +256,8 @@ export function interpretCaptureOutput(
     });
     if (checked.ok && checked.values[field.key] !== undefined) {
       customFields[field.key] = checked.values[field.key] as CustomFieldValue;
-      const level = output.logType.fieldConfidence[field.key];
-      if (level) {
-        fieldConfidence[field.key] = level;
+      if (entry?.confidence) {
+        fieldConfidence[field.key] = entry.confidence;
       }
     } else {
       droppedFields.push(`customFields.${field.key}`);

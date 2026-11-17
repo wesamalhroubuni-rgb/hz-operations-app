@@ -41,8 +41,8 @@ export function OverviewPage() {
 
   const query = useQuery<DashboardOverview>({
     queryKey: queryKeys.dashboard.overview(day),
+    // Live: refetched every 15 s while the tab is visible (the query client's default).
     queryFn: async () => unwrap(await requireApiClient().dashboard.overview(day ? { day } : {})),
-    refetchInterval: 60_000,
   });
   const data = query.data;
 

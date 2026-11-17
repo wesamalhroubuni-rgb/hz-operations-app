@@ -1,8 +1,9 @@
-import { colors, fontSizes, radii, spacing } from '@ops/shared';
+import { fontSizes, radii, spacing } from '@ops/shared';
 import { useState, type Ref } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { Pressable, Text, TextInput, View, type TextInputProps } from 'react-native';
 
 import { t } from '../i18n';
+import { makeStyles, useTheme } from '../theme';
 import { FieldShell } from './FieldShell';
 import { touch } from './sizes';
 
@@ -30,6 +31,8 @@ export function TextField({
   multiline,
   ...input
 }: Readonly<FieldProps>) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   return (
     <FieldShell label={label} error={error} hint={hint} required={required}>
       <TextInput
@@ -64,6 +67,8 @@ export function PasswordField({
   inputRef,
   ...input
 }: Readonly<FieldProps>) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const [visible, setVisible] = useState(false);
   return (
     <FieldShell label={label} error={error} hint={hint}>
@@ -100,7 +105,7 @@ export function PasswordField({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   input: {
     minHeight: touch.comfortable,
     paddingVertical: spacing.sm,
@@ -144,4 +149,4 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     color: colors.textPrimary,
   },
-});
+}));

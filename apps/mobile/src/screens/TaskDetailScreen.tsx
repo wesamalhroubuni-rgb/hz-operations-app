@@ -15,6 +15,7 @@ import { useData } from '../data/DataProvider';
 import { readErrorKind, useTask } from '../data/queries';
 import { useLookups } from '../hooks/useLookups';
 import { useNow } from '../hooks/useNow';
+import { useServerRefresh } from '../hooks/useServerRefresh';
 import { useTaskStatusChange } from '../hooks/useTaskStatusChange';
 import { t } from '../i18n';
 import { errorText } from '../i18n/errorText';
@@ -35,6 +36,7 @@ export function TaskDetailScreen({ route, navigation }: Readonly<StackScreenProp
   const { user } = useData();
   const now = useNow();
   const query = useTask(taskId);
+  const server = useServerRefresh();
   const lookups = useLookups();
   const task = query.data;
   const change = useTaskStatusChange(task);
@@ -55,8 +57,8 @@ export function TaskDetailScreen({ route, navigation }: Readonly<StackScreenProp
 
   return (
     <ScreenContainer
-      refreshing={query.isRefetching}
-      onRefresh={() => void query.refetch()}
+      refreshing={server.refreshing}
+      onRefresh={server.refresh}
       footer={
         task.status !== 'cancelled' ? (
           <Button

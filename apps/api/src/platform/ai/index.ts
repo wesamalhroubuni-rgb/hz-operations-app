@@ -9,6 +9,14 @@ export { AI_SETTINGS, type AiSettings } from './ai-settings';
 export { AiTraceService } from './ai-trace.service';
 export { AiUsageLimiter } from './usage-limiter';
 export { AiUsageReportService } from './ai-usage-report.service';
+// ADR-0012: an organization's own provider keys.
+export { AiKeyChecker, type AiKeyCheck, type AiKeyKind } from './ai-key-checker';
+export { AiProviderSelector, type OrganizationProviders } from './provider-selector';
+export {
+  AI_REAL_PROVIDER_FACTORIES,
+  REAL_PROVIDERS,
+  type RealProviderFactories,
+} from './provider-registry';
 export { FakeLlmProvider, FAKE_LLM_MARKERS, FAKE_NARRATIVE } from './fake-llm-provider';
 export {
   FakeSpeechToTextProvider,

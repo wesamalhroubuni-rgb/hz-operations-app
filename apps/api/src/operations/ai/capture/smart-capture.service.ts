@@ -69,8 +69,8 @@ import {
 } from './capture-offer';
 import { captureRecordOf, contextOf, toSmartCapture } from './smart-capture.mapper';
 
-/** The prompt of the extraction (`prompts/smart-capture-extract.v1.md`). */
-export const CAPTURE_EXTRACT_PROMPT: PromptRef = { id: 'smart-capture-extract', version: 1 };
+/** The prompt of the extraction (`prompts/smart-capture-extract.v2.md`). */
+export const CAPTURE_EXTRACT_PROMPT: PromptRef = { id: 'smart-capture-extract', version: 2 };
 
 /** Room for the answer (and the model's thinking, which this model cannot turn off). */
 const EXTRACTION_MAX_OUTPUT_TOKENS = 4096;

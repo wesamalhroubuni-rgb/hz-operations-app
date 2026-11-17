@@ -1,6 +1,6 @@
-import { colors, radii, spacing } from '@ops/shared';
+import { radii, spacing } from '@ops/shared';
 import { useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
+import { FlatList, RefreshControl, View } from 'react-native';
 
 import { AppText } from '../components/AppText';
 import { Button } from '../components/Button';
@@ -11,14 +11,19 @@ import { useRepositories } from '../data/DataProvider';
 import { useNotifications } from '../data/queries';
 import type { WriteError } from '../data/results';
 import { useOpenNotification } from '../hooks/useOpenNotification';
+import { useServerRefresh } from '../hooks/useServerRefresh';
 import { formatDateTime, t } from '../i18n';
 import { errorText } from '../i18n/errorText';
 import { parseIso } from '../logic/dates';
 import { sortNotifications } from '../logic/notificationRouting';
+import { makeStyles, useTheme } from '../theme';
 
 /** The in-app notification list. Works without push (Expo Go). */
 export function NotificationsScreen() {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const query = useNotifications();
+  const server = useServerRefresh();
   const repositories = useRepositories();
   const open = useOpenNotification();
   const [markingAll, setMarkingAll] = useState(false);
@@ -89,8 +94,8 @@ export function NotificationsScreen() {
         }
         refreshControl={
           <RefreshControl
-            refreshing={query.isRefetching}
-            onRefresh={() => void query.refetch()}
+            refreshing={server.refreshing}
+            onRefresh={server.refresh}
             tintColor={colors.primary}
             colors={[colors.primary]}
             progressBackgroundColor={colors.surface}
@@ -101,7 +106,7 @@ export function NotificationsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -131,4 +136,4 @@ const styles = StyleSheet.create({
   title: {
     flex: 1,
   },
-});
+}));

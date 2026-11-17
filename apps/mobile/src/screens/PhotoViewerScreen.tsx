@@ -1,16 +1,18 @@
-import { colors, spacing } from '@ops/shared';
-import { Image, StyleSheet, View } from 'react-native';
+import { spacing } from '@ops/shared';
+import { Image, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button } from '../components/Button';
 import { t } from '../i18n';
 import type { StackScreenProps } from '../navigation/types';
+import { makeStyles } from '../theme';
 
 /** One photo, full screen, with a large close button at the bottom. */
 export function PhotoViewerScreen({
   route,
   navigation,
 }: Readonly<StackScreenProps<'PhotoViewer'>>) {
+  const styles = useStyles();
   const insets = useSafeAreaInsets();
   return (
     <View
@@ -40,7 +42,7 @@ export function PhotoViewerScreen({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -53,4 +55,4 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
   },
-});
+}));

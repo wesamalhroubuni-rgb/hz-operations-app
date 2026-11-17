@@ -26,7 +26,7 @@ import {
 
 type AuthActions = Pick<
   AuthSessionManager,
-  'signIn' | 'signOut' | 'signOutEverywhere' | 'setPassword'
+  'signIn' | 'signOut' | 'signOutEverywhere' | 'setPassword' | 'refreshUser'
 >;
 
 export interface AuthContextValue extends AuthActions {
@@ -57,6 +57,7 @@ const UNCONFIGURED_RESULT: AuthActionResult = {
   failure: { reason: 'unexpected', message: MISSING_API_URL_MESSAGE, details: [] },
 };
 const unconfigured = async (): Promise<AuthActionResult> => UNCONFIGURED_RESULT;
+const refreshNobody = async (): Promise<void> => undefined;
 
 function signedInKey(view: AppSessionView | null): string | null {
   return view?.state.status === 'signedIn' ? `${view.state.user.id}|${String(view.offline)}` : null;
@@ -126,6 +127,9 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
       signOut: authSession?.signOut ?? unconfigured,
       signOutEverywhere: authSession?.signOutEverywhere ?? unconfigured,
       setPassword: authSession?.setPassword ?? unconfigured,
+      // Re-checks the signed-in user (role, scope, name) without leaving the screens; see
+      // `useLiveUser` and the Profile screen's pull to refresh.
+      refreshUser: authSession?.refreshUser ?? refreshNobody,
       retry: () => void authSession?.start(),
       pendingCountFor: (userId) => offlineSessions.pendingCountFor(userId).catch(() => 0),
     }),

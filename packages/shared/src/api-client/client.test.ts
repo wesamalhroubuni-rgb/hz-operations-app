@@ -627,6 +627,7 @@ describe('createApiClient', () => {
   it('exposes one endpoint group per resource', () => {
     const client = createApiClient({ baseUrl: BASE_URL, fetch: fetchReturning({}) });
     expect(Object.keys(client).sort()).toEqual([
+      'aiKeys',
       'aiSummaries',
       'aiUsage',
       'attachments',

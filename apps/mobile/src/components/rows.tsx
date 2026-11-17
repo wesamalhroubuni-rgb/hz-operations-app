@@ -1,18 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
-import {
-  colors,
-  spacing,
-  type Task,
-  type TaskStatus,
-  type WorkLog,
-  type WorkLogStatus,
-} from '@ops/shared';
+import { spacing, type Task, type TaskStatus, type WorkLog, type WorkLogStatus } from '@ops/shared';
 import { I18nManager, StyleSheet, View } from 'react-native';
 
 import { formatDateTime, t } from '../i18n';
 import { parseIso } from '../logic/dates';
 import type { LogSyncState } from '../logic/sync';
 import { dueState } from '../logic/tasks';
+import { useTheme } from '../theme';
 import { AppText } from './AppText';
 import { Badge, type Tone } from './Badge';
 import { Card } from './Card';
@@ -53,6 +47,7 @@ export function TaskRow({
   now,
   onPress,
 }: Readonly<{ task: Task; now: Date; onPress: () => void }>) {
+  const { colors } = useTheme();
   const due = dueLabel(task, now);
   const status = t(`tasks.status.${task.status}`);
   const urgent = task.priority === 'high' || task.priority === 'urgent';
@@ -107,6 +102,7 @@ export function LogRow({
   syncState?: LogSyncState;
   onPress: () => void;
 }>) {
+  const { colors } = useTheme();
   const occurred = parseIso(log.occurredAt);
   const title = typeName ?? t('logs.generalNote');
   const status = t(`logs.status.${log.status}`);

@@ -138,6 +138,23 @@ export class NotificationService {
     }
   }
 
+  /**
+   * Marks notifications as resolved: what they asked for is settled, so they leave the in-app
+   * list, the unread count and the phone's sync, and stay in the table as history. Only open
+   * ones of the organization change (idempotent). The host decides which ones; the platform
+   * knows no notification types. Returns how many were resolved.
+   */
+  async resolve(organizationId: string, ids: readonly string[], at: Date): Promise<number> {
+    if (ids.length === 0) {
+      return 0;
+    }
+    const { count } = await this.prisma.notification.updateMany({
+      where: { organizationId, id: { in: [...ids] }, resolvedAt: null },
+      data: { resolvedAt: at },
+    });
+    return count;
+  }
+
   /** Resolves when every delivery started so far has finished (tests, shutdown). */
   async whenIdle(): Promise<void> {
     while (this.inFlight.size > 0) {

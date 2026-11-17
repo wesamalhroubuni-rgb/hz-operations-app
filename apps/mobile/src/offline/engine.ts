@@ -24,6 +24,7 @@ import type {
   QueueItemState,
   SyncEngine,
   SyncEngineDeps,
+  SyncPullEvent,
   SyncRunResult,
   SyncStatus,
   SyncTrigger,
@@ -47,6 +48,11 @@ import type {
 // One run at a time: a trigger during a run schedules one follow-up run, which every further
 // trigger joins. Triggers: start, foreground, reconnect, enqueue (debounced), manual, timer
 // (periodic while in the foreground, and at the next retry time), background.
+//
+// Live updates: while the app is in the foreground the periodic run pulls every 15 s, so what
+// others change (an approval, an assignment, a notification) shows within seconds even where
+// push cannot arrive (Expo Go on Android). The timer stops in the background, and it backs off
+// (doubling, up to 5 minutes) while pulls fail, so a server in trouble is not hammered.
 
 /** The app's foreground state (React Native `AppState`, or a fake). */
 export interface ForegroundSource {
@@ -73,11 +79,13 @@ export interface SyncEngineOptions {
   /** Without one, the app is taken to be in the foreground all the time. */
   foreground?: ForegroundSource;
   scheduler?: Scheduler;
-  /** Periodic run while the app is in the foreground. Default 5 minutes. */
+  /** Periodic run while the app is in the foreground. Default 15 s (live updates). */
   periodicIntervalMs?: number;
+  /** The longest wait of the periodic run while pulls keep failing. Default 5 minutes. */
+  maxPeriodicIntervalMs?: number;
   /** Wait after a write was queued, so a burst of writes is sent by one run. Default 1 s. */
   enqueueDebounceMs?: number;
-  /** A `timer` run that sent nothing pulls only if the last pull is older. Default 60 s. */
+  /** A `timer` run that sent nothing pulls only if the last pull is older. Default 10 s. */
   minPullIntervalMs?: number;
   /** Safety cap of items tried in one run. Default 500. */
   maxItemsPerRun?: number;
@@ -92,15 +100,18 @@ export interface SyncEngineOptions {
 
 /** The engine, with two read-outs the sync screen uses besides the `SyncEngine` contract. */
 export interface AppSyncEngine extends SyncEngine {
+  /** Calls the listener after every successful pull (see `SyncPullEvent`). */
+  subscribePulls(listener: (pull: SyncPullEvent) => void): () => void;
   /** Whether a run is going on now. */
   isRunning(): boolean;
   /** The phone's clock at the last successful pull (ISO), or null. */
   getLastRefreshedAt(): string | null;
 }
 
-const DEFAULT_PERIODIC_MS = 5 * 60 * 1000;
+const DEFAULT_PERIODIC_MS = 15 * 1000;
+const DEFAULT_MAX_PERIODIC_MS = 5 * 60 * 1000;
 const DEFAULT_ENQUEUE_DEBOUNCE_MS = 1000;
-const DEFAULT_MIN_PULL_INTERVAL_MS = 60 * 1000;
+const DEFAULT_MIN_PULL_INTERVAL_MS = 10 * 1000;
 const DEFAULT_MAX_ITEMS = 500;
 
 const defaultScheduler: Scheduler = {
@@ -165,6 +176,10 @@ export function createSyncEngine(deps: SyncEngineDeps, options: SyncEngineOption
   const scheduler = options.scheduler ?? defaultScheduler;
   const foreground = options.foreground;
   const periodicMs = options.periodicIntervalMs ?? DEFAULT_PERIODIC_MS;
+  const maxPeriodicMs = Math.max(
+    periodicMs,
+    options.maxPeriodicIntervalMs ?? DEFAULT_MAX_PERIODIC_MS,
+  );
   const debounceMs = options.enqueueDebounceMs ?? DEFAULT_ENQUEUE_DEBOUNCE_MS;
   const minPullIntervalMs = options.minPullIntervalMs ?? DEFAULT_MIN_PULL_INTERVAL_MS;
   const maxItems = options.maxItemsPerRun ?? DEFAULT_MAX_ITEMS;
@@ -184,6 +199,14 @@ export function createSyncEngine(deps: SyncEngineDeps, options: SyncEngineOption
   let periodicTimer: unknown = null;
   let retryTimer: unknown = null;
   let debounceTimer: unknown = null;
+  /** Pulls that failed in a row; the periodic run waits longer while it is above zero. */
+  let pullFailures = 0;
+  const pullListeners = new Set<(pull: SyncPullEvent) => void>();
+
+  /** The wait of the next periodic run: the interval, doubled per failed pull, capped. */
+  function periodicDelay(): number {
+    return Math.min(maxPeriodicMs, periodicMs * 2 ** Math.min(pullFailures, 16));
+  }
 
   // ------------------------------------------------------------------------------------------
   // Status
@@ -514,6 +537,9 @@ export function createSyncEngine(deps: SyncEngineDeps, options: SyncEngineOption
     const meta = await store.getSyncMeta();
     let result = await api.sync.pull(meta.cursor ? { cursor: meta.cursor } : {});
     if (!result.ok) return classifyApiFailure(result.failure);
+    // The server answers a cursor with a full pull when the caller's roles or scope changed
+    // since (or the cursor could no longer be used): the signed-in user may have changed too.
+    const scopeChanged = Boolean(meta.cursor) && result.data.full;
     await store.applyPull(result.data, clock());
     if (!result.data.full && (await hasUnknownIds(result.data))) {
       log('pull_repair');
@@ -524,6 +550,15 @@ export function createSyncEngine(deps: SyncEngineDeps, options: SyncEngineOption
     const refreshed = (await store.getSyncMeta()).lastRefreshedAt;
     lastRefreshedAt = refreshed ?? clock().toISOString();
     lastPullAt = clock().getTime();
+    for (const listener of pullListeners) {
+      try {
+        listener({ scopeChanged });
+      } catch (error) {
+        log('pull_listener_failed', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     return null;
   }
 
@@ -595,6 +630,7 @@ export function createSyncEngine(deps: SyncEngineDeps, options: SyncEngineOption
       if (result.stoppedBecause === null && stopped) result.stoppedBecause = 'stopped';
       if (result.stoppedBecause === null && pullDue) {
         const failure = await pull();
+        pullFailures = failure === null ? 0 : pullFailures + 1;
         if (failure === null) {
           result.pulled = true;
         } else if (failure.disposition === 'needsSignIn') {
@@ -667,7 +703,7 @@ export function createSyncEngine(deps: SyncEngineDeps, options: SyncEngineOption
     periodicTimer = scheduler.setTimeout(() => {
       periodicTimer = null;
       void syncNow('timer').finally(schedulePeriodic);
-    }, periodicMs);
+    }, periodicDelay());
   }
 
   /** Wakes up when the earliest automatic retry is due (the periodic run covers the rest). */
@@ -685,7 +721,7 @@ export function createSyncEngine(deps: SyncEngineDeps, options: SyncEngineOption
     }
     if (!Number.isFinite(earliest)) return;
     const wait = Math.max(0, earliest - clock().getTime());
-    if (wait >= periodicMs) return;
+    if (wait >= periodicDelay()) return;
     retryTimer = scheduler.setTimeout(() => {
       retryTimer = null;
       void syncNow('timer');
@@ -742,8 +778,9 @@ export function createSyncEngine(deps: SyncEngineDeps, options: SyncEngineOption
         log('start_failed', { message: error instanceof Error ? error.message : String(error) });
       }
       await refreshStatus();
-      if (!stopped) void syncNow('start');
-      schedulePeriodic();
+      // The periodic timer starts after the start run, so its wait reflects how that pull went.
+      if (stopped) return;
+      void syncNow('start').finally(schedulePeriodic);
     })();
   }
 
@@ -767,6 +804,12 @@ export function createSyncEngine(deps: SyncEngineDeps, options: SyncEngineOption
       listener(status);
       return () => {
         listeners.delete(listener);
+      };
+    },
+    subscribePulls(listener) {
+      pullListeners.add(listener);
+      return () => {
+        pullListeners.delete(listener);
       };
     },
     isRunning: () => running !== null,

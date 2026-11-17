@@ -1,10 +1,15 @@
-import { colors, fontSizes, fontWeights, radii, spacing } from '@ops/shared';
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { fontSizes, fontWeights, radii, spacing } from '@ops/shared';
+import { Image, Text, View } from 'react-native';
 
 import { brand } from '../config/brand';
+import { makeStyles } from '../theme';
 
-/** The logo, the product name and the app label. `compact` is the smaller form above a form. */
+/**
+ * The logo and the app label. The logo already shows the product name, so it is not repeated as
+ * text; screen readers get it from the logo's label. `compact` is the smaller form above a form.
+ */
 export function BrandHeader({ compact = false }: Readonly<{ compact?: boolean }>) {
+  const styles = useStyles();
   return (
     <View style={styles.header}>
       <Image
@@ -14,39 +19,32 @@ export function BrandHeader({ compact = false }: Readonly<{ compact?: boolean }>
         accessibilityRole="image"
         accessibilityLabel={brand.logo.accessibilityLabel}
       />
-      <Text style={[styles.title, compact && styles.titleCompact]} accessibilityRole="header">
-        {brand.name}
+      <Text style={styles.label} accessibilityRole="header">
+        {brand.appLabel}
       </Text>
-      <Text style={styles.label}>{brand.appLabel}</Text>
       {compact ? null : <View style={styles.rule} />}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   header: {
     alignItems: 'center',
   },
+  // The logo is a black square: rounded, it reads as a tile on the light theme and blends into
+  // the black background of the dark one.
   logo: {
     width: 128,
     height: 128,
+    borderRadius: radii.lg,
   },
   logoCompact: {
     width: 96,
     height: 96,
-  },
-  title: {
-    marginTop: spacing.sm,
-    fontSize: fontSizes.xxl,
-    fontWeight: fontWeights.bold,
-    letterSpacing: 1,
-    color: colors.primary,
-  },
-  titleCompact: {
-    fontSize: fontSizes.xl,
+    borderRadius: radii.md,
   },
   label: {
-    marginTop: spacing.xs,
+    marginTop: spacing.md,
     fontSize: fontSizes.sm,
     fontWeight: fontWeights.semibold,
     letterSpacing: 1.5,
@@ -61,4 +59,4 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     backgroundColor: colors.accent,
   },
-});
+}));

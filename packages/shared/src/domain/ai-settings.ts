@@ -23,6 +23,29 @@ export const MAX_AI_DAILY_REQUEST_LIMIT = 100_000;
 /** Largest per-organization daily cost limit an admin can store, in US dollars. */
 export const MAX_AI_DAILY_COST_LIMIT_USD = 10_000;
 
+/**
+ * The Claude models an admin can choose for the organization (summaries and smart capture),
+ * most capable last. Each has a row in the API's price table. Absent = the server's
+ * `AI_LLM_MODEL` (default `claude-opus-5-5`).
+ */
+export const AI_LLM_MODEL_CHOICES = [
+  'claude-opus-5-5',
+  'claude-sonnet-5-5',
+  'claude-haiku-5-5',
+  'claude-fable-5-2',
+] as const;
+export const aiLlmModelSchema = z.enum(AI_LLM_MODEL_CHOICES);
+export type AiLlmModel = z.infer<typeof aiLlmModelSchema>;
+
+/** The speech-to-text models (voice notes). Absent = the server's `AI_STT_MODEL`. */
+export const AI_STT_MODEL_CHOICES = [
+  'gpt-4o-transcribe',
+  'gpt-4o-mini-transcribe',
+  'whisper-1',
+] as const;
+export const aiSttModelSchema = z.enum(AI_STT_MODEL_CHOICES);
+export type AiSttModel = z.infer<typeof aiSttModelSchema>;
+
 /** A time of day `HH:MM` (24-hour), in the organization's time zone. */
 export const timeOfDaySchema = z
   .string()
@@ -45,6 +68,10 @@ export const organizationAiSettingsSchema = z.strictObject({
   dailyRequestLimit: z.number().int().min(0).max(MAX_AI_DAILY_REQUEST_LIMIT).optional(),
   /** Estimated AI cost per UTC day, US dollars; absent = the environment's limit. */
   dailyCostLimitUsd: z.number().min(0).max(MAX_AI_DAILY_COST_LIMIT_USD).optional(),
+  /** The Claude model for this organization; absent = the server's `AI_LLM_MODEL`. */
+  llmModel: aiLlmModelSchema.optional(),
+  /** The speech-to-text model; absent = the server's `AI_STT_MODEL`. */
+  sttModel: aiSttModelSchema.optional(),
 });
 export type OrganizationAiSettings = z.infer<typeof organizationAiSettingsSchema>;
 
@@ -57,6 +84,9 @@ export interface ResolvedAiSettings {
   /** Null: no organization limit (the environment's ceiling applies). */
   dailyRequestLimit: number | null;
   dailyCostLimitUsd: number | null;
+  /** Null: the server's model applies. */
+  llmModel: AiLlmModel | null;
+  sttModel: AiSttModel | null;
 }
 
 /**
@@ -83,6 +113,8 @@ export function aiSettingsOf(settings: unknown): ResolvedAiSettings {
     ],
     dailyRequestLimit: pick(shape.dailyRequestLimit, source.dailyRequestLimit) ?? null,
     dailyCostLimitUsd: pick(shape.dailyCostLimitUsd, source.dailyCostLimitUsd) ?? null,
+    llmModel: pick(shape.llmModel, source.llmModel) ?? null,
+    sttModel: pick(shape.sttModel, source.sttModel) ?? null,
   };
 }
 

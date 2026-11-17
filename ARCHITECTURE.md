@@ -40,7 +40,7 @@ only proposes; a person decides and acts.
 flowchart TB
   subgraph clients [Clients]
     mobile["apps/mobile<br/>Worker app (Expo / React Native)<br/>tasks, work logs, photos, location,<br/>smart capture (Speak, Snap, Type),<br/>notifications, profile;<br/>offline cache + write queue (SQLite per user)"]
-    web["apps/web<br/>Manager dashboard (Next.js)<br/>overview with daily summary and flags,<br/>work logs, review, tasks, map, summaries,<br/>people, structure, audit, settings, AI usage"]
+    web["apps/web<br/>Manager dashboard (Next.js)<br/>overview with daily summary and flags,<br/>work logs, review, tasks, map, summaries,<br/>people, structure, audit, settings<br/>(AI switches, models, own AI keys), AI usage"]
   end
 
   shared["packages/shared<br/>Zod schemas, typed API client,<br/>auth session manager, upload helper,<br/>custom-field forms, time zone, CSV,<br/>translation core, design tokens"]
@@ -58,7 +58,8 @@ flowchart TB
       consumer["Outbox consumer"]
       audit["Audit log"]
       outbox["Event outbox"]
-      aiplat["AI platform<br/>provider registry, AiRunner<br/>(limits, timeout, retry, validation),<br/>AiTrace, prompt loader"]
+      aiplat["AI platform<br/>provider registry, AiProviderSelector,<br/>AiKeyChecker, AiRunner<br/>(limits, timeout, retry, validation),<br/>AiTrace, prompt loader"]
+      crypto["Secret box<br/>AES-256-GCM at rest"]
     end
     subgraph operations [src/operations - Operations domain]
       access["Access layer<br/>policy registry, AccessService,<br/>rules, visibility"]
@@ -68,7 +69,7 @@ flowchart TB
       syncpull["Sync pull<br/>GET /sync/pull"]
       dash["Dashboard reads<br/>overview, directory, map, histories,<br/>CSV exports, report"]
       rules["Notification rules<br/>(text per recipient locale)"]
-      aiops["AI features<br/>smart capture, daily summaries,<br/>anomaly rules, prompt files"]
+      aiops["AI features<br/>smart capture, daily summaries,<br/>anomaly rules, prompt files,<br/>organization AI keys and models"]
       recorder["ChangeRecorder"]
     end
   end
@@ -111,6 +112,8 @@ flowchart TB
   aiops --> access
   aiops -->|"own rows, audited"| recorder
   aiops -->|"AI_RUNNER, PROMPT_LOADER"| aiplat
+  aiplat -->|"AI_ORGANIZATION_KEYS"| aiops
+  aiops -->|"stored keys"| crypto
   aiops --> storage
   consumer -->|"daily_summary.created"| aiops
   aiops -->|"ai.daily_summary"| notify
@@ -122,26 +125,28 @@ Every arrow exists in the code. The AI layer has run only against its fakes (no 
 call yet). The arrows from auth to the access layer and from the consumer to the notification
 rules and the AI features are injected: the platform defines a token or a registration function,
 the Operations domain provides the implementation, so the import still points one way. The same
-holds for the AI platform: Operations registers it with its prompt folder and organization limits
-(`AiModule.register`). The idempotency interceptor is global and acts only on routes an
-Operations controller marks `@Idempotent()`. Today the mobile app calls `GET /sync/pull` for its
-reads and replays its queued writes on the worker routes (tasks, work logs, attachments, smart
-capture), plus notifications and `/auth/*`; the web app calls `/auth/*` and the resource,
-dashboard, export, report, audit, summary, anomaly, and AI usage routes with its cookie session
-(it uploads no photos); the outbox route is exercised by the tests, Swagger, and manual requests
-only. `POST /ai/summaries/generate` has no web button: an admin calls it from Swagger or a script.
+holds for the AI platform: Operations registers it with its prompt folder, organization limits,
+and the reader of an organization's own keys and models (`AiModule.register`; the arrow from the
+AI platform to the AI features is that injected `AI_ORGANIZATION_KEYS` reader). The idempotency
+interceptor is global and acts only on routes an Operations controller marks `@Idempotent()`.
+Today the mobile app calls `GET /sync/pull` for its reads and replays its queued writes on the
+worker routes (tasks, work logs, attachments, smart capture), plus notifications and `/auth/*`;
+the web app calls `/auth/*` and the resource, dashboard, export, report, audit, summary, anomaly,
+AI usage, and AI key routes with its cookie session (it uploads no photos); the outbox route is
+exercised by the tests, Swagger, and manual requests only. `POST /ai/summaries/generate` has no
+web button: an admin calls it from Swagger or a script.
 
 ## What exists today
 
 ### Apps and packages
 
-| Path              | Package       | Responsibility                                                                                    | Today                                                                                                                                                                         |
-| ----------------- | ------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api`        | `@ops/api`    | REST API. Owns the database, business rules, sign-in, permissions, files, notifications, audit.   | 78 paths, sign-in, a policy on every route, scoped queries, photo uploads, notifications, outbox consumer, audit, sync pull, idempotency, dashboard reads, exports, AI layer. |
-| `apps/web`        | `@ops/web`    | Manager dashboard for supervisors, managers, and admins.                                          | Sign-in pages and the dashboard: overview (with daily summary and flags), work logs, tasks, map, summaries, people, structure, audit log, settings, AI usage, CSV exports.    |
-| `apps/mobile`     | `@ops/mobile` | Worker app for iOS and Android from one codebase.                                                 | Worker screens (home, tasks, work logs, smart capture, notifications, profile, sync), push, offline cache and write queue. Not yet run on a phone or emulator.                |
-| `packages/shared` | `@ops/shared` | The wire contract, defined once: schemas, the typed API client, shared validation, design tokens. | Schemas and endpoints for every resource, `/auth/*`, notifications, sync, the AI routes; error codes; session manager, upload helper, custom-field forms, capture schema.     |
-| `packages/config` | `@ops/config` | Shared ESLint, Prettier, and TypeScript settings.                                                 | ESLint base flat config, Prettier config, `strict.json`, `base.json`, and `library.json` tsconfigs. Unchanged since Phase 1.                                                  |
+| Path              | Package       | Responsibility                                                                                    | Today                                                                                                                                                                                                |
+| ----------------- | ------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api`        | `@ops/api`    | REST API. Owns the database, business rules, sign-in, permissions, files, notifications, audit.   | 80 paths, sign-in, a policy on every route, scoped queries, photo uploads, notifications, outbox consumer, audit, sync pull, idempotency, dashboard reads, exports, AI layer with organization keys. |
+| `apps/web`        | `@ops/web`    | Manager dashboard for supervisors, managers, and admins.                                          | Sign-in pages and the dashboard: overview (with daily summary and flags), work logs, tasks, map, summaries, people, structure, audit log, settings, AI usage, CSV exports.                           |
+| `apps/mobile`     | `@ops/mobile` | Worker app for iOS and Android from one codebase.                                                 | Worker screens (home, tasks, work logs, smart capture, notifications, profile, sync), push, offline cache and write queue, live sync. First run on a real phone 2026-11-16.                          |
+| `packages/shared` | `@ops/shared` | The wire contract, defined once: schemas, the typed API client, shared validation, design tokens. | Schemas and endpoints for every resource, `/auth/*`, notifications, sync, the AI routes; error codes; session manager, upload helper, custom-field forms, capture schema.                            |
+| `packages/config` | `@ops/config` | Shared ESLint, Prettier, and TypeScript settings.                                                 | ESLint base flat config, Prettier config, `strict.json`, `base.json`, and `library.json` tsconfigs. Unchanged since Phase 1.                                                                         |
 
 Each folder has a `memory.md` with its key files and conventions.
 
@@ -163,19 +168,20 @@ never the reverse. ESLint enforces it (`no-restricted-imports` on `src/platform/
 
 `src/platform`:
 
-| Folder             | Contents                                                                                                                                                                                                                                                                                                                  |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `request-context/` | `RequestContext` (AsyncLocalStorage holding the correlation id, the actor `{ userId, organizationId, sessionId? }`, and since Phase 5 the offline-sync facts from `x-client-sync` and `x-device-time`), the middleware, correlation id sanitising, the one-line request log.                                              |
-| `idempotency/`     | `@Idempotent()`, the global `IdempotencyInterceptor`, and `IdempotencyService` (claim, replay, release, hourly deletion of expired keys) on the `IdempotencyRecord` table. ADR-0008 section 4.                                                                                                                            |
-| `http/`            | `ApiException` (including `rateLimited`, 429 with `Retry-After`), `ApiExceptionFilter`, `ZodPipe`, `ApiDocs`, pagination and filter helpers, `requireActor`, `@Public()`.                                                                                                                                                 |
-| `auth/`            | `AuthGuard`, `AuthController` (`/auth/*`), `AuthService`, `AuthAdminService` (the contract business modules call), sessions, access tokens, CSRF, one-time codes, password hashing and policy, identifiers, rate limiter, settings, `AUTH_PROFILE_PROVIDER`.                                                              |
-| `authz/`           | `@Policy(name)`, `@Authenticated()`, `@DevelopmentOnly()`, and the `REQUEST_AUTHORIZER` / `RequestAuthorizer` seam. Names only: what a policy means is decided by the host.                                                                                                                                               |
-| `storage/`         | `FileStorage` interface and `FILE_STORAGE` token, `S3FileStorage` (two S3 clients: internal and signer), `images.ts` (verify, re-encode, thumbnail; `ImageProcessor`), `concurrency.ts`, `storage-settings.ts`, the global `StorageModule`. ADR-0006.                                                                     |
-| `notifications/`   | `NotificationChannel` interface, `NotificationService` (`notify`, `notifyInTransaction`, `deliver`), the in-app list and `/notifications` routes, `PushTokenService`, `ExpoPushClient`, `ExpoPushChannel`; plus the Phase 3 `NotificationSender` for codes. ADR-0007.                                                     |
-| `audit/`           | `AuditService` (the only writer; writes `metadata` `{ via: 'offline_sync', deviceTime, serverTime, clockSkewSeconds }` for writes sent by a phone's queue), snapshot, diff and redaction helpers, `AuditQueryService`, `GET /audit-events` (`audit.read`).                                                                |
-| `outbox/`          | `OutboxService` (`publish`, `readAfter`, `markProcessed`), `OutboxQueryService`, `GET /outbox-events` (`outbox.read`, `@DevelopmentOnly()`), and the `OutboxConsumer` with its pure bookkeeping (`outbox-consumer-state.ts`). ADR-0007.                                                                                   |
-| `docs/`            | Swagger UI and OpenAPI document setup, with a bearer scheme and the access cookie documented.                                                                                                                                                                                                                             |
-| `ai/`              | Phase 7 (ADR-0010): `LlmProvider` and `SpeechToTextProvider` interfaces, the provider registry, the Anthropic adapter (`@anthropic-ai/sdk`), OpenAI speech-to-text over `fetch`, the fakes, `AiRunnerService`, `AiTraceService`, `AiUsageLimiter`, the price table, `FilePromptLoader`, `untrustedDataBlock`, `AiModule`. |
+| Folder             | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `request-context/` | `RequestContext` (AsyncLocalStorage holding the correlation id, the actor `{ userId, organizationId, sessionId? }`, and since Phase 5 the offline-sync facts from `x-client-sync` and `x-device-time`), the middleware, correlation id sanitising, the one-line request log.                                                                                                                                                                                                       |
+| `idempotency/`     | `@Idempotent()`, the global `IdempotencyInterceptor`, and `IdempotencyService` (claim, replay, release, hourly deletion of expired keys) on the `IdempotencyRecord` table. ADR-0008 section 4.                                                                                                                                                                                                                                                                                     |
+| `http/`            | `ApiException` (including `rateLimited`, 429 with `Retry-After`), `ApiExceptionFilter`, `ZodPipe`, `ApiDocs`, pagination and filter helpers, `requireActor`, `@Public()`.                                                                                                                                                                                                                                                                                                          |
+| `auth/`            | `AuthGuard`, `AuthController` (`/auth/*`), `AuthService`, `AuthAdminService` (the contract business modules call), sessions, access tokens, CSRF, one-time codes, password hashing and policy, identifiers, rate limiter, settings, `AUTH_PROFILE_PROVIDER`.                                                                                                                                                                                                                       |
+| `authz/`           | `@Policy(name)`, `@Authenticated()`, `@DevelopmentOnly()`, and the `REQUEST_AUTHORIZER` / `RequestAuthorizer` seam. Names only: what a policy means is decided by the host.                                                                                                                                                                                                                                                                                                        |
+| `storage/`         | `FileStorage` interface and `FILE_STORAGE` token, `S3FileStorage` (two S3 clients: internal and signer), `images.ts` (verify, re-encode, thumbnail; `ImageProcessor`), `concurrency.ts`, `storage-settings.ts`, the global `StorageModule`. ADR-0006.                                                                                                                                                                                                                              |
+| `notifications/`   | `NotificationChannel` interface, `NotificationService` (`notify`, `notifyInTransaction`, `deliver`), the in-app list and `/notifications` routes, `PushTokenService`, `ExpoPushClient`, `ExpoPushChannel`; plus the Phase 3 `NotificationSender` for codes. ADR-0007.                                                                                                                                                                                                              |
+| `audit/`           | `AuditService` (the only writer; writes `metadata` `{ via: 'offline_sync', deviceTime, serverTime, clockSkewSeconds }` for writes sent by a phone's queue), snapshot, diff and redaction helpers, `AuditQueryService`, `GET /audit-events` (`audit.read`).                                                                                                                                                                                                                         |
+| `outbox/`          | `OutboxService` (`publish`, `readAfter`, `markProcessed`), `OutboxQueryService`, `GET /outbox-events` (`outbox.read`, `@DevelopmentOnly()`), and the `OutboxConsumer` with its pure bookkeeping (`outbox-consumer-state.ts`). ADR-0007.                                                                                                                                                                                                                                            |
+| `docs/`            | Swagger UI and OpenAPI document setup, with a bearer scheme and the access cookie documented.                                                                                                                                                                                                                                                                                                                                                                                      |
+| `ai/`              | Phase 7 (ADR-0010): `LlmProvider` and `SpeechToTextProvider` interfaces, the provider registry, the Anthropic adapter (`@anthropic-ai/sdk`), OpenAI speech-to-text over `fetch`, the fakes, `AiRunnerService`, `AiTraceService`, `AiUsageLimiter`, the price table, `FilePromptLoader`, `untrustedDataBlock`, `AiModule`; since ADR-0012 `AiProviderSelector` (per-organization providers), `AiKeyChecker` (free key check), `AI_REAL_PROVIDER_FACTORIES`, `AI_ORGANIZATION_KEYS`. |
+| `crypto/`          | ADR-0012: `SecretBox`, AES-256-GCM encryption of small secrets at rest (random 12-byte nonce, key = SHA-256 of a purpose label and the server secret, caller-supplied associated data). Never logs. Used for the organizations' AI keys.                                                                                                                                                                                                                                           |
 
 `PlatformModule` is global. Importing it registers, for the whole application, the request context
 middleware, a `Cache-Control: no-store` middleware on `/auth/*`, the exception filter, `AuthGuard`
@@ -195,39 +201,43 @@ consumer switches are on only when the configured value is exactly `true`; the A
 schema defaults both to `true`, a test configuration that omits them leaves them off.
 
 `AiModule` is not part of `PlatformModule`: the host registers it once with
-`AiModule.register({ promptDirectories, organizationLimits })` (done by `OperationsAiModule`), and
-it is then global. It needs the host's `PrismaService` with the `aiTrace` table, a `ConfigService`
-answering the `AI_*`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `NODE_ENV` keys
-(`ai/ai-settings.ts`), and `AUTH_CLOCK`. It exports `AI_RUNNER`, `PROMPT_LOADER`,
-`AI_USAGE_READER`, `AiTraceService`, `AiUsageLimiter`, and `AiUsageReportService`;
-`LLM_PROVIDER` and `SPEECH_TO_TEXT_PROVIDER` can be overridden (a null value means
-"unavailable"). At boot it logs the providers in force (`AI providers: llm=... speechToText=...`).
+`AiModule.register({ promptDirectories, organizationLimits, organizationKeys?, imports? })` (done
+by `OperationsAiModule`), and it is then global. It needs the host's `PrismaService` with the
+`aiTrace` table, a `ConfigService` answering the `AI_*`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+and `NODE_ENV` keys (`ai/ai-settings.ts`), and `AUTH_CLOCK`. It exports `AI_RUNNER`,
+`PROMPT_LOADER`, `AI_USAGE_READER`, `AiTraceService`, `AiUsageLimiter`, `AiUsageReportService`,
+`AiProviderSelector`, and `AiKeyChecker`; `LLM_PROVIDER`, `SPEECH_TO_TEXT_PROVIDER` (the boot
+providers; a null value means "unavailable"), and `AI_REAL_PROVIDER_FACTORIES` (how real
+providers are built and keys checked; the integration harness binds network-free ones) can be
+overridden. Without `organizationKeys` every organization uses the boot providers. At boot it
+logs the providers in force (`AI providers: llm=... speechToText=...`).
 
 `src/operations`:
 
-| Folder                                                                                                              | Contents                                                                                                                                                                                                          |
-| ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `organization/`, `users/`, `memberships/`, `sites/`, `teams/`, `log-types/`, `tasks/`, `work-logs/`, `attachments/` | One module each: a controller (HTTP and `@Policy` only), a service (access rules, transactions), and mappers from the row to the wire shape(s).                                                                   |
-| `access/`                                                                                                           | The authorization layer (global `AccessModule`): `policies.ts` (the registry), `AccessService`, `access-context.ts`, `decision.ts`, `visibility.ts`, `rules/`, the two seam implementations.                      |
-| `scope/`                                                                                                            | `resolveScope` (pure function), `ScopeService`, `GET /scope/me` and `GET /users/:id/scope`.                                                                                                                       |
-| `common/`                                                                                                           | `ChangeRecorder` (`record`, and the audit-only `recordAccess` for exports), `references.ts`, `concurrency.ts` (`NEXT_VERSION`, `assertExpectedVersion`), `names.ts`, `org-time-zone.ts`, `hierarchy.ts`, `db.ts`. |
-| `work-logs/work-log-query.ts`, `tasks/task-query.ts`                                                                | The one filter builder per resource (`workLogWhere`, `taskWhere`) used by the list, map, export, report, and overview, so their numbers always agree.                                                             |
-| `dashboard/`, `exports/`, `reports/`, `history/`                                                                    | Phase 6 (ADR-0009): `GET /dashboard/overview` and `GET /directory`; the CSV exports; `GET /reports/work-logs`; the record histories behind `GET /work-logs/:id/history` and `GET /tasks/:id/history`.             |
-| `sync/`                                                                                                             | `GET /sync/pull` (`sync.service.ts`, `sync.controller.ts`) and the opaque cursor with its scope fingerprint (`sync-cursor.ts`). ADR-0008 section 6.                                                               |
-| `memberships/admin-guard.ts`                                                                                        | `assertAdminRemains`: the last-admin check under a per-organization advisory lock.                                                                                                                                |
-| `attachments/`                                                                                                      | The upload flow (`attachments.service.ts`: start, renew, complete, archive, signed URLs) and `attachment-cleanup.service.ts` (hourly expiry and purge). ADR-0006.                                                 |
-| `notifications/`                                                                                                    | Which events notify whom (`notification-rules.ts`, pure), the text catalogue per locale (`notification-messages.ts`, English complete), and the service that registers the outbox handlers. ADR-0007.             |
-| `ai/`                                                                                                               | Phase 7 (ADR-0010, ADR-0011): `OperationsAiModule` (registers `AiModule`, `GET /ai/usage`), `capture/` (smart capture and its retention job), `summaries/`, `anomalies/`, `prompts/` (versioned prompt files).    |
-| `seed/`                                                                                                             | `demo-seed.ts`: the demo data, created through the real services; `DEV_PASSWORDS`.                                                                                                                                |
+| Folder                                                                                                              | Contents                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `organization/`, `users/`, `memberships/`, `sites/`, `teams/`, `log-types/`, `tasks/`, `work-logs/`, `attachments/` | One module each: a controller (HTTP and `@Policy` only), a service (access rules, transactions), and mappers from the row to the wire shape(s).                                                                                                                                                     |
+| `access/`                                                                                                           | The authorization layer (global `AccessModule`): `policies.ts` (the registry), `AccessService`, `access-context.ts`, `decision.ts`, `visibility.ts`, `rules/`, the two seam implementations.                                                                                                        |
+| `scope/`                                                                                                            | `resolveScope` (pure function), `ScopeService`, `GET /scope/me` and `GET /users/:id/scope`.                                                                                                                                                                                                         |
+| `common/`                                                                                                           | `ChangeRecorder` (`record`, and the audit-only `recordAccess` for exports), `references.ts`, `concurrency.ts` (`NEXT_VERSION`, `assertExpectedVersion`), `names.ts`, `org-time-zone.ts`, `hierarchy.ts`, `db.ts`.                                                                                   |
+| `work-logs/work-log-query.ts`, `tasks/task-query.ts`                                                                | The one filter builder per resource (`workLogWhere`, `taskWhere`) used by the list, map, export, report, and overview, so their numbers always agree.                                                                                                                                               |
+| `dashboard/`, `exports/`, `reports/`, `history/`                                                                    | Phase 6 (ADR-0009): `GET /dashboard/overview` and `GET /directory`; the CSV exports; `GET /reports/work-logs`; the record histories behind `GET /work-logs/:id/history` and `GET /tasks/:id/history`.                                                                                               |
+| `sync/`                                                                                                             | `GET /sync/pull` (`sync.service.ts`, `sync.controller.ts`) and the opaque cursor with its scope fingerprint (`sync-cursor.ts`). ADR-0008 section 6.                                                                                                                                                 |
+| `memberships/admin-guard.ts`                                                                                        | `assertAdminRemains`: the last-admin check under a per-organization advisory lock.                                                                                                                                                                                                                  |
+| `attachments/`                                                                                                      | The upload flow (`attachments.service.ts`: start, renew, complete, archive, signed URLs) and `attachment-cleanup.service.ts` (hourly expiry and purge). ADR-0006.                                                                                                                                   |
+| `notifications/`                                                                                                    | Which events notify whom (`notification-rules.ts`, pure), the text catalogue per locale (`notification-messages.ts`, English complete), and the service that registers the outbox handlers. ADR-0007.                                                                                               |
+| `ai/`                                                                                                               | Phase 7 (ADR-0010, ADR-0011): `OperationsAiModule` (registers `AiModule`, `GET /ai/usage`), `capture/` (smart capture and its retention job), `summaries/`, `anomalies/`, `prompts/` (versioned prompt files); `keys/` (ADR-0012: `AiKeyVault`, `OrganizationAiKeys`, `AiKeysService`, `/ai/keys`). |
+| `seed/`                                                                                                             | `demo-seed.ts`: the demo data, created through the real services; `DEV_PASSWORDS`.                                                                                                                                                                                                                  |
 
 ### Data model
 
-Defined in `apps/api/prisma/schema.prisma`, applied by seven migrations in
+Defined in `apps/api/prisma/schema.prisma`, applied by nine migrations in
 `apps/api/prisma/migrations/` (`20261013112952_init`,
 `20261013150000_attachment_storage_key_per_org`, `20261014090000_auth`,
 `20261017090000_phase4_mobile`, `20261027090000_phase5_offline_sync`,
-`20261028090000_phase6_dashboard`, `20261030090000_phase7_ai`). Ids are UUID version 7
-(`@default(uuid(7))`), so they sort by creation time. Roles, statuses, priorities, sources, the
+`20261028090000_phase6_dashboard`, `20261030090000_phase7_ai`,
+`20261116090000_ai_provider_keys`, `20261116120000_notification_resolved_at`). Ids are UUID
+version 7 (`@default(uuid(7))`), so they sort by creation time. Roles, statuses, priorities, sources, the
 audit actor type, and the auth enums are PostgreSQL enums. Timestamps are `timestamptz(3)`. The
 reasoning is in [ADR-0002](docs/decisions/0002-flexible-organization-and-scope-model.md),
 [ADR-0003](docs/decisions/0003-configurable-log-types-with-custom-fields.md), and
@@ -487,6 +497,7 @@ erDiagram
     json data "ids only, e.g. taskId"
     uuid sourceEventId "unique with recipientId and type"
     timestamptz readAt
+    timestamptz resolvedAt "settled: hidden, kept as history"
     timestamptz createdAt
   }
   PushToken {
@@ -526,16 +537,18 @@ erDiagram
   }
 ```
 
-The Phase 7 tables (ADR-0010, ADR-0011). `SmartCapture`, `DailySummary`, and `AnomalyFlag` are
-Operations tables with foreign keys to `Organization` (and `SmartCapture` to its worker and, once
-confirmed, to its `WorkLog`, `ON DELETE RESTRICT`; `DailySummary` to its recipient); the
-`AnomalyFlag` subject ids are plain ids. `AiTrace` is a platform table with no foreign keys:
+The Phase 7 tables (ADR-0010, ADR-0011) and `AiProviderKey` (ADR-0012). `SmartCapture`,
+`DailySummary`, `AnomalyFlag`, and `AiProviderKey` are Operations tables with foreign keys to
+`Organization` (and `SmartCapture` to its worker and, once confirmed, to its `WorkLog`,
+`ON DELETE RESTRICT`; `DailySummary` to its recipient); the `AnomalyFlag` subject ids are plain
+ids. `AiTrace` is a platform table with no foreign keys:
 
 ```mermaid
 erDiagram
   User ||--o{ SmartCapture : "records"
   WorkLog |o--o| SmartCapture : "confirms"
   User ||--o{ DailySummary : "receives"
+  Organization ||--o{ AiProviderKey : "stores"
 
   SmartCapture {
     uuid id PK
@@ -609,6 +622,17 @@ erDiagram
     timestamptz decidedAt
     timestamptz createdAt "row deleted after 400 days"
   }
+  AiProviderKey {
+    uuid id PK
+    uuid organizationId FK "unique with provider"
+    AiKeyProvider provider "anthropic, openai"
+    int keyVersion "1: AES-256-GCM"
+    bytes ciphertext "the key, encrypted"
+    bytes iv "12-byte nonce"
+    bytes authTag "16-byte GCM tag"
+    string hint "an ellipsis and the last four characters"
+    uuid updatedById
+  }
 ```
 
 Points the diagrams do not show:
@@ -620,7 +644,8 @@ Points the diagrams do not show:
   migration); `AttachmentStatus` (`pending`, `ready`); `PushPlatform` (`ios`, `android`);
   `AuditActorType` (`user`, `system`); `AuthCodePurpose`; `AuthClient`; and since Phase 7
   `SmartCaptureInputKind`, `SmartCaptureStatus`, `AnomalyKind`, `AnomalySeverity`,
-  `SummaryNarrativeSource`, `AiTraceStatus`, `AiDecision`. The business enum arrays in
+  `SummaryNarrativeSource`, `AiTraceStatus`, `AiDecision`, and since ADR-0012 `AiKeyProvider`
+  (`anthropic`, `openai`; `AI_KEY_PROVIDERS` in `platform/ai-keys.ts`). The business enum arrays in
   `packages/shared/src/domain/enums.ts`, `ATTACHMENT_STATUSES` in `domain/attachments.ts`,
   `PUSH_PLATFORMS` in `platform/notifications.ts`, and the Phase 7 arrays in the shared AI files
   must match the Prisma enums exactly, in the same order (`src/prisma-enums.spec.ts` checks it).
@@ -629,15 +654,15 @@ Points the diagrams do not show:
   optional leading `+`). A user without an `AuthCredential` row has not been activated and cannot
   sign in.
 - **`AuditEvent`, `OutboxEvent`, the `Auth*` tables, `Notification`, `PushToken`,
-  `OutboxConsumerCursor`, `IdempotencyRecord`, and `AiTrace` are platform tables.** They store entity ids as plain strings, so they can
-  move to another product unchanged.
+  `OutboxConsumerCursor`, `IdempotencyRecord`, and `AiTrace` are platform tables.** They store
+  entity ids as plain strings, so they can move to another product unchanged.
 - **`AuditEvent` is append-only at the database level.** The first migration adds a trigger that
   raises an error on `UPDATE` or `DELETE` of a row. It does not block `TRUNCATE` (the integration
   test harness relies on that), so a database role allowed to truncate can still empty the log.
 - **Indexes** start with `organizationId` on every business table, followed by the common filters.
 - **Foreign keys** are `ON DELETE RESTRICT`. Only the membership scope rows, task assignee rows,
-  and refresh tokens cascade with their parent. Nothing is deleted through the API; records are
-  archived.
+  and refresh tokens cascade with their parent. No business record is deleted through the API;
+  records are archived (the one deleted row type is an organization's stored AI key, ADR-0012).
 - **Attachment bytes live in object storage**, behind `FileStorage` (see File storage below). The
   row holds the API-chosen key of the verified copy and of its thumbnail, never a URL.
 - **`Task.statusReason`** is set from the `reason` of a status change (required for `blocked`) and
@@ -665,8 +690,11 @@ Points the diagrams do not show:
   `smartCaptureEnabled` and `dailySummaryEnabled` (both false by default), `summaryTime` (`HH:MM`
   in the organization's zone, default `18:00`), `summaryRecipientRoles` (default supervisor and
   manager; admin optional; never worker), `dailyRequestLimit`, `dailyCostLimitUsd` (can only
-  lower the environment's ceiling). The organization summary carries `aiFeatures` so the phone
-  and the dashboard know what is on.
+  lower the environment's ceiling), and since ADR-0012 `llmModel` (one of
+  `AI_LLM_MODEL_CHOICES`) and `sttModel` (one of `AI_STT_MODEL_CHOICES`); absent means the
+  server's `AI_LLM_MODEL` / `AI_STT_MODEL`. The organization summary carries `aiFeatures` so the
+  phone and the dashboard know what is on. API keys are never in `settings`: they live encrypted
+  in `AiProviderKey` (one row per organization and provider, never returned by the API).
 
 ### Request flow
 
@@ -877,6 +905,7 @@ creators of the user's non-archived tasks. A user with no active membership gets
 | Daily summaries generate (`ai_summary.generate`, Phase 7)               | 403                                                                                                                         | 403                                                                                                                        | 403                    | yes (idempotent per recipient and day; up to 7 days back; 403 `ai_disabled` while off) |
 | Anomaly flags (`ai_anomaly.read`, Phase 7)                              | 403                                                                                                                         | flags whose every subject they can see                                                                                     | all                    | all                                                                                    |
 | AI usage (`ai_usage.read`, Phase 7)                                     | 403                                                                                                                         | 403                                                                                                                        | 403                    | yes, own organization                                                                  |
+| AI keys (`ai_key.manage`, ADR-0012)                                     | 403                                                                                                                         | 403                                                                                                                        | 403                    | yes, own organization                                                                  |
 | User sessions list / revoke (`user.manage`)                             | 403                                                                                                                         | 403                                                                                                                        | 403                    | yes                                                                                    |
 | Audit events                                                            | 403                                                                                                                         | 403                                                                                                                        | 403                    | yes, own organization                                                                  |
 | Outbox events                                                           | 403                                                                                                                         | 403                                                                                                                        | 403                    | development and test only; 404 for everyone in production                              |
@@ -960,28 +989,30 @@ The seed back-dates work log `createdAt` with a direct update, outside the patte
 - **AI payloads** carry no AI content: a capture's audit and outbox payloads hold its ids,
   status, input kind, failure reason, trace ids, and work-log id, never the transcript or the
   proposal; a summary's hold ids, day, narrative source, trace ids, and counts, never the
-  narrative (the audit log is append-only).
+  narrative (the audit log is append-only). An AI key's (`ai_provider_key`) hold
+  `{ provider, stored }` only, never the key, its hint, or its ciphertext (ADR-0012).
 - `Notification` and `PushToken` rows are platform data, not business rows: the notifications
   module writes them itself (push token changes are audited directly through `AuditService`;
   notification rows are not audited). `AiTrace` rows are platform data too, written only by
   `AiTraceService` and not audited (they are the AI's own trace).
 
-Domain actions and event types (41):
+Domain actions and event types (44):
 
-| Entity          | Verbs                                                                                                 |
-| --------------- | ----------------------------------------------------------------------------------------------------- |
-| `organization`  | `created` (seed only; no endpoint creates organizations), `updated`                                   |
-| `user`          | `created`, `updated`, `archived`, `restored`                                                          |
-| `membership`    | `created`, `updated`, `archived`                                                                      |
-| `site`          | `created`, `updated`, `archived`, `restored`                                                          |
-| `team`          | `created`, `updated`, `archived`, `restored`                                                          |
-| `log_type`      | `created`, `updated`, `archived`                                                                      |
-| `task`          | `created`, `updated`, `status_changed`, `assignees_changed`, `archived`                               |
-| `work_log`      | `created`, `updated`, `status_changed`, `archived`                                                    |
-| `attachment`    | `upload_started`, `completed`, `archived`, `upload_expired` (system)                                  |
-| `smart_capture` | `created`, `processed`, `confirmed`, `discarded`, `input_purged` (system), `content_cleared` (system) |
-| `daily_summary` | `created` (system)                                                                                    |
-| `anomaly_flag`  | `created` (system)                                                                                    |
+| Entity            | Verbs                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------- |
+| `organization`    | `created` (seed only; no endpoint creates organizations), `updated`                                   |
+| `user`            | `created`, `updated`, `archived`, `restored`                                                          |
+| `membership`      | `created`, `updated`, `archived`                                                                      |
+| `site`            | `created`, `updated`, `archived`, `restored`                                                          |
+| `team`            | `created`, `updated`, `archived`, `restored`                                                          |
+| `log_type`        | `created`, `updated`, `archived`                                                                      |
+| `task`            | `created`, `updated`, `status_changed`, `assignees_changed`, `archived`                               |
+| `work_log`        | `created`, `updated`, `status_changed`, `archived`                                                    |
+| `attachment`      | `upload_started`, `completed`, `archived`, `upload_expired` (system)                                  |
+| `smart_capture`   | `created`, `processed`, `confirmed`, `discarded`, `input_purged` (system), `content_cleared` (system) |
+| `daily_summary`   | `created` (system)                                                                                    |
+| `anomaly_flag`    | `created` (system)                                                                                    |
+| `ai_provider_key` | `created`, `updated`, `deleted` (ADR-0012; the row itself is deleted, the events stay)                |
 
 Plus the eleven `auth.*` audit actions listed under Authentication, `push_token.registered` and
 `push_token.removed`, and since Phase 6 `export.work_logs` and `export.tasks` (entity type
@@ -995,43 +1026,45 @@ keeps it from missing a late-committing event.
 
 ### API surface
 
-78 paths (49 in Phase 3, plus two attachment paths and five notification paths in Phase 4,
+80 paths (49 in Phase 3, plus two attachment paths and five notification paths in Phase 4,
 `/sync/pull` in Phase 5, 11 in Phase 6: overview, directory, map, bulk status, two histories,
-two exports, report, and the two user session paths, and 10 paths with 11 routes in Phase 7: six
-smart capture paths, three summary paths, anomalies, usage). Every route declares `@Public()`,
+two exports, report, and the two user session paths, 10 paths with 11 routes in Phase 7: six
+smart capture paths, three summary paths, anomalies, usage, and 2 paths with 3 routes for
+ADR-0012: `/ai/keys` and `/ai/keys/{provider}`). Every route declares `@Public()`,
 `@Authenticated()`, or `@Policy(...)`; the policy is shown in brackets. `@Idempotent()` routes
 (`Idempotency-Key` honoured): `POST /work-logs`, `PATCH /work-logs/:id`,
 `PATCH /work-logs/:id/status`, `PATCH /tasks/:id/status`, `POST /ai/capture`,
 `POST /ai/capture/:id/discard`. `POST /ai/capture/:id/process` and `/upload-url` are not marked
 (accepted in review): processing is idempotent by state (a repeat returns the stored result, and
 a replayed 409 "upload first" would block the queued item after its upload); a renewal only
-issues a fresh URL while the capture awaits its upload. The organization is always the caller's; it is never taken from the URL or the
-body.
+issues a fresh URL while the capture awaits its upload. The organization is always the caller's;
+it is never taken from the URL or the body.
 
-| Resource      | Routes                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Health        | `GET /health` (public)                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Auth          | the nine `/auth/*` routes above                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Organization  | `GET /organization` [`organization.read`], `PATCH /organization` [`organization.update`]                                                                                                                                                                                                                                                                                                                                                 |
-| Users         | `GET /users`, `GET /users/:id` [`user.read`]; `PATCH /users/:id` [`user.update`]; `POST /users`, `POST /users/:id/archive`, `POST /users/:id/restore`, `POST /users/:id/activation-code`, `POST /users/:id/password-reset`, `GET /users/:id/sessions`, `POST /users/:id/sessions/revoke` [`user.manage`]                                                                                                                                 |
-| Scope         | `GET /scope/me` (authenticated), `GET /users/:id/scope` [`user.read_scope`]                                                                                                                                                                                                                                                                                                                                                              |
-| Memberships   | `GET /memberships`, `GET /memberships/:id` [`membership.read`]; `POST /memberships`, `PATCH /memberships/:id`, `POST /memberships/:id/archive` [`membership.manage`]                                                                                                                                                                                                                                                                     |
-| Sites         | `GET /sites`, `GET /sites/:id` [`site.read`]; `POST`, `PATCH /:id`, `POST /:id/archive`, `POST /:id/restore` [`site.manage`]                                                                                                                                                                                                                                                                                                             |
-| Teams         | `GET /teams`, `GET /teams/:id` [`team.read`]; `POST`, `PATCH /:id`, `POST /:id/archive`, `POST /:id/restore` [`team.manage`]                                                                                                                                                                                                                                                                                                             |
-| Log types     | `GET /log-types`, `GET /log-types/:id` [`log_type.read`]; `POST`, `PATCH /:id`, `POST /:id/archive` [`log_type.manage`]                                                                                                                                                                                                                                                                                                                  |
-| Tasks         | `GET /tasks`, `GET /tasks/:id` [`task.read`]; `POST`, `PATCH /:id`, `PUT /:id/assignees`, `POST /:id/archive` [`task.manage`]; `PATCH /tasks/:id/status` `{ status, reason? }` [`task.change_status`]; `GET /tasks/:id/history` [`task.read`]                                                                                                                                                                                            |
-| Work logs     | `GET /work-logs`, `GET /work-logs/:id` [`work_log.read`]; `POST` [`work_log.create`]; `PATCH /:id` [`work_log.update`]; `PATCH /:id/status` `{ status, note? }` [`work_log.change_status`]; `POST /:id/archive` [`work_log.archive`]; `GET /work-logs/map`, `GET /work-logs/:id/history` [`work_log.read`]; `POST /work-logs/bulk-status` [`work_log.review`]                                                                            |
-| Attachments   | `GET /work-logs/:workLogId/attachments`, `GET /attachments/:id` [`attachment.read`]; `POST /work-logs/:workLogId/attachments` (start), `POST /attachments/:id/upload-url` (renew), `POST /attachments/:id/complete` [`attachment.create`]; `POST /attachments/:id/archive` [`attachment.archive`]                                                                                                                                        |
-| Notifications | `GET /notifications`, `POST /notifications/:id/read`, `POST /notifications/read-all`, `POST /notifications/push-tokens`, `DELETE /notifications/push-tokens/:token` (all authenticated, own data only)                                                                                                                                                                                                                                   |
-| Dashboard     | `GET /dashboard/overview` [`dashboard.read`]; `GET /directory` [`directory.read`]; `GET /exports/work-logs.csv` [`export.work_logs`]; `GET /exports/tasks.csv` [`export.tasks`]; `GET /reports/work-logs` [`report.read`] (ADR-0009)                                                                                                                                                                                                     |
-| Sync          | `GET /sync/pull?cursor=` [`sync.pull`] (ADR-0008)                                                                                                                                                                                                                                                                                                                                                                                        |
-| AI (Phase 7)  | `POST /ai/capture`, `GET /ai/capture`, `GET /ai/capture/:id`, `POST /ai/capture/:id/upload-url`, `POST /ai/capture/:id/process`, `POST /ai/capture/:id/discard` [`ai_capture.use`]; `GET /ai/summaries`, `GET /ai/summaries/:id` [`ai_summary.read`]; `POST /ai/summaries/generate` [`ai_summary.generate`]; `GET /ai/anomalies` [`ai_anomaly.read`]; `GET /ai/usage` [`ai_usage.read`] (ADR-0010, ADR-0011; contracts in `@ops/shared`) |
-| Audit events  | `GET /audit-events`, `GET /audit-events/:id` [`audit.read`]                                                                                                                                                                                                                                                                                                                                                                              |
-| Outbox        | `GET /outbox-events`, `GET /outbox-events/:id` [`outbox.read`, development and test only]                                                                                                                                                                                                                                                                                                                                                |
+| Resource      | Routes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Health        | `GET /health` (public)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Auth          | the nine `/auth/*` routes above                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Organization  | `GET /organization` [`organization.read`], `PATCH /organization` [`organization.update`]                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Users         | `GET /users`, `GET /users/:id` [`user.read`]; `PATCH /users/:id` [`user.update`]; `POST /users`, `POST /users/:id/archive`, `POST /users/:id/restore`, `POST /users/:id/activation-code`, `POST /users/:id/password-reset`, `GET /users/:id/sessions`, `POST /users/:id/sessions/revoke` [`user.manage`]                                                                                                                                                                                                                                    |
+| Scope         | `GET /scope/me` (authenticated), `GET /users/:id/scope` [`user.read_scope`]                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Memberships   | `GET /memberships`, `GET /memberships/:id` [`membership.read`]; `POST /memberships`, `PATCH /memberships/:id`, `POST /memberships/:id/archive` [`membership.manage`]                                                                                                                                                                                                                                                                                                                                                                        |
+| Sites         | `GET /sites`, `GET /sites/:id` [`site.read`]; `POST`, `PATCH /:id`, `POST /:id/archive`, `POST /:id/restore` [`site.manage`]                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Teams         | `GET /teams`, `GET /teams/:id` [`team.read`]; `POST`, `PATCH /:id`, `POST /:id/archive`, `POST /:id/restore` [`team.manage`]                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Log types     | `GET /log-types`, `GET /log-types/:id` [`log_type.read`]; `POST`, `PATCH /:id`, `POST /:id/archive` [`log_type.manage`]                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Tasks         | `GET /tasks`, `GET /tasks/:id` [`task.read`]; `POST`, `PATCH /:id`, `PUT /:id/assignees`, `POST /:id/archive` [`task.manage`]; `PATCH /tasks/:id/status` `{ status, reason? }` [`task.change_status`]; `GET /tasks/:id/history` [`task.read`]                                                                                                                                                                                                                                                                                               |
+| Work logs     | `GET /work-logs`, `GET /work-logs/:id` [`work_log.read`]; `POST` [`work_log.create`]; `PATCH /:id` [`work_log.update`]; `PATCH /:id/status` `{ status, note? }` [`work_log.change_status`]; `POST /:id/archive` [`work_log.archive`]; `GET /work-logs/map`, `GET /work-logs/:id/history` [`work_log.read`]; `POST /work-logs/bulk-status` [`work_log.review`]                                                                                                                                                                               |
+| Attachments   | `GET /work-logs/:workLogId/attachments`, `GET /attachments/:id` [`attachment.read`]; `POST /work-logs/:workLogId/attachments` (start), `POST /attachments/:id/upload-url` (renew), `POST /attachments/:id/complete` [`attachment.create`]; `POST /attachments/:id/archive` [`attachment.archive`]                                                                                                                                                                                                                                           |
+| Notifications | `GET /notifications`, `POST /notifications/:id/read`, `POST /notifications/read-all`, `POST /notifications/push-tokens`, `DELETE /notifications/push-tokens/:token` (all authenticated, own data only)                                                                                                                                                                                                                                                                                                                                      |
+| Dashboard     | `GET /dashboard/overview` [`dashboard.read`]; `GET /directory` [`directory.read`]; `GET /exports/work-logs.csv` [`export.work_logs`]; `GET /exports/tasks.csv` [`export.tasks`]; `GET /reports/work-logs` [`report.read`] (ADR-0009)                                                                                                                                                                                                                                                                                                        |
+| Sync          | `GET /sync/pull?cursor=` [`sync.pull`] (ADR-0008)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| AI (Phase 7)  | `POST /ai/capture`, `GET /ai/capture`, `GET /ai/capture/:id`, `POST /ai/capture/:id/upload-url`, `POST /ai/capture/:id/process`, `POST /ai/capture/:id/discard` [`ai_capture.use`]; `GET /ai/summaries`, `GET /ai/summaries/:id` [`ai_summary.read`]; `POST /ai/summaries/generate` [`ai_summary.generate`]; `GET /ai/anomalies` [`ai_anomaly.read`]; `GET /ai/usage` [`ai_usage.read`]; `GET /ai/keys`, `PUT /ai/keys/:provider`, `DELETE /ai/keys/:provider` [`ai_key.manage`] (ADR-0010, ADR-0011, ADR-0012; contracts in `@ops/shared`) |
+| Audit events  | `GET /audit-events`, `GET /audit-events/:id` [`audit.read`]                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Outbox        | `GET /outbox-events`, `GET /outbox-events/:id` [`outbox.read`, development and test only]                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 Only users, sites, and teams can be restored. The only delete routes are
-`DELETE /auth/sessions/:id`, which ends a session, and `DELETE /notifications/push-tokens/:token`,
-which unregisters a device.
+`DELETE /auth/sessions/:id`, which ends a session, `DELETE /notifications/push-tokens/:token`,
+which unregisters a device, and `DELETE /ai/keys/:provider`, which deletes the organization's
+stored AI key (audited; a no-op 200 when none is stored). No business record is ever deleted.
 
 In development the OpenAPI document is generated from the same Zod schemas that validate the
 requests (`ApiDocs`), and served at `/docs` (Swagger UI), `/docs-json`, and `/docs-yaml`, with a
@@ -1171,6 +1204,16 @@ business write --> outbox event --> OutboxConsumer (platform.notifications, poll
   log must still have the announced status and not be archived. Since Phase 7 the recipient of a
   new daily summary gets `ai.daily_summary` (data `{ summaryId, day }`; push text "Your daily
   summary is ready"), registered by the summaries module on `daily_summary.created`.
+- **Resolution** (2026-11-16, uncommitted): a notification that asks for nothing more is
+  resolved (`Notification.resolvedAt`, written only by `NotificationService.resolve`, which knows
+  no types). `src/operations/notifications/notification-resolution.service.ts` registers outbox
+  handlers that re-read the subject's current state: `task.assigned` is resolved when the task is
+  done, cancelled, archived, or gone, or the recipient is no longer an assignee
+  (`task.status_changed`, `task.assignees_changed`, `task.archived`); `work_log.rejected` when the
+  log is no longer rejected or is archived (`work_log.status_changed`, `work_log.archived`); an
+  older `ai.daily_summary` when a summary of a later day arrives for the same recipient.
+  Resolved rows are excluded from `GET /notifications`, the unread count, mark-read, and the
+  sync pull (so they leave the phone), and are kept as history.
 - **Text**: rendered per recipient in their `User.locale` from the catalogue in
   `src/operations/notifications/notification-messages.ts` (recipients grouped by locale, one
   `notify` per group). Only English is complete; a missing key or an unsupported locale falls back
@@ -1223,7 +1266,9 @@ sync engine (reconnect, foreground, after a write, "Sync now", background task)
 
 Phase 7. The decisions, data handling, providers, and limits are in
 [ADR-0010](docs/decisions/0010-ai-layer-architecture.md); summaries and anomaly rules in
-[ADR-0011](docs/decisions/0011-daily-summaries-and-anomaly-rules.md). **Every AI feature is off
+[ADR-0011](docs/decisions/0011-daily-summaries-and-anomaly-rules.md); an organization's own
+provider keys and model choice in
+[ADR-0012](docs/decisions/0012-organization-ai-provider-keys.md). **Every AI feature is off
 until an admin turns it on** (`settings.ai`, Settings page), and the core works the same with it
 off (`ai-off` suite).
 
@@ -1244,12 +1289,34 @@ off (`ai-off` suite).
   per-user per-minute rate limit in memory); `ai-prices.ts` (the price table: a model missing
   from it is estimated as null, which counts $0 against the cost limit; an unpriced model that
   answered in place of the configured one is costed at the configured model's price);
-  `FilePromptLoader` and `untrustedDataBlock`.
+  `FilePromptLoader` and `untrustedDataBlock`; since ADR-0012 `AiProviderSelector` (each call's
+  providers per organization, below) and `AiKeyChecker` (checks a key by reading the model's
+  metadata, bounded by `AI_REQUEST_TIMEOUT_MS`, not traced, logged with ids and codes only).
+  `AiRunner.providers(organizationId)` is async.
 - `src/operations/ai/`: smart capture (`capture/`), daily summaries (`summaries/`), anomaly rules
   (`anomalies/`), the prompt files (`prompts/smart-capture-extract.v1.md`,
-  `daily-summary-narrative.v1.md`), `OrganizationAiLimits` (reads `settings.ai`), and
-  `GET /ai/usage`. They read through the normal visibility filters and write their own rows only
-  through `ChangeRecorder`. The platform layer writes only `AiTrace`.
+  `daily-summary-narrative.v1.md`), `OrganizationAiLimits` (reads `settings.ai`), `GET /ai/usage`,
+  and `keys/` (ADR-0012: `AiKeyVault` over the platform `SecretBox`, `OrganizationAiKeys` bound
+  to `AI_ORGANIZATION_KEYS`, `AiKeysService`, `AiKeysController`). They read through the normal
+  visibility filters and write their own rows only through `ChangeRecorder`. The platform layer
+  writes only `AiTrace`.
+
+**An organization's own keys and models** (ADR-0012, `ai_key.manage`, admins). An admin pastes
+the organization's Claude key (and optionally an OpenAI key for voice notes) in the "Your AI
+keys" card; `PUT /ai/keys/:provider` checks it with the provider for the model the organization
+will use (422 `ai_key_invalid`, detail path `model` when the key cannot reach that model, else
+`apiKey`; 503 `ai_unavailable` when unreachable; at most 5 checks per admin per minute, 429),
+then stores it encrypted in `AiProviderKey` (`SecretBox`, AES-256-GCM, key derived from
+`AI_KEYS_ENCRYPTION_SECRET`, organization id and provider as associated data). Without that
+secret `GET /ai/keys` says `storageAvailable: false` and `PUT` is 503
+`ai_key_storage_unavailable`; a stored key that no longer decrypts shows `unreadable: true` and is
+not used. For every AI call `AiProviderSelector.forOrganization` reads the keys and the
+organization's chosen models (`settings.ai.llmModel` / `sttModel`) through `OrganizationAiKeys`:
+the organization's key with its chosen model (else the server's model) first; else, when the
+organization chose another model and the server has a real key, the server's key with that
+model; else the boot providers (server key, fake, or none). Under `AI_PROVIDER=fake` organization
+keys and models are ignored. Providers built from a key are cached per organization, model, and
+key fingerprint; a removed or unreadable key drops its cached provider.
 
 **Failure mapping** (runner to feature): `unavailable` and `timeout` (network, 408, 409, 429,
 5xx, no key in production) are retryable: a capture answers 503 `ai_unavailable` and stays
@@ -1365,23 +1432,39 @@ and it is `null` when the API URL is not configured.
 
 - **Tokens** live in `packages/shared/src/theme/`: colours, spacing, radii, font sizes, and font
   weights. The palette was sampled from the client's logo (`docs/brand/`): background `#000000`,
-  gold primary `#D4A454`, brand red `#D80611`. The theme is dark only.
+  gold primary `#D4A454`, brand red `#D80611`. Since 2026-11-16 there are two themes:
+  `darkTheme` (the default) and `lightTheme` (warm neutrals, a darker gold `#8A6416` that passes
+  AA as text on white); `themeForScheme(scheme)` picks one (unknown = dark).
 - **Contrast is tested.** `CONTRAST_REQUIREMENTS` lists every foreground and background pairing,
   and the unit tests check each against WCAG AA. The brand red is decoration only; red text uses
   `accentText` / `danger` (`#FF6B6E`).
-- **Web**: the root layout sets the tokens as CSS custom properties on `<html>`. Stylesheets use
-  only `var(--...)`.
-- **Mobile**: screens import the token constants directly into `StyleSheet.create`.
+- **Web**: the root layout writes a `<style>` (`themeStylesheet()` in `src/lib/theme.ts`, over
+  `themeCss`): the dark tokens as CSS custom properties on `:root`, the light ones under
+  `@media (prefers-color-scheme: light)` unless `data-theme="dark"`, and on
+  `:root[data-theme="light"]`. The account menu offers **Theme: System / Dark / Light**; the
+  choice is kept in `localStorage` (`hz.theme`, never sent to the API) and set as `data-theme` on
+  `<html>` before the first paint by an inline script (`THEME_INIT_SCRIPT`; the Phase 8 nonce CSP
+  must allow it). "System" follows the device or browser setting live. Stylesheets use only
+  `var(--...)`.
+- **Mobile** (2026-11-16, uncommitted): components and screens take their colours from
+  `useTheme().colors` (`apps/mobile/src/theme/`), never the static `colors` export; the theme
+  follows the device or Profile → Theme: System / Dark / Light (`userInterfaceStyle:
+'automatic'` in `app.config.ts`). The header sync indicator is hidden when everything is sent.
+  Bundled and opened on a phone,
+  not yet looked at on the screen (see `apps/mobile/memory.md`).
 - **Brand module**: each app has one (`apps/web/src/lib/brand.ts`, `apps/mobile/src/config/brand.ts`)
   holding the name, app label, logo, and "Powered by Kaneri.ai". The name falls back to
-  "Operations" when the variable is not set.
+  "Operations" when the variable is not set. The logo already shows the product name, so since
+  2026-11-16 the name is not repeated as text next to it (mobile `BrandHeader`, web `AuthShell`
+  and sidebar): only the app label is written; the name stays in the logo's accessible label and
+  the page title.
 
 To re-brand for another client: set `NEXT_PUBLIC_BRAND_NAME` and `EXPO_PUBLIC_BRAND_NAME`; replace
 `apps/web/public/brand/logo-512.png`, `apps/web/src/app/icon.png`, `apps/web/src/app/apple-icon.png`,
-and the three files in `apps/mobile/assets/brand/` (same names and sizes); change `darkTheme` if the
-colours differ and run the tests; set the organization slug variables for that deployment; restart
-the dev servers. For a separate mobile app, set `EXPO_IOS_BUNDLE_IDENTIFIER` and
-`EXPO_ANDROID_PACKAGE` (default `ai.kaneri.operations`, a placeholder until the owner decides the
+and the three files in `apps/mobile/assets/brand/` (same names and sizes); change `darkTheme` and
+`lightTheme` if the colours differ and run the tests; set the organization slug variables for
+that deployment; restart the dev servers. For a separate mobile app, set
+`EXPO_IOS_BUNDLE_IDENTIFIER` and `EXPO_ANDROID_PACKAGE` (default `ai.kaneri.operations`, a placeholder until the owner decides the
 final values; they cannot change after a store release) and that deployment's
 `EXPO_PUBLIC_EAS_PROJECT_ID`. Mobile text is in `apps/mobile/src/i18n/en.ts` and names no client.
 
@@ -1398,19 +1481,19 @@ final values; they cannot change after a store release) and that deployment's
     "not available for your role". The shell renders a page only once the organization's time
     zone has loaded (`orgTimeGate`). All of this is UX only; the API is the authority.
 
-    | Route                           | Roles (navigation)                   | Main API calls                                                                            |
-    | ------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------- |
-    | `/` overview                    | supervisor, manager, admin           | `GET /dashboard/overview`                                                                 |
-    | `/work-logs`, `/work-logs/[id]` | supervisor, manager, admin           | `GET /work-logs`, `GET /work-logs/:id`, attachments, `/history`, status and `bulk-status` |
-    | `/work-logs/report`             | supervisor, manager, admin           | `GET /reports/work-logs` (printed with `@media print`)                                    |
-    | `/map`                          | supervisor, manager, admin           | `GET /work-logs/map`                                                                      |
-    | `/tasks`, `/tasks/[id]`         | supervisor, manager, admin           | `GET /tasks`, writes, `PUT /tasks/:id/assignees`, `/status`, `/history`                   |
-    | `/people`                       | manager (read only), admin (manages) | users, memberships, codes, `GET /users/:id/sessions`, `POST .../sessions/revoke`          |
-    | `/structure`                    | manager, admin                       | sites, teams, log types (field editor through `PATCH /log-types/:id`)                     |
-    | `/audit`                        | admin                                | `GET /audit-events`                                                                       |
-    | `/settings`                     | admin                                | `GET` / `PATCH /organization` (including the AI section: switches, time, roles, limits)   |
-    | `/summaries`                    | supervisor, manager, admin           | `GET /ai/summaries`, `GET /ai/summaries/:id` (own summaries, history)                     |
-    | `/ai-usage`                     | admin                                | `GET /ai/usage`                                                                           |
+    | Route                           | Roles (navigation)                   | Main API calls                                                                                |
+    | ------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------- |
+    | `/` overview                    | supervisor, manager, admin           | `GET /dashboard/overview`                                                                     |
+    | `/work-logs`, `/work-logs/[id]` | supervisor, manager, admin           | `GET /work-logs`, `GET /work-logs/:id`, attachments, `/history`, status and `bulk-status`     |
+    | `/work-logs/report`             | supervisor, manager, admin           | `GET /reports/work-logs` (printed with `@media print`)                                        |
+    | `/map`                          | supervisor, manager, admin           | `GET /work-logs/map`                                                                          |
+    | `/tasks`, `/tasks/[id]`         | supervisor, manager, admin           | `GET /tasks`, writes, `PUT /tasks/:id/assignees`, `/status`, `/history`                       |
+    | `/people`                       | manager (read only), admin (manages) | users, memberships, codes, `GET /users/:id/sessions`, `POST .../sessions/revoke`              |
+    | `/structure`                    | manager, admin                       | sites, teams, log types (field editor through `PATCH /log-types/:id`)                         |
+    | `/audit`                        | admin                                | `GET /audit-events`                                                                           |
+    | `/settings`                     | admin                                | `GET` / `PATCH /organization` (AI section: switches, time, roles, limits, models); `/ai/keys` |
+    | `/summaries`                    | supervisor, manager, admin           | `GET /ai/summaries`, `GET /ai/summaries/:id` (own summaries, history)                         |
+    | `/ai-usage`                     | admin                                | `GET /ai/usage`                                                                               |
 
     Every list page and the overview read `GET /directory` once (names behind ids) and offer the
     CSV export of the same filters (`GET /exports/*.csv`). When `aiFeatures.dailySummary` is on,
@@ -1420,7 +1503,13 @@ final values; they cannot change after a store release) and that deployment's
 
   - **Data**: TanStack Query over the shared `apiClient` (`src/lib/api/query.ts`: one
     `queryKeys` factory, `staleTime` 30 s, retries only for network, timeout, 429, and 5xx,
-    mutations never retried, cache cleared when nobody is signed in). No global store.
+    mutations never retried, cache cleared when nobody is signed in). No global store. **Live
+    updates** (2026-11-16, `src/lib/api/live.ts`): the default `refetchInterval`
+    (`liveRefetchInterval`) refetches the `dashboard`, `workLogs` (not photo URLs), `tasks`,
+    `users`, and `memberships` queries every 15 s while the tab is visible, backing off to 5
+    minutes while they fail and stopping on a 4xx other than 429; `AuthProvider` re-checks the
+    signed-in user (`refreshUser`) every 30 s while visible, so a changed role or scope shows
+    without a reload.
   - **List state in the URL** (`src/lib/list-params.ts`, `useListParams`): parameter names equal
     the API's list query names, so links, the back button, the overview numbers, and exports use
     the same filters. Tables are TanStack Table v8 in manual mode (server-side sort and paging).
@@ -1473,8 +1562,11 @@ final values; they cannot change after a store release) and that deployment's
     per-record order, coalescing, version rebasing, states `pending` / `sending` /
     `failed_retryable` / `failed_permanent`), the sync engine (`engine.ts`: sends the queue with
     `offlineSyncHeaders`, then `GET /sync/pull`; on start, foreground, reconnect via NetInfo, after
-    a write, "Sync now", and a best-effort `expo-background-task`; backoff 2 s doubling to 15
-    minutes with full jitter, no attempt limit), the offline identity in SecureStore (the app opens
+    a write, "Sync now", pull to refresh, every 15 s while in the foreground (since 2026-11-16,
+    doubling up to 5 minutes while pulls fail), and a best-effort `expo-background-task`; backoff
+    2 s doubling to 15 minutes with full jitter, no attempt limit; `subscribePulls` reports each
+    pull with `scopeChanged`, and `useLiveUser` then re-checks the user with `refreshUser`), the
+    offline identity in SecureStore (the app opens
     signed in from it when the server is unreachable), and the per-user lifecycle (`session.ts`,
     `lifecycle.ts`, `identity.ts`: sign-out choices, kept-user register, start-up sweep). The
     Phase 4 AsyncStorage upload queue is migrated into the write queue on first open
@@ -1530,8 +1622,10 @@ API: required `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_MS`, `API_HOST`, `API_PO
 `AI_ANTHROPIC_REFUSAL_FALLBACK` (false), `AI_REQUEST_TIMEOUT_MS` (30000),
 `AI_DAILY_LIMIT_PER_ORG` (500), `AI_DAILY_COST_LIMIT_USD_PER_ORG` (10),
 `AI_RATE_LIMIT_PER_USER_PER_MINUTE` (6), `AI_SUMMARY_SCHEDULER_ENABLED` (true),
-`AI_SUMMARY_POLL_INTERVAL_MS` (60000) (see README section 9). **Production refusals**: a
-placeholder-looking or repetitive auth secret or storage secret key, a `WEB_APP_URL` or
+`AI_SUMMARY_POLL_INTERVAL_MS` (60000) (see README sections 9 and 11), and since ADR-0012
+`AI_KEYS_ENCRYPTION_SECRET` (none: admins cannot store a key; at least 32 characters; changing it
+makes stored keys unreadable). **Production refusals**: a placeholder-looking or repetitive auth
+secret, storage secret key, or `AI_KEYS_ENCRYPTION_SECRET`, a `WEB_APP_URL` or
 `STORAGE_PUBLIC_ENDPOINT` that is not `https://`, and `AI_PROVIDER=fake`; `AI_PROVIDER=real`
 without both keys is refused everywhere. The absolute session lifetime may not be shorter
 than the refresh lifetime. Docker Compose reads `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`,
@@ -1546,18 +1640,17 @@ Turborepo runs tasks across the workspace. Every task depends on `^build`, so `@
 compiled before the apps that import it. The reasons for each tool and version are in
 [ADR-0001](docs/decisions/0001-tech-stack.md).
 
-- **Unit tests** (`pnpm test`) need no database and no network: 706 in `@ops/api` (35 suites,
+- **Unit tests** (`pnpm test`) need no database and no network: 734 in `@ops/api` (37 suites,
   including the access rules, visibility, auth, storage, notifications, the outbox consumer,
-  idempotency, the sync cursor, the Phase 6 helpers, the AI runner, providers, prompt loader,
-  anomaly rules, summary facts and schedule, `prisma-enums.spec.ts`, and
-  `route-policies.spec.ts`), 764 in `@ops/shared` (18 files), 191 in `@ops/web` (12 files,
-  `src/lib` logic plus a render test of the management screens), 332 in `@ops/mobile` (28 suites,
+  idempotency, the sync cursor, the Phase 6 helpers, the AI runner, providers, prompt loader, key
+  checker, `SecretBox`, anomaly rules, summary facts and schedule, `prisma-enums.spec.ts`, and
+  `route-policies.spec.ts`), 815 in `@ops/shared` (18 files), 207 in `@ops/web` (15 files,
+  `src/lib` logic plus a render test of the management screens), 351 in `@ops/mobile` (30 suites,
   including the sync engine and smart capture against fakes for SQLite, files, network, clock,
-  and API). Counted on 2026-11-02.
+  and API). Counted on 2026-11-16 (docs-keeper).
 - **Integration tests** (`pnpm test:integration`) boot the real Nest application in-process and
-  call it over HTTP against a separate PostgreSQL database named by `DATABASE_URL_TEST`: 1,687
-  tests in 27 suites (1,681 in 26 suites plus 6 in `storage-minio`, as reported on 2026-11-02), a
-  few minutes. They bind an in-memory `FileStorage` fake, except `storage-minio`, which uses the
+  call it over HTTP against a separate PostgreSQL database named by `DATABASE_URL_TEST`: 1,719
+  tests in 29 suites, all passing on 2026-11-16, about 5 minutes. They bind an in-memory `FileStorage` fake, except `storage-minio`, which uses the
   real MinIO with its own bucket `hz-attachments-test`; the outbox consumer, push, and the
   summary scheduler are off and tests call `processPending()` with a fake Expo client. The fake
   configuration holds no AI key, so the AI layer always runs on its fakes (never a network call,
@@ -1612,38 +1705,40 @@ A shared rate-limit store (sign-in and upload limits, the decode limit is per pr
 provider with a private bucket policy and a scoped key, a replacement for the community MinIO
 image, durable push receipts, a purge marker for orphan upload bytes, a retention and erasure
 decision for personal data in the audit log, the outbox, and stored photos, and for the AI layer
-the provider data processing agreements, zero data retention where available, and a check of the
-price table.
+the provider data processing agreements, zero data retention where available, a check of the
+price table, and a production `AI_KEYS_ENCRYPTION_SECRET` (there is no rotation of it in v1,
+ADR-0012).
 
 ## Reusable Kaneri platform components
 
 Kaneri.ai builds AI-agent and automation products. These components are intended to be shared
 across Kaneri products later.
 
-| Component                   | Responsibility                                                                        | State                                                                                                                            |
-| --------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Configuration               | Typed, validated settings from the environment.                                       | Exists in `src/config/`, mixed with this API's own variable list.                                                                |
-| Request context             | Correlation id, acting user, one structured log line per request.                     | Exists: `src/platform/request-context/`.                                                                                         |
-| HTTP conventions            | Error body, Zod validation pipe, pagination, filters, OpenAPI from Zod.               | Exists: `src/platform/http/`, `src/platform/docs/`, schemas in `@ops/shared`.                                                    |
-| Audit log                   | Append-only record of who did what, when, and through which actor.                    | Exists: `src/platform/audit/`, table `AuditEvent` (with offline-sync `metadata` since Phase 5).                                  |
-| Event outbox                | Domain events written in the same transaction as the change.                          | Exists: `src/platform/outbox/`, table `OutboxEvent`.                                                                             |
-| Outbox consumer             | Reads the outbox in order and dispatches events to registered handlers.               | Exists (Phase 4, ADR-0007): `outbox-consumer.ts`, table `OutboxConsumerCursor`. Knows no event names.                            |
-| Auth                        | Identity, sign-in, sessions, tokens, CSRF, rate limits, lockout.                      | Exists: `src/platform/auth/`, tables `Auth*`. In-house (ADR-0004); an external provider would plug in behind the same seams.     |
-| Permissions seam            | Route policies and the authorizer interface the host implements.                      | Exists: `src/platform/authz/`. The Operations rules (`src/operations/access/`) are domain code behind it.                        |
-| Notifications               | Delivering messages to users over one or more channels.                               | Exists (Phase 4, ADR-0007): in-app list, `NotificationChannel` interface, Expo push channel, push tokens. Codes: logging only.   |
-| File storage                | Provider-neutral storage with signed upload and download URLs.                        | Exists (Phase 4, ADR-0006): `src/platform/storage/`, S3-compatible, image verification and thumbnails.                           |
-| Idempotency                 | `Idempotency-Key` claim, replay, and expiry for marked routes.                        | Exists (Phase 5, ADR-0008): `src/platform/idempotency/`, table `IdempotencyRecord`, `@Idempotent()`. Knows no route names.       |
-| Design tokens               | Theme constants, contrast maths, CSS variables.                                       | Exists: `packages/shared/src/theme/`.                                                                                            |
-| Time zone, CSV, translation | Pure helpers: zoned days and formatting, injection-safe CSV, translator with plurals. | Exists (Phase 6, ADR-0009): `packages/shared/src/common/time-zone.ts`, `csv.ts`, `locale.ts`, `src/i18n/translate.ts`.           |
-| Typed API client            | Transport with refresh-once, result type, auth session manager, health.               | Exists: `packages/shared/src/api-client/` (the resource list is Operations-specific).                                            |
-| AI layer                    | Provider abstraction, runner (limits, timeout, retry, validation), traces, prompts.   | Exists (Phase 7, ADR-0010): `src/platform/ai/`, table `AiTrace`, fakes. Knows no feature; features live in `src/operations/ai/`. |
+| Component                   | Responsibility                                                                        | State                                                                                                                                                                                                                                              |
+| --------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Configuration               | Typed, validated settings from the environment.                                       | Exists in `src/config/`, mixed with this API's own variable list.                                                                                                                                                                                  |
+| Request context             | Correlation id, acting user, one structured log line per request.                     | Exists: `src/platform/request-context/`.                                                                                                                                                                                                           |
+| HTTP conventions            | Error body, Zod validation pipe, pagination, filters, OpenAPI from Zod.               | Exists: `src/platform/http/`, `src/platform/docs/`, schemas in `@ops/shared`.                                                                                                                                                                      |
+| Audit log                   | Append-only record of who did what, when, and through which actor.                    | Exists: `src/platform/audit/`, table `AuditEvent` (with offline-sync `metadata` since Phase 5).                                                                                                                                                    |
+| Event outbox                | Domain events written in the same transaction as the change.                          | Exists: `src/platform/outbox/`, table `OutboxEvent`.                                                                                                                                                                                               |
+| Outbox consumer             | Reads the outbox in order and dispatches events to registered handlers.               | Exists (Phase 4, ADR-0007): `outbox-consumer.ts`, table `OutboxConsumerCursor`. Knows no event names.                                                                                                                                              |
+| Auth                        | Identity, sign-in, sessions, tokens, CSRF, rate limits, lockout.                      | Exists: `src/platform/auth/`, tables `Auth*`. In-house (ADR-0004); an external provider would plug in behind the same seams.                                                                                                                       |
+| Permissions seam            | Route policies and the authorizer interface the host implements.                      | Exists: `src/platform/authz/`. The Operations rules (`src/operations/access/`) are domain code behind it.                                                                                                                                          |
+| Notifications               | Delivering messages to users over one or more channels.                               | Exists (Phase 4, ADR-0007): in-app list, `NotificationChannel` interface, Expo push channel, push tokens. Codes: logging only.                                                                                                                     |
+| File storage                | Provider-neutral storage with signed upload and download URLs.                        | Exists (Phase 4, ADR-0006): `src/platform/storage/`, S3-compatible, image verification and thumbnails.                                                                                                                                             |
+| Idempotency                 | `Idempotency-Key` claim, replay, and expiry for marked routes.                        | Exists (Phase 5, ADR-0008): `src/platform/idempotency/`, table `IdempotencyRecord`, `@Idempotent()`. Knows no route names.                                                                                                                         |
+| Design tokens               | Theme constants, contrast maths, CSS variables.                                       | Exists: `packages/shared/src/theme/`.                                                                                                                                                                                                              |
+| Time zone, CSV, translation | Pure helpers: zoned days and formatting, injection-safe CSV, translator with plurals. | Exists (Phase 6, ADR-0009): `packages/shared/src/common/time-zone.ts`, `csv.ts`, `locale.ts`, `src/i18n/translate.ts`.                                                                                                                             |
+| Typed API client            | Transport with refresh-once, result type, auth session manager, health.               | Exists: `packages/shared/src/api-client/` (the resource list is Operations-specific).                                                                                                                                                              |
+| AI layer                    | Provider abstraction, runner (limits, timeout, retry, validation), traces, prompts.   | Exists (Phase 7, ADR-0010): `src/platform/ai/`, table `AiTrace`, fakes. Knows no feature; features live in `src/operations/ai/`. Since ADR-0012 per-tenant providers (`AiProviderSelector`, the host's `AI_ORGANIZATION_KEYS`) and `AiKeyChecker`. |
+| Secret encryption           | Encrypt small secrets at rest, bound to where they are stored.                        | Exists (ADR-0012): `src/platform/crypto/` (`SecretBox`, AES-256-GCM). The secret and the storage table are the host's.                                                                                                                             |
 
 **Design rule.** Each platform component is a self-contained module with **no Operations-specific
 imports**. Operations behaviour is supplied through configuration or an interface that the
-Operations code implements (`REQUEST_AUTHORIZER`, `AUTH_PROFILE_PROVIDER`) or registers with
-(`OutboxConsumer.registerHandler`, `NotificationService.notify`) or registers with options
-(`AiModule.register`). Dependencies point one way:
-Operations modules may import platform modules, never the reverse.
+Operations code implements (`REQUEST_AUTHORIZER`, `AUTH_PROFILE_PROVIDER`,
+`AI_ORGANIZATION_KEYS`) or registers with (`OutboxConsumer.registerHandler`,
+`NotificationService.notify`) or registers with options (`AiModule.register`). Dependencies point
+one way: Operations modules may import platform modules, never the reverse.
 
 What "self-contained" means today, and what extraction would still need:
 

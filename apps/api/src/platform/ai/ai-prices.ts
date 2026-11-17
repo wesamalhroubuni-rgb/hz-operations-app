@@ -8,7 +8,8 @@
  *
  * Sources:
  * - Claude models: Anthropic's model and pricing table as cached in the Claude API reference on
- *   2026-10-06 (checked 2026-11-01): Opus 5.5 $4 / $20, Sonnet 5.5 $2 / $10, Haiku 5.5
+ *   2026-10-06 (checked 2026-11-01; Fable 5.2 added 2026-11-16 from the 2026-11-03 table):
+ *   Fable 5.2 $8 / $40, Opus 5.5 $4 / $20, Sonnet 5.5 $2 / $10, Haiku 5.5
  *   $0.10 / $0.50 per million input / output tokens (Haiku 5.5: prompts up to 100K tokens).
  * - OpenAI speech-to-text: OpenAI's published pricing at the time of writing (to re-check
  *   before production): gpt-4o-transcribe $6 per million audio input tokens and $10 per
@@ -26,6 +27,7 @@ export interface ModelPrice {
 }
 
 export const MODEL_PRICES: Readonly<Record<string, ModelPrice>> = {
+  'claude-fable-5-2': { inputPerMillionTokens: 8, outputPerMillionTokens: 40 },
   'claude-opus-5-5': { inputPerMillionTokens: 4, outputPerMillionTokens: 20 },
   'claude-sonnet-5-5': { inputPerMillionTokens: 2, outputPerMillionTokens: 10 },
   'claude-haiku-5-5': { inputPerMillionTokens: 0.1, outputPerMillionTokens: 0.5 },

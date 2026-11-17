@@ -1,7 +1,8 @@
-import { colors, fontSizes, fontWeights, radii, spacing } from '@ops/shared';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { fontSizes, fontWeights, radii, spacing } from '@ops/shared';
+import { Pressable, Text, View } from 'react-native';
 
 import { t } from '../i18n';
+import { makeStyles } from '../theme';
 import { FieldShell } from './FieldShell';
 import { touch } from './sizes';
 
@@ -25,6 +26,7 @@ export function YesNoField({
   hint?: string | null;
   required?: boolean;
 }>) {
+  const styles = useStyles();
   const choices: { answer: boolean; text: string }[] = [
     { answer: true, text: t('common.yes') },
     { answer: false, text: t('common.no') },
@@ -57,7 +59,7 @@ export function YesNoField({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   row: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -90,4 +92,4 @@ const styles = StyleSheet.create({
   textSelected: {
     color: colors.onPrimary,
   },
-});
+}));

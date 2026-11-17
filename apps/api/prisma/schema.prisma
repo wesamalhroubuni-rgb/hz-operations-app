@@ -160,6 +160,8 @@ model Organization {
   smartCaptures  SmartCapture[]
   dailySummaries DailySummary[]
   anomalyFlags   AnomalyFlag[]
+
+  aiProviderKeys AiProviderKey[]
 }
 
 model User {
@@ -650,6 +652,38 @@ model AiTrace {
   @@index([requestedById, createdAt])
 }
 
+/// The AI providers an organization can store its own key for (`AI_KEY_PROVIDERS` in @ops/shared).
+enum AiKeyProvider {
+  anthropic
+  openai
+}
+
+/// An organization's own AI provider key (ADR-0012), pasted by an admin. Stored encrypted with
+/// AES-256-GCM under `AI_KEYS_ENCRYPTION_SECRET`; the organization id and provider are bound as
+/// associated data, so a row copied to another organization or provider does not decrypt. The
+/// key is never returned by the API, logged, or written to the audit log or the outbox.
+model AiProviderKey {
+  id             String        @id @default(uuid(7)) @db.Uuid
+  organizationId String        @db.Uuid
+  provider       AiKeyProvider
+  /// Format version of the encryption (1: AES-256-GCM, key from SHA-256 of the secret).
+  keyVersion     Int           @default(1)
+  ciphertext     Bytes
+  /// 12-byte random nonce.
+  iv             Bytes
+  /// 16-byte GCM authentication tag.
+  authTag        Bytes
+  /// `…` and the last four characters, shown to admins.
+  hint           String
+  updatedById    String        @db.Uuid
+  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, provider])
+}
+
 /// Append-only record of who did what. Rows are never updated or deleted (database trigger).
 model AuditEvent {
   id             String         @id @default(uuid(7)) @db.Uuid
@@ -812,6 +846,10 @@ model Notification {
   /// The outbox event this notification was made from, if any.
   sourceEventId  String?   @db.Uuid
   readAt         DateTime? @db.Timestamptz(3)
+  /// Set when what the notification asked for is settled (the task is done, cancelled or no
+  /// longer the recipient's; the rejected log was resubmitted; a newer summary arrived). Hidden
+  /// from the in-app list, the unread count and the phone's sync; kept as history.
+  resolvedAt     DateTime? @db.Timestamptz(3)
   createdAt      DateTime  @default(now()) @db.Timestamptz(3)
 
   @@unique([sourceEventId, recipientId, type])

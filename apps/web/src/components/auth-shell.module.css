@@ -22,17 +22,10 @@
 }
 
 .logo {
-  width: 6rem;
-  height: 6rem;
-}
-
-.name {
-  margin: var(--space-sm) 0 0;
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
-  line-height: 1.2;
-  letter-spacing: 0.04em;
-  color: var(--color-primary);
+  inline-size: 6rem;
+  block-size: 6rem;
+  /* The logo is a black square: a rounded tile reads well in both themes. */
+  border-radius: var(--radius-lg);
 }
 
 .label {

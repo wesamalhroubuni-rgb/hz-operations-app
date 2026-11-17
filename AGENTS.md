@@ -32,15 +32,16 @@ Naming: never hard-code a client name. The name shown in the apps comes from
 `NEXT_PUBLIC_BRAND_NAME` / `EXPO_PUBLIC_BRAND_NAME` through each app's brand module. "Operations"
 stays as the technical name (folder, `@ops/*`, `src/operations`, database `operations_app`).
 
-State on 2026-11-02: Phases 1 to 6 are committed (Phase 6 web dashboard: `713f592`). Phase 7
-(Intelligent layer v1, ADR-0010 and ADR-0011) is done in code, tested with the fake AI providers,
-and reviewed, and is being committed: smart capture (Speak, Snap, Type a note on the phone, a
-proposed log the worker confirms), daily summaries with rule-based anomaly flags, AI traces,
-limits, and admin switches (all AI off by default); the API has 78 paths. **No real AI provider
-has been called (no keys yet), nothing has run on a phone or in the emulator, and the dashboard
-has not been used in a browser with data**; the owner's `pnpm db:reset` (the development database
-holds a stray migration and lacks the Phase 5, 6, and 7 ones) and the combined manual test of
-Phases 4 to 7 (`docs/reports/phase-7.md`) are open. Phase 8 (Hardening & release) is next. See
+State on 2026-11-16: Phases 1 to 7 are committed (Phase 7 intelligent layer v1: `3bfad42`; seed
+and Expo Go fixes: `5038c71`). The development database was reset and has all nine
+migrations, and the owner ran the app on a real Android phone in Expo Go for the first time.
+Uncommitted: an organization's own AI keys and model choice (ADR-0012, Settings "Your AI
+keys"), live updates (phone sync every 15 s in the foreground, dashboard lists every 15 s), a
+light theme with a System / Dark / Light choice on the dashboard and the phone (the phone's not
+yet looked at on screen), notifications resolved once they ask for nothing more
+(`Notification.resolvedAt`), and the product name no longer repeated next to the logo; the API
+has 80 paths; all 1,719 integration tests pass. **No real AI provider has been called yet** (all AI off by default). The combined manual test of Phases 4 to 7
+(`docs/reports/phase-7.md`) is open. Phase 8 (Hardening & release) is next. See
 [MEMORY.md](MEMORY.md).
 
 ## Engineering principles
@@ -156,10 +157,12 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   `AI_ANTHROPIC_REFUSAL_FALLBACK` (false), `AI_REQUEST_TIMEOUT_MS` (30000),
   `AI_DAILY_LIMIT_PER_ORG` (500), `AI_DAILY_COST_LIMIT_USD_PER_ORG` (10),
   `AI_RATE_LIMIT_PER_USER_PER_MINUTE` (6), `AI_SUMMARY_SCHEDULER_ENABLED` (true),
-  `AI_SUMMARY_POLL_INTERVAL_MS` (60000). **Production refuses** a placeholder-looking or
-  repetitive auth secret or storage secret key, a non-https `WEB_APP_URL` or
-  `STORAGE_PUBLIC_ENDPOINT`, and `AI_PROVIDER=fake`, so `pnpm --filter @ops/api start` fails
-  with the `.env.example` values. `AI_PROVIDER=real` without both keys fails everywhere.
+  `AI_SUMMARY_POLL_INTERVAL_MS` (60000), and `AI_KEYS_ENCRYPTION_SECRET` (none; at least 32
+  characters; encrypts the AI keys admins paste, ADR-0012; never change it once keys are
+  stored). **Production refuses** a placeholder-looking or repetitive auth secret, storage secret
+  key, or `AI_KEYS_ENCRYPTION_SECRET`, a non-https `WEB_APP_URL` or `STORAGE_PUBLIC_ENDPOINT`,
+  and `AI_PROVIDER=fake`, so `pnpm --filter @ops/api start` fails with the `.env.example`
+  values. `AI_PROVIDER=real` without both keys fails everywhere.
 - `STORAGE_ENDPOINT` is where the API reaches the storage; `STORAGE_PUBLIC_ENDPOINT` is the host
   written into signed URLs and must be reachable by the phone or browser. A running API keeps
   signing with the value it started with: restart it after changing it.
@@ -253,6 +256,9 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   event's id as `sourceEventId`) and must re-check the record's current state.
 - Only `NotificationService` writes `Notification` rows; channels run after the commit. Push text
   must stay generic (no task title, no rejection note): put the full text in the in-app row only.
+- A notification that asks for nothing more is resolved (`NotificationService.resolve`, rules in
+  `operations/notifications/notification-resolution.service.ts`), never deleted; every read of
+  the inbox, the unread count, and the sync pull must filter `resolvedAt: null`.
 - Push tokens are bound to the session; session ends remove them through
   `SessionService.onSessionsEnded`. Never log a push token (mask with `maskPushToken`).
 - The consumer runs when `OUTBOX_CONSUMER_ENABLED=true` (every `OUTBOX_POLL_INTERVAL_MS`). Tests
@@ -280,6 +286,11 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   `FAKE-STT:` and `FAKE-LLM-*` markers (`fake-llm-provider.ts`). Never call a real provider from
   a test. Fakes are refused in production.
 - A new model needs a row in `src/platform/ai/ai-prices.ts`, or the cost limit counts it as $0.
+- An organization's own provider keys (ADR-0012) live encrypted in `AiProviderKey`, never in
+  `settings`; only `AiProviderSelector` holds a plain key. No answer, log, audit or outbox payload
+  carries a key or its hint. Tests bind network-free `AI_REAL_PROVIDER_FACTORIES` (the harness
+  does). `src/platform/crypto/` (`SecretBox`) encrypts them; `AiRunner.providers()` is async and
+  per organization.
 - Never log or echo an API key; logs of AI calls carry ids, feature, status, and codes only.
 
 **Database safety**

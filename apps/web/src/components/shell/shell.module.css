@@ -50,19 +50,15 @@
 .brandLogo {
   inline-size: 36px;
   block-size: 36px;
-}
-
-.brandName {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-bold);
-  line-height: 1.1;
+  /* The logo is a black square: a rounded tile reads well in both themes. */
+  border-radius: var(--radius-sm);
 }
 
 .brandLabel {
   display: block;
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-regular);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
 }
 
 .nav ul {
@@ -212,6 +208,26 @@
   margin: 0;
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
+}
+
+.menuSection {
+  padding-block: var(--space-xs);
+  border-block-end: 1px solid var(--color-border);
+  margin-block-end: var(--space-xs);
+}
+
+.menuSectionTitle {
+  margin: 0;
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-sm);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.menuCheck {
+  display: inline-block;
+  inline-size: 1.25em;
+  color: var(--color-text-primary);
 }
 
 .menuItem {

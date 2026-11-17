@@ -17,6 +17,7 @@ import {
 } from 'react';
 
 import { authSession } from '@/lib/api/client';
+import { USER_RECHECK_MS } from '@/lib/api/live';
 import { guardRedirect, guardView } from '@/lib/auth/routes';
 import { MISSING_API_URL_MESSAGE } from '@/lib/env';
 
@@ -24,7 +25,7 @@ import { SessionLoading } from './session-loading';
 
 type AuthActions = Pick<
   AuthSessionManager,
-  'signIn' | 'signOut' | 'signOutEverywhere' | 'setPassword'
+  'signIn' | 'signOut' | 'signOutEverywhere' | 'setPassword' | 'refreshUser'
 >;
 
 export interface AuthContextValue extends AuthActions {
@@ -42,6 +43,7 @@ const UNCONFIGURED_RESULT: AuthActionResult = {
   failure: { reason: 'unexpected', message: MISSING_API_URL_MESSAGE, details: [] },
 };
 const unconfigured = async (): Promise<AuthActionResult> => UNCONFIGURED_RESULT;
+const refreshNobody = async (): Promise<void> => undefined;
 
 function subscribeToNothing(): () => void {
   return () => {};
@@ -65,6 +67,31 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     void authSession?.start();
   }, []);
 
+  useEffect(() => {
+    // Live updates: while the tab is visible, re-check the signed-in user (role, scope, name)
+    // every 30 s and when the tab comes back, so a change made by an admin shows without a
+    // reload. `refreshUser` does nothing while signed out and never shows the loading state.
+    const session = authSession;
+    if (session === null) {
+      return;
+    }
+    const recheck = () => {
+      if (document.visibilityState === 'visible') {
+        // Half the period as the throttle: the timer is never skipped for being a little early,
+        // and a burst of focus events asks once.
+        void session.refreshUser({ maxAgeMs: USER_RECHECK_MS / 2 });
+      }
+    };
+    const timer = window.setInterval(recheck, USER_RECHECK_MS);
+    document.addEventListener('visibilitychange', recheck);
+    window.addEventListener('focus', recheck);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', recheck);
+      window.removeEventListener('focus', recheck);
+    };
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       state,
@@ -72,6 +99,7 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
       signOut: authSession?.signOut ?? unconfigured,
       signOutEverywhere: authSession?.signOutEverywhere ?? unconfigured,
       setPassword: authSession?.setPassword ?? unconfigured,
+      refreshUser: authSession?.refreshUser ?? refreshNobody,
       retry: () => void authSession?.start(),
     }),
     [state],

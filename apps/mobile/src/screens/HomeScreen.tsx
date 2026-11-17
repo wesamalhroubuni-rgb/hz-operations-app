@@ -20,6 +20,7 @@ import {
 } from '../data/queries';
 import { useLookups } from '../hooks/useLookups';
 import { useNow } from '../hooks/useNow';
+import { useServerRefresh } from '../hooks/useServerRefresh';
 import { usePendingPhotoCounts } from '../hooks/useUploads';
 import { t } from '../i18n';
 import { logSyncState } from '../logic/sync';
@@ -42,6 +43,7 @@ export function HomeScreen({ navigation }: Readonly<TabScreenProps<'Home'>>) {
   const { logStates } = useSync();
   const smartCapture = useSmartCaptureEnabled();
   const captures = useSmartCaptures();
+  const server = useServerRefresh();
 
   const today = tasksForToday(tasks.data ?? [], now);
   const recent = logs.data?.pages[0]?.items.slice(0, RECENT_LOGS) ?? [];
@@ -49,11 +51,8 @@ export function HomeScreen({ navigation }: Readonly<TabScreenProps<'Home'>>) {
   return (
     <ScreenContainer
       inTab
-      refreshing={tasks.isRefetching || logs.isRefetching}
-      onRefresh={() => {
-        void tasks.refetch();
-        void logs.refetch();
-      }}
+      refreshing={server.refreshing}
+      onRefresh={server.refresh}
       footer={
         <View style={styles.footer}>
           {smartCapture ? (

@@ -1,11 +1,12 @@
-import { colors, spacing } from '@ops/shared';
-import { StyleSheet, View } from 'react-native';
+import { spacing } from '@ops/shared';
+import { View } from 'react-native';
 
 import type { CaptureView } from '../data/queries';
 import { formatDateTime, t, type TranslationKey } from '../i18n';
 import { syncText } from '../i18n/syncText';
 import { captureState, transcriptOf, type CaptureState } from '../logic/smartCapture';
 import { reasonText } from '../logic/sync';
+import { makeStyles } from '../theme';
 import { AppText } from './AppText';
 import { Badge } from './Badge';
 import { Button } from './Button';
@@ -18,6 +19,7 @@ export type CaptureKind = 'voice' | 'photo' | 'text';
 
 /** "Speak", "Snap" and "Type a note". Shown only when the organization switched them on. */
 export function SmartCaptureButtons({ onPick }: Readonly<{ onPick: (kind: CaptureKind) => void }>) {
+  const styles = useStyles();
   return (
     <View style={styles.buttons}>
       <View style={styles.flex}>
@@ -85,6 +87,7 @@ export function CaptureRow({
   view,
   onPress,
 }: Readonly<{ view: CaptureView; onPress: () => void }>) {
+  const styles = useStyles();
   const state = captureState(view.local, view.item);
   const words = transcriptOf(view.local);
   return (
@@ -110,6 +113,7 @@ export function CaptureRow({
 
 /** The clear marker of a form filled by the AI. */
 export function AiSuggestedBanner() {
+  const styles = useStyles();
   return (
     <Card style={styles.banner}>
       <View style={styles.row}>
@@ -146,6 +150,7 @@ export function TranscriptPanel({
 export function ConfidenceHint({
   level,
 }: Readonly<{ level: 'high' | 'medium' | 'low' | undefined }>) {
+  const styles = useStyles();
   if (!level) return null;
   return (
     <AppText variant="small" style={level === 'high' ? styles.ready : styles.check}>
@@ -154,7 +159,7 @@ export function ConfidenceHint({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   flex: {
     flex: 1,
   },
@@ -176,4 +181,4 @@ const styles = StyleSheet.create({
   check: {
     color: colors.warning,
   },
-});
+}));

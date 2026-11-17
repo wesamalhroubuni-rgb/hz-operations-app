@@ -123,16 +123,16 @@ describe('the offer to the model', () => {
     expect(text).toContain('task: T2\nsite: S1\nlog type: repair');
     // The schema accepts only offered references and keys.
     const valid = {
-      logType: {
-        key: 'inspection',
-        customFields: { area: 'Roof', result: 'ok' },
-        fieldConfidence: { area: 'high', result: null },
-      },
+      logTypeKey: 'inspection',
       logTypeConfidence: 'high',
+      fields: [
+        { field: 'inspection.area', value: 'Roof', confidence: 'high' },
+        { field: 'inspection.result', value: 'ok', confidence: 'low' },
+      ],
       taskRef: 'T30',
       taskConfidence: 'low',
       siteRef: null,
-      siteConfidence: null,
+      siteConfidence: 'low',
       text: 'Checked',
       textConfidence: 'medium',
       occurredAt: null,
@@ -143,7 +143,7 @@ describe('the offer to the model', () => {
     expect(
       offer.schema.safeParse({
         ...valid,
-        logType: { ...valid.logType, customFields: { area: 'Roof', result: 'great' } },
+        fields: [{ field: 'inspection.result', value: 'great', confidence: 'high' }],
       }).success,
     ).toBe(false);
   });

@@ -1,6 +1,8 @@
-import { colors } from '@ops/shared';
-import { DarkTheme, NavigationContainer, type Theme } from '@react-navigation/native';
+import type { ThemeColors } from '@ops/shared';
+import { DarkTheme, DefaultTheme, NavigationContainer, type Theme } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
+import { useMemo, type ReactNode } from 'react';
+import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { apiClient } from './src/api/client';
@@ -16,25 +18,29 @@ import { PushProvider } from './src/push/usePush';
 import { LoadingScreen } from './src/screens/LoadingScreen';
 import { deviceStore } from './src/storage/deviceStore';
 import { purgeStaleLocalDataOnce } from './src/storage/retention';
+import { ThemeProvider, useTheme } from './src/theme';
 
 applyLayoutDirection();
 // At app start, with or without a session: drafts and queued uploads older than 14 days go,
 // for every user of the phone (src/storage/retention.ts).
 void purgeStaleLocalDataOnce({ store: deviceStore, deleteLocalFile });
 
-/** React Navigation's dark theme in the brand's tokens. */
-const navigationTheme: Theme = {
-  ...DarkTheme,
-  colors: {
-    ...DarkTheme.colors,
-    primary: colors.primary,
-    background: colors.background,
-    card: colors.surface,
-    text: colors.textPrimary,
-    border: colors.border,
-    notification: colors.primary,
-  },
-};
+/** React Navigation's light or dark theme in the brand's tokens. */
+function navigationThemeFor(scheme: 'light' | 'dark', colors: ThemeColors): Theme {
+  const base = scheme === 'light' ? DefaultTheme : DarkTheme;
+  return {
+    ...base,
+    colors: {
+      ...base.colors,
+      primary: colors.primary,
+      background: colors.background,
+      card: colors.surface,
+      text: colors.textPrimary,
+      border: colors.border,
+      notification: colors.primary,
+    },
+  };
+}
 
 /**
  * The sign-in state picks the navigator (see `src/navigation/types.ts` for the map). The signed-in
@@ -43,6 +49,8 @@ const navigationTheme: Theme = {
 function Root() {
   const { state } = useAuth();
   const view = rootViewFor(state.status);
+  const { colors, scheme } = useTheme();
+  const navigationTheme = useMemo(() => navigationThemeFor(scheme, colors), [scheme, colors]);
 
   if (view === 'loading') {
     return <LoadingScreen />;
@@ -68,14 +76,27 @@ function Root() {
   );
 }
 
+/** The status bar icons contrast with the theme: light on dark, dark on light. */
+function ThemedFrame({ children }: Readonly<{ children: ReactNode }>) {
+  const { colors, scheme } = useTheme();
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {children}
+      <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
+    </View>
+  );
+}
+
 export default function App() {
   return (
     <SafeAreaProvider>
-      <AuthProvider>
-        <Root />
-      </AuthProvider>
-      {/* Light status bar icons: the brand theme is dark. */}
-      <StatusBar style="light" />
+      <ThemeProvider>
+        <ThemedFrame>
+          <AuthProvider>
+            <Root />
+          </AuthProvider>
+        </ThemedFrame>
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }

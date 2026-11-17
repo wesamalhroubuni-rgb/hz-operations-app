@@ -44,8 +44,20 @@ describe('organization AI settings', () => {
       summaryRecipientRoles: ['supervisor', 'manager'],
       dailyRequestLimit: null,
       dailyCostLimitUsd: null,
+      llmModel: null,
+      sttModel: null,
     });
     expect(aiSettingsOf(null)).toEqual(aiSettingsOf({}));
+  });
+
+  it('reads a chosen model and ignores one that is not offered (ADR-0012)', () => {
+    expect(
+      aiSettingsOf({ ai: { llmModel: 'claude-haiku-5-5', sttModel: 'whisper-1' } }),
+    ).toMatchObject({ llmModel: 'claude-haiku-5-5', sttModel: 'whisper-1' });
+    expect(aiSettingsOf({ ai: { llmModel: 'gpt-5', sttModel: 42 } })).toMatchObject({
+      llmModel: null,
+      sttModel: null,
+    });
   });
 
   it('reads stored values and ignores unusable ones key by key', () => {
@@ -204,18 +216,23 @@ const options = {
   siteRefs: ['S1'],
 };
 
+const fullFields = (): CaptureModelOutput['fields'] => [
+  { field: 'inspection.area', value: 'Roof', confidence: 'high' },
+  { field: 'inspection.count', value: 3, confidence: 'medium' },
+  { field: 'inspection.ok', value: true, confidence: 'low' },
+  { field: 'inspection.grade', value: 'B', confidence: 'high' },
+  { field: 'inspection.due', value: '2026-11-02', confidence: 'low' },
+];
+
 function answer(overrides: Partial<CaptureModelOutput> = {}): CaptureModelOutput {
   return {
-    logType: {
-      key: 'inspection',
-      customFields: { area: 'Roof', count: 3, ok: true, grade: 'B', due: '2026-11-02' },
-      fieldConfidence: { area: 'high', count: 'medium', ok: 'low', grade: 'high', due: null },
-    },
+    logTypeKey: 'inspection',
     logTypeConfidence: 'high',
+    fields: fullFields(),
     taskRef: 'T2',
     taskConfidence: 'medium',
     siteRef: null,
-    siteConfidence: null,
+    siteConfidence: 'low',
     text: '  Checked the roof.  ',
     textConfidence: 'high',
     occurredAt: null,
@@ -223,43 +240,45 @@ function answer(overrides: Partial<CaptureModelOutput> = {}): CaptureModelOutput
   };
 }
 
+/** Parameters with a type array or `anyOf` (Anthropic accepts at most 16 per schema). */
+function unionParameters(node: unknown): number {
+  if (Array.isArray(node))
+    return node.reduce((sum: number, item) => sum + unionParameters(item), 0);
+  if (typeof node !== 'object' || node === null) return 0;
+  const record = node as Record<string, unknown>;
+  const own = Array.isArray(record.type) || Array.isArray(record.anyOf) ? 1 : 0;
+  return own + Object.values(record).reduce((sum: number, v) => sum + unionParameters(v), 0);
+}
+
 describe('buildCaptureOutputSchema', () => {
   const schema = buildCaptureOutputSchema(options);
 
   it('accepts an answer that uses only offered log types, fields, options and references', () => {
     expect(schema.safeParse(answer()).success).toBe(true);
-    expect(
-      schema.safeParse(
-        answer({
-          logType: { key: 'delivery', customFields: {}, fieldConfidence: {} },
-        }),
-      ).success,
-    ).toBe(true);
-    expect(
-      schema.safeParse(
-        answer({ logType: { key: null, customFields: {}, fieldConfidence: {} }, taskRef: null }),
-      ).success,
-    ).toBe(true);
+    expect(schema.safeParse(answer({ logTypeKey: 'delivery', fields: [] })).success).toBe(true);
+    expect(schema.safeParse(answer({ logTypeKey: null, fields: [], taskRef: null })).success).toBe(
+      true,
+    );
+    // A field the input does not state is simply absent.
+    expect(schema.safeParse(answer({ fields: fullFields().slice(1) })).success).toBe(true);
   });
 
   it('refuses invented log types, fields, options, references and wrong value types', () => {
     const bad: CaptureModelOutput[] = [
-      answer({ logType: { key: 'repair', customFields: {}, fieldConfidence: {} } }),
+      answer({ logTypeKey: 'repair' }),
       answer({ taskRef: 'T9' }),
       answer({ siteRef: '0192f0c1-7d3a-7cc0-8000-000000000003' }),
       answer({ occurredAt: 'yesterday' }),
       answer({ textConfidence: 'certain' as never }),
+      answer({ siteConfidence: null as never }),
     ];
-    const fieldsOf = (customFields: Record<string, unknown>) =>
-      answer({
-        logType: { ...answer().logType, customFields: customFields as never },
-      });
-    bad.push(fieldsOf({ ...answer().logType.customFields, grade: 'C' }));
-    bad.push(fieldsOf({ ...answer().logType.customFields, count: '3' }));
-    bad.push(fieldsOf({ ...answer().logType.customFields, due: '2 Nov' }));
-    bad.push(fieldsOf({ ...answer().logType.customFields, extra: 'x' }));
-    const { area: _area, ...withoutArea } = answer().logType.customFields;
-    bad.push(fieldsOf(withoutArea));
+    const withField = (field: string, value: unknown) =>
+      answer({ fields: [{ field, value: value as never, confidence: 'high' }] });
+    bad.push(withField('inspection.grade', 'C'));
+    bad.push(withField('inspection.count', '3'));
+    bad.push(withField('inspection.due', '2 Nov'));
+    bad.push(withField('inspection.extra', 'x'));
+    bad.push(withField('area', 'Roof'));
     for (const output of bad) {
       expect(schema.safeParse(output).success).toBe(false);
     }
@@ -268,18 +287,11 @@ describe('buildCaptureOutputSchema', () => {
 
   it('works with nothing offered', () => {
     const empty = buildCaptureOutputSchema({ logTypes: [], taskRefs: [], siteRefs: [] });
-    expect(
-      empty.safeParse(
-        answer({
-          logType: { key: null, customFields: {}, fieldConfidence: {} },
-          taskRef: null,
-        }),
-      ).success,
-    ).toBe(true);
-    expect(
-      empty.safeParse(answer({ logType: { key: null, customFields: {}, fieldConfidence: {} } }))
-        .success,
-    ).toBe(false);
+    expect(empty.safeParse(answer({ logTypeKey: null, fields: [], taskRef: null })).success).toBe(
+      true,
+    );
+    expect(empty.safeParse(answer({ logTypeKey: null, fields: [] })).success).toBe(false);
+    expect(empty.safeParse(answer({ logTypeKey: null, taskRef: null })).success).toBe(false);
   });
 
   it('refuses two log types with one key', () => {
@@ -315,6 +327,23 @@ describe('buildCaptureOutputSchema', () => {
     }
     expect(text).toContain('"enum":["A","B"]');
   });
+
+  it('stays within the 16 union-typed parameters structured outputs allow, whatever is offered', () => {
+    // Found with the first real call (2026-11-17): the earlier shape had 33 and every capture
+    // was refused with HTTP 400.
+    const many = {
+      logTypes: Array.from({ length: 10 }, (_, type) => ({
+        key: `type_${type}`,
+        fields: inspection.map((field) => ({ ...field, key: `${field.key}_${type}` })),
+      })),
+      taskRefs: Array.from({ length: 30 }, (_, index) => `T${index + 1}`),
+      siteRefs: Array.from({ length: 30 }, (_, index) => `S${index + 1}`),
+    };
+    for (const offered of [options, many, { logTypes: [], taskRefs: [], siteRefs: [] }]) {
+      const json = toStructuredOutputJsonSchema(buildCaptureOutputSchema(offered));
+      expect(unionParameters(json)).toBeLessThanOrEqual(6);
+    }
+  });
 });
 
 describe('interpretCaptureOutput', () => {
@@ -342,18 +371,14 @@ describe('interpretCaptureOutput', () => {
       task: 'medium',
       site: null,
       text: 'high',
-      customFields: { area: 'high', count: 'medium', ok: 'low', grade: 'high' },
+      customFields: { area: 'high', count: 'medium', ok: 'low', grade: 'high', due: 'low' },
     });
     expect(result.droppedFields).toEqual([]);
   });
 
   it('drops a value that breaks its field rule and leaves a required field for the worker', () => {
     const output = answer({
-      logType: {
-        key: 'inspection',
-        customFields: { area: 'x'.repeat(2001), count: null, ok: null, grade: null, due: null },
-        fieldConfidence: {},
-      },
+      fields: [{ field: 'inspection.area', value: 'x'.repeat(2001), confidence: 'high' }],
       text: '   ',
       occurredAt: '2026-10-30T09:00:00+03:00',
     });
@@ -365,12 +390,25 @@ describe('interpretCaptureOutput', () => {
     expect(result.confidence.text).toBeNull();
   });
 
-  it('ignores a log type or reference it does not know', () => {
+  it('ignores fields of another log type and keeps the first entry of a repeated field', () => {
     const result = interpretCaptureOutput(
       answer({
-        logType: { key: 'other', customFields: {}, fieldConfidence: {} },
-        taskRef: 'T7',
+        fields: [
+          { field: 'delivery.area', value: 'Dock', confidence: 'high' },
+          { field: 'inspection.area', value: 'Roof', confidence: 'medium' },
+          { field: 'inspection.area', value: 'Gate', confidence: 'high' },
+        ],
       }),
+      refs,
+      NOW,
+    );
+    expect(result.proposal.customFields).toEqual({ area: 'Roof' });
+    expect(result.confidence.customFields).toEqual({ area: 'medium' });
+  });
+
+  it('ignores a log type or reference it does not know', () => {
+    const result = interpretCaptureOutput(
+      answer({ logTypeKey: 'other', taskRef: 'T7' }),
       refs,
       NOW,
     );

@@ -1,8 +1,9 @@
-import { colors, radii, spacing } from '@ops/shared';
-import { Alert, Modal, StyleSheet, View } from 'react-native';
+import { radii, spacing } from '@ops/shared';
+import { Alert, Modal, View } from 'react-native';
 
 import { t } from '../i18n';
 import { KEPT_QUEUE_MAX_DAYS, type SignOutChoice } from '../offline/types';
+import { makeStyles } from '../theme';
 import { AppText } from './AppText';
 import { Button } from './Button';
 import { Message } from './Message';
@@ -32,6 +33,7 @@ export function SyncSignOutDialog({
   onChoose: (choice: SignOutChoice) => void;
   onCancel: () => void;
 }>) {
+  const styles = useStyles();
   const confirmDiscard = () =>
     Alert.alert(t('sync.signOut.discardConfirmTitle'), t('sync.signOut.discardConfirmMessage'), [
       { text: t('common.cancel'), style: 'cancel' },
@@ -90,7 +92,7 @@ export function SyncSignOutDialog({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   backdrop: {
     flex: 1,
     justifyContent: 'center',
@@ -105,4 +107,4 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.surface,
   },
-});
+}));

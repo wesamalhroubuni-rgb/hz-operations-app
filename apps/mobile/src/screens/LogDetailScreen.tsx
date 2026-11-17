@@ -26,6 +26,7 @@ import {
 import { useLogStatusChange } from '../hooks/useLogStatusChange';
 import { useLookups } from '../hooks/useLookups';
 import { useNow } from '../hooks/useNow';
+import { useServerRefresh } from '../hooks/useServerRefresh';
 import { useLogUploads } from '../hooks/useUploads';
 import { formatDateTime, formatNumber, t } from '../i18n';
 import { errorText } from '../i18n/errorText';
@@ -56,6 +57,8 @@ export function LogDetailScreen({ route, navigation }: Readonly<StackScreenProps
   const now = useNow(30_000);
   const query = useWorkLog(logId);
   const attachments = useAttachments(logId);
+  // The photos' signed URLs come from the server, not from the pull: refetch them too.
+  const server = useServerRefresh(() => attachments.refetch());
   const queued = useLogUploads(logId);
   const editWindowHours = useEditWindowHours();
   const lookups = useLookups();
@@ -111,14 +114,7 @@ export function LogDetailScreen({ route, navigation }: Readonly<StackScreenProps
     ) : undefined;
 
   return (
-    <ScreenContainer
-      refreshing={query.isRefetching}
-      onRefresh={() => {
-        void query.refetch();
-        void attachments.refetch();
-      }}
-      footer={footer}
-    >
+    <ScreenContainer refreshing={server.refreshing} onRefresh={server.refresh} footer={footer}>
       <AppText variant="title">{logType?.name ?? t('logs.generalNote')}</AppText>
       <View style={styles.badges}>
         <Badge label={t(`logs.status.${log.status}`)} tone={LOG_STATUS_TONES[log.status]} />

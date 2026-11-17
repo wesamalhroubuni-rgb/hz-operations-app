@@ -1,12 +1,15 @@
-import { colors, fontSizes, spacing } from '@ops/shared';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { fontSizes, spacing } from '@ops/shared';
+import { ActivityIndicator, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BrandHeader } from '../components/BrandHeader';
 import { t } from '../i18n';
+import { makeStyles, useTheme } from '../theme';
 
 /** Shown while the stored session is read from SecureStore and checked with the API. */
 export function LoadingScreen() {
+  const styles = useStyles();
+  const { colors } = useTheme();
   return (
     <SafeAreaView style={styles.screen}>
       <BrandHeader />
@@ -18,7 +21,7 @@ export function LoadingScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   screen: {
     flex: 1,
     alignItems: 'center',
@@ -36,4 +39,4 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.md,
     color: colors.textSecondary,
   },
-});
+}));

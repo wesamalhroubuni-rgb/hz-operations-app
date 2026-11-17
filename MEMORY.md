@@ -1,28 +1,33 @@
 # MEMORY.md
 
 Current state of the HZ project (repository folder `Operations_App`, packages `@ops/*`). Update this
-file at the end of every session. Newest session log entry goes first. Last updated: 2026-11-02.
+file at the end of every session. Newest session log entry goes first. Last updated: 2026-11-16.
 
 ## Current phase
 
-**Phase 7 (Intelligent layer v1: smart capture and daily AI summaries) is code complete, tested
-with the deterministic fake AI providers, and reviewed (2026-11-02), and is about to be committed
-by the coordinator as "Phase 7: ...".** No real AI provider has been called (the owner has no keys
-yet), nothing has run on a phone or in the emulator, and the dashboard has not been used in a
-browser with data. `main` has Phase 1 (`d03c843`), Phase 2 (`1fd2988`), Phase 3 (`8c8283a`),
-Phase 4 (`280c50a`), the restore note (`924446e`), Phase 5 (`2cf5a01`), and Phase 6 (`713f592`,
-in sync with `origin/main`). The owner plans to test Phases 4 to 7 together: the combined manual
-test is in [docs/reports/phase-7.md](docs/reports/phase-7.md). **Phase 8 (Hardening & release)
-is next.** Phases are defined in [ROADMAP.md](ROADMAP.md).
+**Phases 1 to 7 are committed and pushed**: Phase 7 (intelligent layer v1) as `3bfad42`
+(2026-11-02), then `5038c71` (2026-11-16: seed backdating fix, Expo Go Android crash fix, the
+owner's demo-password exception in AGENTS.md); `main` is in sync with `origin/main`. **Uncommitted
+on 2026-11-16** (see the session log): an organization's own AI keys and model choice
+([ADR-0012](docs/decisions/0012-organization-ai-provider-keys.md)), live updates on the phone and
+the dashboard, a light theme with a manual System / Dark / Light choice on the dashboard and on
+the phone (the phone's is done in code but nobody has looked at it on the screen yet),
+notifications resolved once they ask for nothing more, and the product name no longer repeated
+next to the logo. All unit and all 1,719 integration tests pass with this work. **Phase 8
+(Hardening & release) is next.** Phases are defined in [ROADMAP.md](ROADMAP.md).
 
-**Before using the apps the owner must run `pnpm db:reset` once**: the development database
-`operations_app` holds a stray migration `20261018090000_phase5_offline_sync` from the lost work
-and lacks the repository's `20261027090000_phase5_offline_sync`,
-`20261028090000_phase6_dashboard`, and `20261030090000_phase7_ai`. Agents may not run it.
+**The development database was reset** (the stray Phase 5 migration is gone) and has all nine
+migrations, including the uncommitted `20261116090000_ai_provider_keys` and
+`20261116120000_notification_resolved_at` (the latter applied with
+`pnpm --filter @ops/api db:deploy` on 2026-11-16). **The app ran on a real phone for the first time
+on 2026-11-16** (Android, Expo Go 57.0.9 over USB with `adb reverse`). No real AI provider has been
+called yet, and the combined manual test of Phases 4 to 7
+([docs/reports/phase-7.md](docs/reports/phase-7.md)) is not recorded as done.
 
-**The AI features are off until an admin turns them on** (Settings, AI). Without keys the API
-uses its fake providers in development; README section 11 says which keys to get (Anthropic and
-OpenAI) and where to put them (the root `.env`, then restart the API).
+**The AI features are off until an admin turns them on** (Settings, AI). To use real AI an admin
+pastes the organization's Claude key (and optionally an OpenAI key) in Settings, "Your AI keys"
+(needs `AI_KEYS_ENCRYPTION_SECRET`, which the local `.env` has); the server keys in `.env` still
+work too (README section 11). Without any key the API uses its fake providers in development.
 
 **On this PC port 3000 is used by another project.** To open the dashboard, set `WEB_PORT` (for
 example 3100) in `.env`, add that origin (`http://localhost:3100`) to `CORS_ORIGINS` and use it as
@@ -41,18 +46,18 @@ technical name of the folder, the packages, the API domain folder, and the datab
 
 ## What exists
 
-| Area              | State                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Monorepo          | pnpm 12 workspaces + Turborepo 2. Root scripts: `dev`, `build`, `lint`, `typecheck`, `test`, `test:integration`, `format`, `format:check`, `db:up`, `db:down`, `db:logs`, `db:migrate`, `db:seed`, `db:reset`.                                                                                                                                                                                                                                                                                                                                                     |
-| Docker Compose    | PostgreSQL 17 and, since Phase 4, MinIO (`alpine/minio`, pinned by digest) for photos. `pnpm db:up` starts both; both bind to `127.0.0.1` by default.                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `packages/config` | Shared ESLint 10 flat config, Prettier config, three tsconfig presets. Unchanged since Phase 1.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `packages/shared` | Zod schemas and endpoint functions for every resource, `/auth/*`, `/notifications`, `/sync/pull`, the Phase 6 dashboard routes, and since Phase 7 smart capture, summaries, anomalies, AI usage, `settings.ai`, and the per-capture output schema; the offline headers and typed error codes; the transport (refresh once on a 401, per-call headers, text responses); `createAuthSessionManager`; the upload helper; custom-field forms; time-zone, CSV, and locale helpers; the translation core; design tokens.                                                 |
-| `apps/api`        | NestJS 12 API, 78 paths. Platform: sign-in and sessions, the policy seam, idempotency, S3-compatible file storage, notifications, the outbox consumer, audit log, outbox, and since Phase 7 the AI platform (provider interfaces, Anthropic and OpenAI adapters, fakes, runner, traces, limits, prompt loader). Domain: the access layer on every route, row versions and typed conflict codes, the attachment flow, notification rules, `GET /sync/pull`, the Phase 6 dashboard reads, and since Phase 7 smart capture, daily summaries, anomaly rules, AI usage. |
-| `apps/web`        | Next.js 16.4.3 manager dashboard: `/login`, `/activate`, and behind sign-in Overview (with the daily summary and anomaly panels since Phase 7), Work logs (list, detail, report), Tasks (list and board, detail), Map, Summaries, People, Structure, Audit log, Settings (with the AI section), AI usage; navigation by role; TanStack Query and Table, Leaflet, an i18n layer (English), times in the organization's time zone. Never used in a browser with data.                                                                                                |
-| `apps/mobile`     | Expo SDK 57 worker app: Home, Tasks, Task detail, New/Edit log (custom fields, photos, location), Logs, Log detail, Notifications, Profile, Sync, and since Phase 7 Capture (Speak, Snap, Type a note) with the proposal reviewed in the New log form. Offline since Phase 5: per-user SQLite cache and write queue (smart captures queued too), photo and voice-note stores, sync engine (NetInfo, foreground, background task), sync indicator and screen, drafts. Never run on a phone or emulator.                                                             |
-| Database          | PostgreSQL in Docker on `127.0.0.1` (port 5433 on this PC). `operations_app` has the four migrations up to Phase 4, the Phase 3 seed, and a stray `20261018090000_phase5_offline_sync` from lost work; the Phase 5, 6, and 7 migrations are not applied to it (needs `pnpm db:reset`). `operations_app_test` is rebuilt by the integration tests.                                                                                                                                                                                                                  |
-| Docs              | `AGENTS.md`, this file, `ARCHITECTURE.md` (with the permissions matrix), `ROADMAP.md`, `README.md` (including the web dashboard, "Test on my phone", "Test offline mode in the Android emulator", and "AI features: keys, switches, and trying them"), ADR-0001 to ADR-0011, a `memory.md` in each app and package, the phase prompts in `docs/prompts/`, `docs/reports/phase-5.md`, `phase-6.md`, and `phase-7.md` (with the combined manual test of Phases 4 to 7), the logo files in `docs/brand/`.                                                             |
-| Subagents         | `reviewer`, `docs-keeper`, `test-writer` in `.claude/agents/`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Area              | State                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Monorepo          | pnpm 12 workspaces + Turborepo 2. Root scripts: `dev`, `build`, `lint`, `typecheck`, `test`, `test:integration`, `format`, `format:check`, `db:up`, `db:down`, `db:logs`, `db:migrate`, `db:seed`, `db:reset`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Docker Compose    | PostgreSQL 17 and, since Phase 4, MinIO (`alpine/minio`, pinned by digest) for photos. `pnpm db:up` starts both; both bind to `127.0.0.1` by default.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `packages/config` | Shared ESLint 10 flat config, Prettier config, three tsconfig presets. Unchanged since Phase 1.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `packages/shared` | Zod schemas and endpoint functions for every resource, `/auth/*`, `/notifications`, `/sync/pull`, the Phase 6 dashboard routes, and since Phase 7 smart capture, summaries, anomalies, AI usage, `settings.ai` (with the model choices since 2026-11-16), the AI keys contract, and the per-capture output schema; the offline headers and typed error codes; the transport (refresh once on a 401, per-call headers, text responses); `createAuthSessionManager` (with `refreshUser`); the upload helper; custom-field forms; time-zone, CSV, and locale helpers; the translation core; dark and light design tokens.                                                                      |
+| `apps/api`        | NestJS 12 API, 80 paths. Platform: sign-in and sessions, the policy seam, idempotency, S3-compatible file storage, notifications, the outbox consumer, audit log, outbox, the AI platform (provider interfaces, Anthropic and OpenAI adapters, fakes, runner, traces, limits, prompt loader, and since 2026-11-16 the per-organization `AiProviderSelector` and `AiKeyChecker`), and `crypto/` (`SecretBox`). Domain: the access layer on every route, row versions and typed conflict codes, the attachment flow, notification rules, `GET /sync/pull`, the Phase 6 dashboard reads, smart capture, daily summaries, anomaly rules, AI usage, and the organization's AI keys (`/ai/keys`). |
+| `apps/web`        | Next.js 16.4.3 manager dashboard: `/login`, `/activate`, and behind sign-in Overview (with the daily summary and anomaly panels), Work logs (list, detail, report), Tasks (list and board, detail), Map, Summaries, People, Structure, Audit log, Settings (AI section with models, "Your AI keys", API status), AI usage; navigation by role; TanStack Query (live lists every 15 s) and Table, Leaflet, an i18n layer (English), times in the organization's time zone, theme System / Dark / Light in the account menu. No browser session with data recorded.                                                                                                                           |
+| `apps/mobile`     | Expo SDK 57 worker app: Home, Tasks, Task detail, New/Edit log (custom fields, photos, location), Logs, Log detail, Notifications, Profile, Sync, and Capture (Speak, Snap, Type a note) with the proposal reviewed in the New log form. Offline: per-user SQLite cache and write queue (smart captures queued too), photo and voice-note stores, sync engine (NetInfo, foreground, every 15 s while open, background task), sync indicator and screen, drafts. Light and dark (Profile → Theme: System / Dark / Light); the header sync indicator hides when everything is sent. First run on a real phone on 2026-11-16 (Expo Go).                                                        |
+| Database          | PostgreSQL in Docker on `127.0.0.1` (port 5433 on this PC). `operations_app` was reset and has the seed and all nine migrations (2026-11-16). `operations_app_test` is rebuilt by the integration tests.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Docs              | `AGENTS.md`, this file, `ARCHITECTURE.md` (with the permissions matrix), `ROADMAP.md`, `README.md` (including the web dashboard, "Test on my phone", "Test offline mode in the Android emulator", and "AI features: keys, switches, and trying them" with "paste your own key"), ADR-0001 to ADR-0012, a `memory.md` in each app and package, the phase prompts in `docs/prompts/`, `docs/reports/phase-5.md`, `phase-6.md`, and `phase-7.md` (with the combined manual test of Phases 4 to 7), the logo files in `docs/brand/`.                                                                                                                                                            |
+| Subagents         | `reviewer`, `docs-keeper`, `test-writer` in `.claude/agents/`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 Not built yet: activation deep links into the app, photo upload from the browser (deferred to
 Phase 8), Turkish and Arabic catalogues (and prompts reviewed in those languages), real email or
@@ -69,9 +74,8 @@ summaries on demand, autonomous AI actions and questions over data (v2, out of s
   role. Never copy them into a document, a log, or chat output.
 - New users get a one-time activation code from an admin (`POST /users`); in development the code
   and link are in the response and the API log. Reset codes: `POST /users/:id/password-reset`.
-- The development database has the Phase 3 seed (the owner ran `pnpm db:reset` before
-  2026-10-17), but its migration history diverges (see Current phase), so the Phase 5, 6, and 7
-  API needs the owner's `pnpm db:reset` first. The seed has no photos, no notifications, and no
+- The development database was reset with the current seed by 2026-11-16 (the seed failed on
+  its backdated logs until `5038c71`). The seed has no photos, no notifications, and no
   `settings.ai` (every AI feature starts off).
 - The dashboard is for supervisors, managers, and admins; a worker who signs in on the web sees
   "use the mobile app". Admins (`aylin`) manage people, the audit log, settings (including the AI
@@ -81,6 +85,23 @@ summaries on demand, autonomous AI actions and questions over data (v2, out of s
   the recipients.
 
 ## Verified
+
+**On 2026-11-16** (docs-keeper unless a line says otherwise):
+
+- `pnpm test` passes with the uncommitted work: 815 `@ops/shared` (18 files), 734 `@ops/api` (37
+  suites), 207 `@ops/web` (15 files), 351 `@ops/mobile` (30 suites, including the phone light
+  mode).
+- `pnpm test:integration`: all 1,719 tests in 29 suites pass (as reported by the coordinator,
+  after the old expectations in `notifications.int-spec.ts` and `ai-off.int-spec.ts` were updated
+  to the resolved-notification behaviour; new suites `ai-keys` and `notification-resolution`). A
+  docs-keeper run before that update had 6 failures. `pnpm format:check` passes.
+- API paths counted from the controllers: 80.
+- The development database has all nine migrations (`prisma migrate status` showed eight;
+  `20261116120000_notification_resolved_at` was then applied with
+  `pnpm --filter @ops/api db:deploy`, as reported).
+- As reported by the owner: the app ran on a real Android phone (Expo Go 57.0.9, USB with
+  `adb reverse`) after the `5038c71` crash fix; the phone light mode was bundled and opened on
+  the phone after an Expo restart, but nobody has looked at it on the screen yet.
 
 **Phase 3 acceptance (owner, reported 2026-10-17)**: `pnpm db:reset` ran; sign-in works in a real
 browser for `aylin`, `selin`, and `deniz`; Phase 3 committed (`8c8283a`). The rest of the Phase 3
@@ -160,30 +181,30 @@ agents unless a line says otherwise:
 
 ## Not yet verified
 
-1. **Anything on a phone or in the emulator**: the screens, camera and gallery, location,
-   SecureStore, push, all of Phase 5 on a device (SQLite, the file system, NetInfo, the
-   background task, airplane mode, the conflict case), and the Phase 7 capture on a device
-   (microphone permission and `expo-audio` recording, Snap, the review form, offline captures).
-   Only test fakes cover them. The owner can use the emulator `hz_pixel` (README section 6) or
-   the phone's hotspot (README section 5).
-2. **The Phase 5, 6, and 7 migrations on the development database** (after the owner's
-   `pnpm db:reset`).
-3. **The web dashboard in a real browser** with the seed data, as `aylin` (admin), `selin`
+1. **The phone beyond a first start** (2026-11-16, Expo Go on Android): what was tried on it is
+   not recorded. Not recorded: camera and gallery, location, all of Phase 5 on a device (SQLite,
+   NetInfo, the background task, airplane mode, the conflict case), the Phase 7 capture
+   (microphone, `expo-audio`, Snap, the review form), live updates, the light and dark
+   themes and the theme choice looked at on the screen, alerts disappearing once resolved. The
+   emulator `hz_pixel` (README section 6) is still unused.
+2. **The web dashboard in a real browser** with the seed data (including the AI keys card, the
+   model pickers, live refresh, and the theme choice), as `aylin` (admin), `selin`
    (supervisor), and `murat` (manager): the manual list in `docs/reports/phase-7.md` (which
    includes the Phase 6 list), phone and desktop widths, keyboard use, print preview of the
    report, a CSV opened in Excel, the map tiles, and the Phase 7 summary panels, Summaries, the
    AI settings, and AI usage.
-4. **Real AI providers** (no keys yet): that Claude accepts the structured-output request
+3. **Real AI providers** (no key tried yet): a key checked and saved in "Your AI keys"
+   (ADR-0012), that Claude accepts the structured-output request
    (`output_config`) and the photo input with `@anthropic-ai/sdk` 1.3.0, the refusal fallback
    beta (`AI_ANTHROPIC_REFUSAL_FALLBACK`), OpenAI transcribing the phone's m4a, the quality of
    proposals and narratives, and Turkish and Arabic voice notes. The prompts and the summary and
    notification texts exist in English only.
-5. **A development build**: configured (`expo-dev-client`, `apps/mobile/eas.json`), never built
+4. **A development build**: configured (`expo-dev-client`, `apps/mobile/eas.json`), never built
    or installed. It needs the owner's Expo account and `eas init`. Push and background sync need
    it. `expo-doctor` has not been re-run since `expo-audio` was added.
-6. **Real push delivery through Expo** (only a fake Expo client in tests).
-7. **AWS S3 or any provider other than MinIO.**
-8. The web "API status" card's automatic recovery, watched by a person (the card is on the
+5. **Real push delivery through Expo** (only a fake Expo client in tests).
+6. **AWS S3 or any provider other than MinIO.**
+7. The web "API status" card's automatic recovery, watched by a person (the card is on the
    Settings page since Phase 6).
 
 ## Machine and repository state
@@ -198,24 +219,23 @@ agents unless a line says otherwise:
   (data volume kept). `.env.example` still shows 5432, the default.
 - The `ops` database user's password in the container volume was set to the new `.env` value on
   2026-10-27 (the old `.env` was lost with the local copy).
-- **The development database `operations_app` still holds a migration from the lost Phase 5 work
-  (`20261018090000_phase5_offline_sync`) that is not in the repo, and lacks
-  `20261027090000_phase5_offline_sync`** (`prisma migrate status`, 2026-10-28)**,
-  `20261028090000_phase6_dashboard`, and `20261030090000_phase7_ai`**. It needs the owner's
-  `pnpm db:reset` (agents may not run it). The test database is rebuilt by the integration
-  tests.
+- **The development database `operations_app` was reset by 2026-11-16** (the stray Phase 5
+  migration is gone) and has all nine migrations (the last one applied with
+  `pnpm --filter @ops/api db:deploy` on 2026-11-16). The test database is rebuilt by the
+  integration tests.
 - **Port 3000 on this PC is taken** by another project. Run the dashboard on another `WEB_PORT`
   (for example 3100) with that origin in `CORS_ORIGINS` and `WEB_APP_URL` (README section 3).
 - Android SDK under `%LOCALAPPDATA%\Android\Sdk` with the emulator and `adb`; the virtual device
   `hz_pixel` (Android 35, Google APIs, x86_64) exists. `ANDROID_HOME` is not set system-wide
   (README section 6 sets it in the Expo terminal). Never started for this project yet.
-- Branch `main`, seven commits up to `713f592` (Phase 6), in sync with `origin/main` (private
-  GitHub repository `wesamalhroubuni-rgb/hz-operations-app`); the Phase 7 work is uncommitted at
-  the time of writing (2026-11-02).
-- The local `.env` (git-ignored) was recreated from `.env.example` on 2026-10-27 (development
-  placeholders). `EXPO_PUBLIC_EAS_PROJECT_ID` is empty until the owner runs `eas init`. It has no
-  AI variables yet; all of them are optional (defaults apply, fakes without keys). The owner will
-  add `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` there (README section 11).
+- A real phone (Android, Tecno Spark 30C) is used over USB with `adb reverse`; Expo Go 57.0.9 is
+  sideloaded on it because the Play Store offers the SDK 58 client.
+- Branch `main`, nine commits up to `5038c71`, in sync with `origin/main` (private GitHub
+  repository `wesamalhroubuni-rgb/hz-operations-app`); the work of 2026-11-16 is uncommitted.
+- The local `.env` (git-ignored) was recreated from `.env.example` on 2026-10-27. On 2026-11-16
+  it sets `AI_KEYS_ENCRYPTION_SECRET`, `WEB_PORT`, `API_HOST`, and `EXPO_PUBLIC_API_URL` and has
+  no `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (keys are meant to be pasted in the dashboard).
+  `EXPO_PUBLIC_EAS_PROJECT_ID` is empty until the owner runs `eas init`.
 - User ids are generated, so they change on every reset. Sign in with identifiers instead.
 
 ## Known limitations
@@ -284,7 +304,13 @@ Behaviour
   and the notification texts are English only (per-key fallback). `POST /ai/capture/:id/process`
   and `/upload-url` are not `@Idempotent()` (idempotent by state; accepted). The summary
   generate route runs actor-less (audit actor `system`, the admin in `metadata.requestedById`).
-  Provider data agreements and zero data retention are not arranged (Phase 8).
+  Provider data agreements and zero data retention are not arranged (Phase 8). **Organization
+  keys (ADR-0012)**: the key-check limit (5 per admin per minute) is in memory; a model changed
+  after a key was saved is not re-checked; changing `AI_KEYS_ENCRYPTION_SECRET` makes stored keys
+  unreadable (no rotation).
+- **Resolved notifications** (2026-11-16): resolution runs in the outbox consumer, so an alert
+  disappears up to a poll (and, on the phone, a sync) after the change; rows are kept as history
+  with no retention rule.
 - Redaction in audit and outbox events is by key name at any depth.
 - Old log type definitions are not kept; `logTypeVersion` resolves only through the audit log.
 - Row versions on tasks and work logs only; other resources are last-write-wins, and so are task
@@ -335,8 +361,9 @@ Clients and tooling
   who may erase them? Which email or SMS provider delivers one-time codes? Who in the client's
   organization holds the admin role?
 - Before production: is the lockout acceptable as is (F4)? Should 403 and 404 answers be audited?
-- With the owner (Phase 7): which Claude model in production (`claude-opus-5-5` default or a
-  cheaper one), what daily cost ceiling per organization, and does the client need data
+- With the owner (Phase 7): which Claude model in production (since 2026-11-16 an admin picks it
+  per organization; the server default is `claude-opus-5-5`), what daily cost ceiling per
+  organization, and does the client need data
   residency (which would point to self-hosted speech-to-text, ADR-0010 alternatives)? Who reviews
   the prompts with real Turkish and Arabic voice notes?
 - Before Phase 8: retention and erasure of personal data in the audit log and the outbox
@@ -370,6 +397,59 @@ of AI data, cost controls (organization switches, daily request and cost limits,
 limit, timeouts), and how summaries stay within the recipient's scope (`runAsUser`).
 
 ## Session log
+
+### 2026-11-16: first phone run, organization AI keys, live updates, themes, resolved alerts
+
+- **Committed** (`5038c71`, pushed): the seed creates logs older than the 7-day backdate limit
+  at the oldest accepted moment and then writes their real `occurredAt` (before, `pnpm db:reset`
+  failed in the seed); the mobile app no longer loads `expo-notifications` in Android Expo Go
+  (`src/push/notificationsModule.ts`), which lacks `ExpoTopicSubscriptionModule` and crashed the
+  app at start on the first real phone; AGENTS.md lets agents show the seed's `DEV_PASSWORDS` to
+  the owner in chat when asked (never in a log, document, report, or commit).
+- **First real-phone run**: Tecno Spark 30C (Android) over USB with `adb reverse`, Expo Go
+  57.0.9 sideloaded because the Play Store has the SDK 58 build. The development database had been
+  reset before it.
+- **Uncommitted, written on 2026-11-16**:
+  - Organization AI keys and model choice
+    ([ADR-0012](docs/decisions/0012-organization-ai-provider-keys.md)): migration
+    `20261116090000_ai_provider_keys` (`AiProviderKey`, enum `AiKeyProvider`); `SecretBox`
+    (`src/platform/crypto`); `AiProviderSelector`, `AiKeyChecker`, `AI_REAL_PROVIDER_FACTORIES`,
+    `AI_ORGANIZATION_KEYS` (platform); `src/operations/ai/keys/` with `GET /ai/keys`,
+    `PUT` / `DELETE /ai/keys/:provider` (policy `ai_key.manage`, admins; 5 checks per admin per
+    minute; codes `ai_key_invalid` 422 and `ai_key_storage_unavailable` 503); `settings.ai.llmModel`
+    and `sttModel`; price row `claude-fable-5-2`; env `AI_KEYS_ENCRYPTION_SECRET`; web "Your AI
+    keys" card and model pickers. 80 paths.
+  - Live updates: `refreshUser` in the shared session manager; the phone syncs every 15 s in the
+    foreground (backoff to 5 minutes), `subscribePulls` / `scopeChanged`, `useLiveUser`,
+    `useServerRefresh` (pull to refresh syncs); web `liveRefetchInterval` (15 s for live lists
+    while visible) and a user re-check every 30 s.
+  - Themes: `lightTheme` and `themeForScheme` in `@ops/shared`; the dashboard follows the system
+    or a manual Theme: System / Dark / Light in the account menu (`src/lib/theme.ts`,
+    `localStorage`, inline init script, `data-theme`). The phone (another agent) follows the system
+    or Profile → Theme: System / Dark / Light (`apps/mobile/src/theme/`,
+    `userInterfaceStyle: 'automatic'` in `app.config.ts`), and the header sync indicator hides
+    when everything is sent. Bundled and opened on the phone after an Expo restart; nobody has
+    looked at it on the screen yet.
+  - Resolved notifications: migration `20261116120000_notification_resolved_at`,
+    `NotificationService.resolve`, `notification-resolution.service.ts`; resolved rows leave the
+    inbox, the unread count, and the sync pull.
+  - The product name is no longer written next to the logo (mobile `BrandHeader`, web
+    `AuthShell` and sidebar).
+  - Docs (docs-keeper): ADR-0012 completed (model choice, rate limit, `unreadable`, the `model`
+    error detail); ARCHITECTURE, AGENTS, README (section 11 "paste your own key" with models and
+    the `AI_PROVIDER=fake` note, section 9, section 5 phone notes, update steps), ROADMAP,
+    and the folder `memory.md` files.
+- **Why**: the owner wants to switch to real AI from the dashboard with the organization's own
+  key and choose the model, see changes without reloading, a light theme, and fewer stale alerts.
+- **Verified**: see "Verified" (2026-11-16): unit tests and all 1,719 integration tests pass
+  (after the old notification expectations in `notifications` and `ai-off` were updated);
+  `format:check` passes; both new migrations applied to the development database.
+- **Left to do**
+  - Review and commit the work of 2026-11-16.
+  - Owner: look at the phone and the dashboard in light and dark mode; paste a real Claude key in
+    "Your AI keys" and try a capture and a summary; the combined manual test
+    (`docs/reports/phase-7.md`).
+  - Planned: the rest of the phone redesign, Turkish and Arabic.
 
 ### 2026-10-30 to 2026-11-02: Phase 7 intelligent layer v1 (smart capture, daily AI summaries)
 

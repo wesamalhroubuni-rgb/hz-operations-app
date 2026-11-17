@@ -108,6 +108,23 @@ export const ai = {
     requestLimitHint: "Empty: the server's limit applies. A value can only lower it.",
     costLimit: 'Daily AI cost limit (US dollars)',
     costLimitHint: "Estimated cost. Empty: the server's limit applies.",
+    llmModel: 'Claude model',
+    llmModelHint:
+      'Used for summaries and smart capture. A more capable model costs more per request.',
+    sttModel: 'Voice-note model',
+    sttModelHint: 'Turns voice notes into text (OpenAI).',
+    serverModel: "Server's default",
+    llmModels: {
+      'claude-opus-5-5': 'Claude Opus 5.5: best quality (recommended)',
+      'claude-sonnet-5-5': 'Claude Sonnet 5.5: balanced, about half the cost',
+      'claude-haiku-5-5': 'Claude Haiku 5.5: fastest and cheapest',
+      'claude-fable-5-2': 'Claude Fable 5.2: most capable, about twice the cost',
+    },
+    sttModels: {
+      'gpt-4o-transcribe': 'GPT-4o Transcribe: most accurate',
+      'gpt-4o-mini-transcribe': 'GPT-4o mini Transcribe: about half the cost',
+      'whisper-1': 'Whisper',
+    },
     submit: 'Save AI settings',
     saved: 'AI settings saved.',
     usageLink: 'See AI usage',
@@ -116,6 +133,47 @@ export const ai = {
       wholeNumber: 'Enter a whole number.',
       number: 'Enter a number.',
       range: 'Out of the allowed range.',
+    },
+  },
+  keys: {
+    title: 'Your AI keys',
+    description:
+      "Paste your organization's own API key to run the intelligent features on real AI. The key is checked with the provider, stored encrypted, and never shown again: only its last four characters. Usage is billed to your provider account.",
+    storageUnavailable:
+      'This server cannot store keys yet: the operator must set AI_KEYS_ENCRYPTION_SECRET.',
+    providers: {
+      anthropic: 'Claude (Anthropic): summaries and smart capture',
+      openai: 'OpenAI: voice notes (speech to text)',
+    },
+    status: {
+      organization: 'Using your key {{hint}}.',
+      organizationSince: 'Using your key {{hint}}, saved {{time}}.',
+      environment: "Using the server's key.",
+      test: 'Using the built-in test AI: no real AI calls are made.',
+      none: 'No key: this feature is unavailable.',
+      unreadable:
+        "Your saved key {{hint}} can no longer be read (the server's encryption secret changed). Paste it again.",
+    },
+    model: 'Model: {{model}}',
+    pasteLabel: 'API key',
+    replaceLabel: 'Replace with a new key',
+    hints: {
+      anthropic: 'From console.anthropic.com, API keys. It starts with sk-ant-.',
+      openai: 'From platform.openai.com, API keys. Needed only for voice notes.',
+    },
+    save: 'Check and save',
+    checking: 'Checking…',
+    remove: 'Remove key',
+    saved: '{{provider}}: key checked and saved.',
+    removed: '{{provider}}: key removed.',
+    errors: {
+      invalid: 'The provider refused this key. Check that it is complete and still active.',
+      unreachable: 'The provider could not be reached to check the key. Try again in a moment.',
+      storage: 'This server cannot store keys: AI_KEYS_ENCRYPTION_SECRET is not set.',
+      format: 'This does not look like an API key: paste the whole key, without spaces.',
+      noModelAccess:
+        'The key works, but it has no access to the model {{model}}. Choose another model in the AI settings above, or use a key with access to it.',
+      tooMany: 'Too many key checks. Wait a minute and try again.',
     },
   },
   usage: {

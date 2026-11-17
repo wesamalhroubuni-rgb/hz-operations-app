@@ -168,18 +168,14 @@ describe('smart capture safety', () => {
 
   /** A valid model answer for the inspection log type (override any part). */
   function answer(overrides: Record<string, unknown> = {}): string {
+    const key = world.logType.key;
     return JSON.stringify({
-      logType: {
-        key: world.logType.key,
-        customFields: { area: 'Roof', quantity: 3, passed: null, result: 'ok', next_check: null },
-        fieldConfidence: {
-          area: 'high',
-          quantity: 'medium',
-          passed: null,
-          result: 'low',
-          next_check: null,
-        },
-      },
+      logTypeKey: key,
+      fields: [
+        { field: `${key}.area`, value: 'Roof', confidence: 'high' },
+        { field: `${key}.quantity`, value: 3, confidence: 'medium' },
+        { field: `${key}.result`, value: 'ok', confidence: 'low' },
+      ],
       logTypeConfidence: 'high',
       taskRef: 'T1',
       taskConfidence: 'high',
@@ -241,23 +237,16 @@ describe('smart capture safety', () => {
       ]);
     });
 
+    /** The inspection fields (non-null values) as the model's `fields` list, high confidence. */
     const inspection = (customFields: Record<string, unknown>) => ({
-      key: world.logType.key,
-      customFields: {
-        area: 'Roof',
-        quantity: 3,
-        passed: null,
-        result: 'ok',
-        next_check: null,
-        ...customFields,
-      },
-      fieldConfidence: {
-        area: 'high',
-        quantity: 'high',
-        passed: null,
-        result: 'high',
-        next_check: null,
-      },
+      logTypeKey: world.logType.key,
+      fields: Object.entries({ area: 'Roof', quantity: 3, result: 'ok', ...customFields })
+        .filter(([, value]) => value !== null)
+        .map(([key, value]) => ({
+          field: `${world.logType.key}.${key}`,
+          value,
+          confidence: 'high',
+        })),
     });
 
     it.each([
@@ -265,15 +254,9 @@ describe('smart capture safety', () => {
         'extra keys that try to act',
         () => answer({ status: 'approved', authorId: 'someone-else' }),
       ],
-      [
-        'a log type that was not offered',
-        () => answer({ logType: { key: 'payroll', customFields: {}, fieldConfidence: {} } }),
-      ],
-      [
-        'a select value outside its options',
-        () => answer({ logType: inspection({ result: 'excellent' }) }),
-      ],
-      ['a field the log type does not have', () => answer({ logType: inspection({ salary: 1 }) })],
+      ['a log type that was not offered', () => answer({ logTypeKey: 'payroll', fields: [] })],
+      ['a select value outside its options', () => answer(inspection({ result: 'excellent' }))],
+      ['a field the log type does not have', () => answer(inspection({ salary: 1 }))],
       ['a task reference that was not offered', () => answer({ taskRef: 'T9' })],
       ['a date that is not a date', () => answer({ occurredAt: 'yesterday' })],
     ])('fails %s twice as output_invalid, keeping the transcript', async (_name, bad) => {
@@ -307,7 +290,7 @@ describe('smart capture safety', () => {
 
     it('drops one value that breaks its field rule and keeps the rest of the proposal', async () => {
       // A text field holds at most 2,000 characters: the schema cannot say so, the rule can.
-      llm.answers = [answer({ logType: inspection({ area: 'x'.repeat(2001) }) })];
+      llm.answers = [answer(inspection({ area: 'x'.repeat(2001) }))];
       const response = await api.post('/ai/capture', textCapture('Roof, a long description'));
       expect(response.body.capture.status).toBe('proposed');
       expect(response.body.capture.proposal.customFields).toEqual({ quantity: 3, result: 'ok' });
@@ -458,7 +441,7 @@ describe('smart capture safety', () => {
         traceIds: traces.map((trace) => trace.id),
         model: 'fake-llm-1',
         promptId: 'smart-capture-extract',
-        promptVersion: 1,
+        promptVersion: 2,
         keptFields: [
           'logTypeId',
           'taskId',
@@ -561,7 +544,7 @@ describe('smart capture safety', () => {
         traceIds: [],
         model: 'claude-opus-5-5',
         promptId: 'smart-capture-extract',
-        promptVersion: 1,
+        promptVersion: 2,
         keptFields: ['text'],
         changedFields: [],
         addedFields: [],

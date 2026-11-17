@@ -1,6 +1,7 @@
-import { colors, fontSizes, fontWeights, radii, spacing } from '@ops/shared';
-import { Pressable, ScrollView, StyleSheet, Text } from 'react-native';
+import { fontSizes, fontWeights, radii, spacing } from '@ops/shared';
+import { Pressable, ScrollView, Text } from 'react-native';
 
+import { makeStyles } from '../theme';
 import { touch } from './sizes';
 
 export interface FilterOption<Value extends string> {
@@ -23,6 +24,7 @@ export function FilterChips<Value extends string>({
   value: Value;
   onChange: (value: Value) => void;
 }>) {
+  const styles = useStyles();
   return (
     <ScrollView
       horizontal
@@ -56,7 +58,7 @@ export function FilterChips<Value extends string>({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   scroller: {
     flexGrow: 0,
   },
@@ -89,4 +91,4 @@ const styles = StyleSheet.create({
   textSelected: {
     color: colors.onPrimary,
   },
-});
+}));

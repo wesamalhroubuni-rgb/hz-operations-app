@@ -69,6 +69,19 @@ export function statusPresentation(status: SyncStatus): StatusPresentation {
 }
 
 /**
+ * The header indicator, shown only when there is something to say: offline, changes waiting or
+ * being sent, changes not accepted, or sign in again. Null when everything is sent and online,
+ * including the routine background refresh (a run with nothing to send), so the header stays
+ * quiet. The Sync screen still says "All sent".
+ */
+export function indicatorPresentation(status: SyncStatus | null): StatusPresentation | null {
+  if (status === null) return null;
+  if (status.kind === 'synced') return null;
+  if (status.kind === 'syncing' && status.pending === 0) return null;
+  return statusPresentation(status);
+}
+
+/**
  * The banner above Home, Tasks and Logs. Null: nothing to say. `openedOffline`: the app started
  * with the stored identity because the server could not be reached (`useAuth().offline`).
  */

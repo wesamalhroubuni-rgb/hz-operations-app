@@ -16,6 +16,7 @@ import { teamsEndpoints } from '../domain/teams.js';
 import { usersEndpoints } from '../domain/users.js';
 import { workLogsEndpoints } from '../domain/work-logs.js';
 import { aiUsageEndpoints } from '../platform/ai.js';
+import { aiKeysEndpoints } from '../platform/ai-keys.js';
 import { auditEventsEndpoints } from '../platform/audit.js';
 import { authEndpoints } from '../platform/auth.js';
 import { notificationsEndpoints } from '../platform/notifications.js';
@@ -59,6 +60,8 @@ export function createApiClient(options: ApiClientOptions) {
     smartCapture: smartCaptureEndpoints(transport),
     aiSummaries: aiSummariesEndpoints(transport),
     aiUsage: aiUsageEndpoints(transport),
+    // ADR-0012: the organization's own AI provider keys.
+    aiKeys: aiKeysEndpoints(transport),
     auditEvents: auditEventsEndpoints(transport),
     outboxEvents: outboxEventsEndpoints(transport),
   };

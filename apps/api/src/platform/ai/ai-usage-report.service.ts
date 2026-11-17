@@ -81,7 +81,7 @@ export class AiUsageReportService {
     }
     totals.costUsd = Math.round(totals.costUsd * 1_000_000) / 1_000_000;
     totals.audioSeconds = Math.round(totals.audioSeconds * 1000) / 1000;
-    const providers = this.runner.providers();
+    const providers = await this.runner.providers(organizationId);
     return {
       generatedAt: now.toISOString(),
       from,

@@ -109,6 +109,30 @@ export interface AiOrganizationLimitsResolver {
   limitsFor(organizationId: string): Promise<AiOrganizationLimits>;
 }
 
+/**
+ * An organization's own provider keys (ADR-0012), null where it has none. Plain keys: only the
+ * provider selector holds them, in memory, to build that organization's providers.
+ */
+export interface AiOrganizationKeys {
+  anthropicApiKey: string | null;
+  openAiApiKey: string | null;
+  /** The organization's chosen models; null or absent = the server's `AI_LLM_MODEL` / `AI_STT_MODEL`. */
+  llmModel?: string | null;
+  speechToTextModel?: string | null;
+}
+
+/**
+ * Bound by the host under `AI_ORGANIZATION_KEYS`: reads (and decrypts) the organization's own
+ * keys wherever it keeps them. Must not throw for an unreadable key: answer null for it (and log
+ * ids only), so the AI falls back to the server's key or reports "unavailable".
+ */
+export interface AiOrganizationKeysResolver {
+  keysFor(organizationId: string): Promise<AiOrganizationKeys>;
+}
+
+/** Where the provider in force for a kind comes from (`AiKeySource` in @ops/shared). */
+export type AiProviderSource = 'organization' | 'environment' | 'test' | 'none';
+
 /** What a call is about. Becomes the trace row's identifying columns. */
 export interface AiCall {
   organizationId: string;
@@ -235,8 +259,13 @@ export interface Transcription {
  * unknown prompt) and database errors.
  */
 export interface AiRunner {
-  /** The providers in force; null when a kind is unavailable (production without its key). */
-  providers(): { llm: AiProviderInfo | null; speechToText: AiProviderInfo | null };
+  /**
+   * The providers in force for an organization (its own key first, ADR-0012); null when a kind
+   * is unavailable (production without any key).
+   */
+  providers(
+    organizationId: string,
+  ): Promise<{ llm: AiProviderInfo | null; speechToText: AiProviderInfo | null }>;
   generateStructured<Value>(
     call: AiCall,
     request: StructuredGenerationRequest<Value>,
@@ -288,3 +317,5 @@ export const PROMPT_LOADER = Symbol('platform.promptLoader');
 export const AI_PROMPT_DIRECTORIES = Symbol('platform.aiPromptDirectories');
 /** Bound by the host to an `AiOrganizationLimitsResolver`. */
 export const AI_ORGANIZATION_LIMITS = Symbol('platform.aiOrganizationLimits');
+/** Bound by the host to an `AiOrganizationKeysResolver` (none bound: no organization keys). */
+export const AI_ORGANIZATION_KEYS = Symbol('platform.aiOrganizationKeys');

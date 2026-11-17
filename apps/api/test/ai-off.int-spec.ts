@@ -251,7 +251,12 @@ describe.each(SITUATIONS)('the core app with $name', (situation) => {
     const inbox = await worker.get('/notifications');
     expect(inbox.status).toBe(200);
     const types = (inbox.body.items as Array<{ type: string }>).map((item) => item.type).sort();
-    expect(types).toEqual(['task.assigned', 'work_log.approved']);
+    // The task was finished above, so its "assigned" alert was created and then resolved:
+    // kept in the table, no longer in the inbox.
+    expect(types).toEqual(['work_log.approved']);
+    const assigned = await ctx.prisma.notification.findMany({ where: { type: 'task.assigned' } });
+    expect(assigned.length).toBeGreaterThan(0);
+    expect(assigned.every((row) => row.resolvedAt !== null)).toBe(true);
 
     // Nothing of the above touched the AI layer.
     expect(await ctx.prisma.aiTrace.count()).toBe(0);

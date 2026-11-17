@@ -1,8 +1,9 @@
-import { colors, fontSizes, fontWeights, spacing } from '@ops/shared';
+import { fontSizes, fontWeights, spacing } from '@ops/shared';
 import type { ReactNode } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 
 import { t } from '../i18n';
+import { makeStyles } from '../theme';
 
 /**
  * The label, hint and error around any form control. The error is announced when it appears.
@@ -22,6 +23,7 @@ export function FieldShell({
   required?: boolean;
   children: ReactNode;
 }>) {
+  const styles = useStyles();
   return (
     <View style={styles.field}>
       <Text style={styles.label} importantForAccessibility="no" accessibilityElementsHidden>
@@ -39,7 +41,7 @@ export function FieldShell({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   field: {
     gap: spacing.xs,
   },
@@ -65,4 +67,4 @@ const styles = StyleSheet.create({
     color: colors.danger,
     textAlign: 'auto',
   },
-});
+}));

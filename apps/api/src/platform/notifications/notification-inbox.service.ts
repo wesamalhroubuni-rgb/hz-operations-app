@@ -45,7 +45,8 @@ export class NotificationInboxService {
 
   private ownWhere() {
     const actor = requireActor();
-    return { recipientId: actor.userId, organizationId: actor.organizationId };
+    // Resolved notifications are history: not listed, not counted, not marked read.
+    return { recipientId: actor.userId, organizationId: actor.organizationId, resolvedAt: null };
   }
 
   async list(query: ListNotificationsQuery): Promise<NotificationList> {

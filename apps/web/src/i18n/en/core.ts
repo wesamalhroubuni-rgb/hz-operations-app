@@ -47,6 +47,12 @@ export const core = {
     openMenu: 'Open navigation',
     closeMenu: 'Close navigation',
   },
+  theme: {
+    label: 'Theme',
+    system: 'System',
+    light: 'Light',
+    dark: 'Dark',
+  },
   shell: {
     skipToContent: 'Skip to content',
     userMenu: 'Account menu for {{name}}',

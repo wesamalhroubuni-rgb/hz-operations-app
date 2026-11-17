@@ -1,7 +1,8 @@
-import { colors, spacing } from '@ops/shared';
+import { spacing } from '@ops/shared';
 import type { ReactNode } from 'react';
-import { KeyboardAvoidingView, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, RefreshControl, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { makeStyles, useTheme } from '../theme';
 
 interface ScreenContainerProps {
   children: ReactNode;
@@ -28,6 +29,8 @@ export function ScreenContainer({
   keyboardOffset = 0,
   inTab = false,
 }: Readonly<ScreenContainerProps>) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   return (
     <KeyboardAvoidingView
@@ -70,7 +73,7 @@ export function ScreenContainer({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -91,4 +94,4 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     backgroundColor: colors.background,
   },
-});
+}));

@@ -1,6 +1,6 @@
-import { colors, spacing } from '@ops/shared';
+import { spacing } from '@ops/shared';
 import { useMemo, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
+import { FlatList, RefreshControl, View } from 'react-native';
 
 import { FilterChips } from '../components/FilterChips';
 import { TaskRow } from '../components/rows';
@@ -9,14 +9,19 @@ import { SyncReadErrorState } from '../components/SyncNotices';
 import { SyncBanner } from '../components/SyncBanner';
 import { readErrorKind, useMyTasks } from '../data/queries';
 import { useNow } from '../hooks/useNow';
+import { useServerRefresh } from '../hooks/useServerRefresh';
 import { t } from '../i18n';
 import { countTasksByFilter, filterTasks, TASK_FILTERS, type TaskFilter } from '../logic/tasks';
 import type { TabScreenProps } from '../navigation/types';
+import { makeStyles, useTheme } from '../theme';
 
 /** My tasks with the open / today / overdue / done filters. */
 export function TasksScreen({ navigation }: Readonly<TabScreenProps<'Tasks'>>) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const now = useNow();
   const tasks = useMyTasks();
+  const server = useServerRefresh();
   const [filter, setFilter] = useState<TaskFilter>('open');
 
   const all = useMemo(() => tasks.data ?? [], [tasks.data]);
@@ -61,8 +66,8 @@ export function TasksScreen({ navigation }: Readonly<TabScreenProps<'Tasks'>>) {
           }
           refreshControl={
             <RefreshControl
-              refreshing={tasks.isRefetching}
-              onRefresh={() => void tasks.refetch()}
+              refreshing={server.refreshing}
+              onRefresh={server.refresh}
               tintColor={colors.primary}
               colors={[colors.primary]}
               progressBackgroundColor={colors.surface}
@@ -74,7 +79,7 @@ export function TasksScreen({ navigation }: Readonly<TabScreenProps<'Tasks'>>) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -84,4 +89,4 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     paddingTop: spacing.sm,
   },
-});
+}));

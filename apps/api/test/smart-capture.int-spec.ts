@@ -92,18 +92,14 @@ async function buildWorld(ctx: TestApp): Promise<World> {
 
 /** A valid model answer for the inspection log type (override any part). */
 function answer(world: World, overrides: Record<string, unknown> = {}): string {
+  const key = world.logType.key;
   return JSON.stringify({
-    logType: {
-      key: world.logType.key,
-      customFields: { area: 'Roof', quantity: 3, passed: null, result: 'ok', next_check: null },
-      fieldConfidence: {
-        area: 'high',
-        quantity: 'medium',
-        passed: null,
-        result: 'low',
-        next_check: null,
-      },
-    },
+    logTypeKey: key,
+    fields: [
+      { field: `${key}.area`, value: 'Roof', confidence: 'high' },
+      { field: `${key}.quantity`, value: 3, confidence: 'medium' },
+      { field: `${key}.result`, value: 'ok', confidence: 'low' },
+    ],
     logTypeConfidence: 'high',
     taskRef: 'T1',
     taskConfidence: 'high',
@@ -539,7 +535,7 @@ describe('smart capture', () => {
           traceIds: traces.map((trace) => trace.id),
           model: 'fake-llm-1',
           promptId: 'smart-capture-extract',
-          promptVersion: 1,
+          promptVersion: 2,
           keptFields: [
             'logTypeId',
             'taskId',

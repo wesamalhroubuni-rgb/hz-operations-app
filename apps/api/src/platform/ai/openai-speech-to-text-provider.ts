@@ -25,6 +25,37 @@ const count = (value: unknown): number =>
 /** HTTP statuses that mean "this audio cannot be transcribed", not "the service failed". */
 const INPUT_REJECTED_STATUSES = new Set([400, 413, 415]);
 
+export const OPENAI_MODELS_URL = 'https://api.openai.com/v1/models';
+
+/**
+ * Checks an OpenAI key without transcribing anything (ADR-0012): reads the configured model's
+ * metadata (`GET /v1/models/{model}`), free and needing a valid key with access to the model.
+ * Rejects with an `AiProviderError` (`http_401`, `http_404`, `network`, `timeout`).
+ */
+export async function checkOpenAiKey(
+  apiKey: string,
+  model: string,
+  signal: AbortSignal,
+  fetchImpl: Fetch = (input, init) => fetch(input, init),
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetchImpl(`${OPENAI_MODELS_URL}/${encodeURIComponent(model)}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal,
+    });
+  } catch {
+    throw signal.aborted
+      ? new AiProviderError('timeout', 'The OpenAI key check timed out')
+      : new AiProviderError('network', 'OpenAI could not be reached');
+  }
+  await response.body?.cancel().catch(() => undefined);
+  if (!response.ok) {
+    throw new AiProviderError(`http_${response.status}`, `OpenAI answered HTTP ${response.status}`);
+  }
+}
+
 /**
  * OpenAI speech-to-text (`gpt-4o-transcribe` by default) through one multipart `fetch`
  * (ADR-0010 section 2). Sends only the audio bytes, a neutral file name, the model and the

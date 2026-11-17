@@ -1,6 +1,7 @@
-import { colors, spacing } from '@ops/shared';
-import { StyleSheet, View } from 'react-native';
+import { spacing } from '@ops/shared';
+import { View } from 'react-native';
 
+import { makeStyles } from '../theme';
 import { AppText } from './AppText';
 
 /** A label and its value, read together by screen readers. Hidden when there is no value. */
@@ -8,6 +9,7 @@ export function InfoRow({
   label,
   value,
 }: Readonly<{ label: string; value: string | null | undefined }>) {
+  const styles = useStyles();
   if (!value) return null;
   return (
     <View style={styles.row} accessible accessibilityLabel={`${label}: ${value}`}>
@@ -17,11 +19,11 @@ export function InfoRow({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   row: {
     gap: spacing.xs / 2,
     paddingVertical: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-});
+}));

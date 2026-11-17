@@ -201,6 +201,12 @@ export const POLICIES = {
       'Read AI usage per day and feature: calls, outcomes, tokens, estimated cost, and the ' +
       'limits in force.',
   },
+  'ai_key.manage': {
+    roles: ADMINS,
+    description:
+      "See where the organization's AI provider keys come from (never the key), save its own " +
+      'Claude or OpenAI key (checked, stored encrypted) and remove it (ADR-0012).',
+  },
 
   'sync.pull': {
     roles: EVERYONE,

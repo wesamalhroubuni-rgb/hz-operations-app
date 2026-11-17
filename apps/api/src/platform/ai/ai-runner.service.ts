@@ -23,17 +23,12 @@ import {
 } from './ai-types';
 import {
   AiProviderError,
-  LLM_PROVIDER,
   type LlmMessage,
-  type LlmProvider,
   type LlmRequest,
   type LlmResponse,
 } from './llm-provider';
-import {
-  SPEECH_TO_TEXT_PROVIDER,
-  type SpeechToTextProvider,
-  type SpeechToTextResponse,
-} from './speech-to-text-provider';
+import { AiProviderSelector } from './provider-selector';
+import type { SpeechToTextResponse } from './speech-to-text-provider';
 import { AiUsageLimiter } from './usage-limiter';
 
 /** What the runner makes of one answer: a usable value, or why it is invalid. */
@@ -118,16 +113,19 @@ export class AiRunnerService implements AiRunner {
 
   constructor(
     @Inject(AI_SETTINGS) private readonly settings: AiSettings,
-    @Inject(LLM_PROVIDER) private readonly llm: LlmProvider | null,
-    @Inject(SPEECH_TO_TEXT_PROVIDER) private readonly speech: SpeechToTextProvider | null,
+    private readonly selector: AiProviderSelector,
     @Inject(PROMPT_LOADER) private readonly prompts: PromptLoader,
     @Inject(AUTH_CLOCK) private readonly clock: Clock,
     private readonly traces: AiTraceService,
     private readonly limiter: AiUsageLimiter,
   ) {}
 
-  providers() {
-    return { llm: this.llm?.info ?? null, speechToText: this.speech?.info ?? null };
+  async providers(organizationId: string) {
+    const providers = await this.selector.forOrganization(organizationId);
+    return {
+      llm: providers.llm?.info ?? null,
+      speechToText: providers.speechToText?.info ?? null,
+    };
   }
 
   generateStructured<Value>(
@@ -195,7 +193,7 @@ export class AiRunnerService implements AiRunner {
   }
 
   async transcribe(call: AiCall, request: TranscriptionRequest): Promise<AiOutcome<Transcription>> {
-    const provider = this.speech;
+    const provider = (await this.selector.forOrganization(call.organizationId)).speechToText;
     if (!provider) {
       return this.unavailable(call);
     }
@@ -275,7 +273,7 @@ export class AiRunnerService implements AiRunner {
     base: LlmRequest,
     interpret: (text: string) => Interpretation<Value>,
   ): Promise<AiOutcome<Value>> {
-    const provider = this.llm;
+    const provider = (await this.selector.forOrganization(call.organizationId)).llm;
     if (!provider) {
       return this.unavailable(call);
     }

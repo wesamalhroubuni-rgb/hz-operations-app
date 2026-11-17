@@ -1,14 +1,13 @@
-import { colors, fontSizes, radii, spacing } from '@ops/shared';
+import { fontSizes, radii, spacing, type ThemeColors } from '@ops/shared';
 import type { ReactNode } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
+import { makeStyles, useTheme } from '../theme';
 
 type Tone = 'error' | 'notice' | 'success';
 
-const TONE_COLORS: Record<Tone, string> = {
-  error: colors.danger,
-  notice: colors.warning,
-  success: colors.success,
-};
+function toneColor(colors: ThemeColors, tone: Tone): string {
+  return tone === 'error' ? colors.danger : tone === 'notice' ? colors.warning : colors.success;
+}
 
 /**
  * A message above a form. It is announced by screen readers when it appears: an error
@@ -20,7 +19,9 @@ export function Message({
   details = [],
   children,
 }: Readonly<{ tone: Tone; text: string; details?: readonly string[]; children?: ReactNode }>) {
-  const color = TONE_COLORS[tone];
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const color = toneColor(colors, tone);
   return (
     <View
       accessible={children === undefined}
@@ -39,7 +40,7 @@ export function Message({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   box: {
     gap: spacing.xs,
     paddingVertical: spacing.md,
@@ -54,4 +55,4 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     lineHeight: 20,
   },
-});
+}));

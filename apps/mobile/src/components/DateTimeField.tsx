@@ -1,10 +1,11 @@
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
-import { colors, radii, spacing } from '@ops/shared';
+import { radii, spacing } from '@ops/shared';
 import { useState } from 'react';
-import { Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Modal, Platform, Pressable, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { formatDate, formatDateTime, localeTag, t } from '../i18n';
+import { makeStyles, useTheme } from '../theme';
 import { AppText } from './AppText';
 import { Button } from './Button';
 import { FieldShell } from './FieldShell';
@@ -42,6 +43,8 @@ export function DateTimeField({
   hint,
   required,
 }: Readonly<DateTimeFieldProps>) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const [iosOpen, setIosOpen] = useState(false);
   const [iosValue, setIosValue] = useState<Date>(value ?? new Date());
   const shown =
@@ -146,7 +149,7 @@ export function DateTimeField({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   row: {
     flexDirection: 'row',
     alignItems: 'stretch',
@@ -188,4 +191,4 @@ const styles = StyleSheet.create({
     borderTopEndRadius: radii.lg,
     backgroundColor: colors.surface,
   },
-});
+}));

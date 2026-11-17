@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import { colors, fontSizes, radii, spacing } from '@ops/shared';
+import { fontSizes, radii, spacing } from '@ops/shared';
 import { useMemo, useState } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { FlatList, Modal, Pressable, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { t } from '../i18n';
+import { makeStyles, useTheme } from '../theme';
 import { AppText } from './AppText';
 import { Button } from './Button';
 import { FieldShell } from './FieldShell';
@@ -49,6 +50,8 @@ export function PickerField({
   required,
   disabled,
 }: Readonly<PickerFieldProps>) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const selected = options.find((option) => option.value === value) ?? null;
@@ -148,7 +151,7 @@ export function PickerField({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   flex: {
     flex: 1,
   },
@@ -216,4 +219,4 @@ const styles = StyleSheet.create({
   rowSelected: {
     borderColor: colors.primary,
   },
-});
+}));

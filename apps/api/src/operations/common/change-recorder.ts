@@ -17,7 +17,9 @@ export type EntityType =
   // Phase 7 (ADR-0010, ADR-0011)
   | 'smart_capture'
   | 'daily_summary'
-  | 'anomaly_flag';
+  | 'anomaly_flag'
+  // ADR-0012 (payloads carry the provider only, never the key)
+  | 'ai_provider_key';
 
 /** Key under which the entity sits in an outbox payload. */
 const PAYLOAD_KEYS: Record<EntityType, string> = {
@@ -33,6 +35,7 @@ const PAYLOAD_KEYS: Record<EntityType, string> = {
   smart_capture: 'smartCapture',
   daily_summary: 'dailySummary',
   anomaly_flag: 'anomalyFlag',
+  ai_provider_key: 'aiProviderKey',
 };
 
 export interface RecordedChange {

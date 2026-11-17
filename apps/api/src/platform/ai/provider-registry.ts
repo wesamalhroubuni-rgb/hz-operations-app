@@ -1,9 +1,13 @@
 import type { AiSettings } from './ai-settings';
-import { AnthropicLlmProvider, type AnthropicLlmOptions } from './anthropic-llm-provider';
+import {
+  AnthropicLlmProvider,
+  checkAnthropicKey,
+  type AnthropicLlmOptions,
+} from './anthropic-llm-provider';
 import { FakeLlmProvider } from './fake-llm-provider';
 import { FakeSpeechToTextProvider } from './fake-speech-to-text-provider';
 import type { LlmProvider } from './llm-provider';
-import { OpenAiSpeechToTextProvider } from './openai-speech-to-text-provider';
+import { checkOpenAiKey, OpenAiSpeechToTextProvider } from './openai-speech-to-text-provider';
 import type { SpeechToTextProvider } from './speech-to-text-provider';
 
 export interface AiProviders {
@@ -12,16 +16,26 @@ export interface AiProviders {
   speechToText: SpeechToTextProvider | null;
 }
 
-/** How to build the real providers (tests replace them to stay off the network). */
+/**
+ * How to build the real providers and check a key with them (tests replace them, bound under
+ * `AI_REAL_PROVIDER_FACTORIES`, to stay off the network).
+ */
 export interface RealProviderFactories {
   llm(apiKey: string, model: string, options: AnthropicLlmOptions): LlmProvider;
   speechToText(apiKey: string, model: string): SpeechToTextProvider;
+  /** Rejects with an `AiProviderError` when the provider refuses the key (ADR-0012). */
+  checkLlmKey(apiKey: string, model: string, signal: AbortSignal): Promise<void>;
+  checkSpeechToTextKey(apiKey: string, model: string, signal: AbortSignal): Promise<void>;
 }
 
-const REAL_PROVIDERS: RealProviderFactories = {
+export const REAL_PROVIDERS: RealProviderFactories = {
   llm: (apiKey, model, options) => new AnthropicLlmProvider(apiKey, model, undefined, options),
   speechToText: (apiKey, model) => new OpenAiSpeechToTextProvider(apiKey, model),
+  checkLlmKey: checkAnthropicKey,
+  checkSpeechToTextKey: (apiKey, model, signal) => checkOpenAiKey(apiKey, model, signal),
 };
+
+export const AI_REAL_PROVIDER_FACTORIES = Symbol('platform.aiRealProviderFactories');
 
 /**
  * Chooses the providers from `AI_PROVIDER` and the keys (ADR-0010 section 2):

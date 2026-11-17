@@ -20,6 +20,7 @@ import {
   refusedItemOfLog,
   signInWaitingText,
   signOutStep,
+  indicatorPresentation,
   statusPresentation,
   type Text,
 } from './sync';
@@ -100,6 +101,38 @@ const error = (code: QueueItemError['code']): QueueItemError => ({
   code,
   message: code,
   status: null,
+});
+
+describe('header indicator', () => {
+  it('shows nothing when everything is sent and online, or without a status', () => {
+    expect(indicatorPresentation(null)).toBeNull();
+    expect(indicatorPresentation({ kind: 'synced', lastRefreshedAt: null })).toBeNull();
+    expect(
+      indicatorPresentation({ kind: 'synced', lastRefreshedAt: '2026-11-16T08:00:00.000Z' }),
+    ).toBeNull();
+  });
+
+  it('stays quiet during a routine refresh with nothing to send', () => {
+    expect(indicatorPresentation({ kind: 'syncing', pending: 0 })).toBeNull();
+  });
+
+  it('shows itself when there is something to say', () => {
+    const shown = (status: Parameters<typeof indicatorPresentation>[0]) => {
+      const view = indicatorPresentation(status);
+      return view === null ? null : render(view.text);
+    };
+    expect(shown({ kind: 'syncing', pending: 2 })).toBe('Sending…');
+    expect(shown({ kind: 'pending', pending: 1 })).toBe('1 waiting');
+    expect(shown({ kind: 'failed', failed: 2, pending: 0 })).toBe('2 not accepted');
+    expect(shown({ kind: 'offline', pending: 0, failed: 0 })).toBe('Offline');
+    expect(shown({ kind: 'offline', pending: 1, failed: 0 })).toBe('Offline, 1 waiting');
+    expect(shown({ kind: 'needsSignIn', pending: 0, failed: 0 })).toBe('Sign in again');
+  });
+
+  it('says the same as the full status when shown', () => {
+    const status = { kind: 'failed', failed: 1, pending: 3 } as const;
+    expect(indicatorPresentation(status)).toEqual(statusPresentation(status));
+  });
 });
 
 describe('status text', () => {

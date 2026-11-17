@@ -5,7 +5,10 @@ import { brand } from '@/lib/brand';
 
 import styles from './auth-shell.module.css';
 
-/** The frame of the sign-in and activation pages: the brand above one card. */
+/**
+ * The frame of the sign-in and activation pages: the logo (which already shows the product name,
+ * so it is not repeated as text) and the app label above one card.
+ */
 export function AuthShell({
   title,
   intro,
@@ -24,7 +27,6 @@ export function AuthShell({
             sizes="96px"
             priority
           />
-          <p className={styles.name}>{brand.name}</p>
           <p className={styles.label}>{brand.appLabel}</p>
         </header>
 

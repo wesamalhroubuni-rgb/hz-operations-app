@@ -1,14 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing } from '@ops/shared';
+import { spacing } from '@ops/shared';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { t } from '../i18n';
+import { useTheme } from '../theme';
 import { AppText } from './AppText';
 import { Button, type IconName } from './Button';
 import { iconSize } from './sizes';
 
 /** A spinner with a word, announced to screen readers. */
 export function LoadingState({ label = t('common.loading') }: Readonly<{ label?: string }>) {
+  const { colors } = useTheme();
   return (
     <View style={styles.box} accessible accessibilityRole="progressbar" accessibilityLabel={label}>
       <ActivityIndicator color={colors.primary} size="large" />
@@ -22,6 +24,7 @@ export function ErrorState({
   message = t('errors.loadFailed'),
   onRetry,
 }: Readonly<{ message?: string; onRetry?: () => void }>) {
+  const { colors } = useTheme();
   return (
     <View style={styles.box}>
       <Ionicons name="cloud-offline-outline" size={iconSize.lg} color={colors.danger} />
@@ -42,6 +45,7 @@ export function EmptyState({
   actionLabel,
   onAction,
 }: Readonly<{ message: string; icon?: IconName; actionLabel?: string; onAction?: () => void }>) {
+  const { colors } = useTheme();
   return (
     <View style={styles.box}>
       <Ionicons name={icon} size={iconSize.lg} color={colors.textMuted} />

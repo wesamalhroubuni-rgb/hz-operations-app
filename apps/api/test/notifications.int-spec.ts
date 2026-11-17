@@ -293,7 +293,8 @@ describe('notifications', () => {
       }
       await drain();
       items = (await listOf(deniz.id)).items;
-      expect(items.map((item) => item.type)).toEqual(['work_log.approved', 'work_log.rejected']);
+      // The rejection asked for a fix; once approved it is resolved (hidden, kept as history).
+      expect(items.map((item) => item.type)).toEqual(['work_log.approved']);
       expect((await listOf(tenant.admin.id)).items).toEqual([]);
     });
   });
@@ -349,11 +350,8 @@ describe('notifications', () => {
       expect((await review({ status: 'approved', note: 'Good, thanks' })).status).toBe(200);
       await drain();
       items = (await listOf(deniz.id)).items;
-      expect(items.map((item) => item.type)).toEqual([
-        'work_log.approved',
-        'work_log.rejected',
-        'work_log.rejected',
-      ]);
+      // Both rejections are resolved by the approval; one approval alert, not a second one.
+      expect(items.map((item) => item.type)).toEqual(['work_log.approved']);
     });
   });
 

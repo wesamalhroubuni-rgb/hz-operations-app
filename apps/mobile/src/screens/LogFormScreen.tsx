@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { colors, customFieldDescriptors, spacing } from '@ops/shared';
+import { customFieldDescriptors, spacing } from '@ops/shared';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { useEffect, useMemo } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, useWindowDimensions, View } from 'react-native';
@@ -33,6 +33,7 @@ import { parseIso } from '../logic/dates';
 import { LOG_TEXT_MAX_LENGTH } from '../logic/logForm';
 import { isOpenTask } from '../logic/tasks';
 import type { StackScreenProps } from '../navigation/types';
+import { useTheme } from '../theme';
 
 /** Log types shown as one-tap buttons; the rest are in a list below them. */
 const TYPE_BUTTONS = 6;
@@ -46,6 +47,7 @@ const NO_TYPE = '__none__';
  * button is at the bottom; nothing typed is lost if saving fails or the screen is left.
  */
 export function LogFormScreen({ route, navigation }: Readonly<StackScreenProps<'LogForm'>>) {
+  const { colors } = useTheme();
   const form = useLogForm(route.params);
   const headerHeight = useHeaderHeight();
   const { width } = useWindowDimensions();

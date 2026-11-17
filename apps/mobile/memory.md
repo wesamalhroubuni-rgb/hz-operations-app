@@ -1,6 +1,6 @@
 # apps/mobile memory
 
-Package `@ops/mobile`. Last updated: 2026-11-02.
+Package `@ops/mobile`. Last updated: 2026-11-16.
 
 ## Purpose
 
@@ -13,11 +13,19 @@ notifications, online or offline.
 
 Phase 4 committed (`280c50a`); Phase 5 (offline mode and sync, ADR-0008) committed (`2cf5a01`).
 Phase 6 touched the app only to re-export the moved translation core. Phase 7 (smart capture,
-ADR-0010) is code complete, tested with fakes, and reviewed (2026-11-02), about to be committed.
-**Never run on a real phone or in the emulator** (Expo Go or a build): no screen, camera,
-microphone, location, SecureStore, SQLite, NetInfo, background task, or push behaviour has been
-seen on a device. The emulator and phone steps are in README sections 5 and 6 and in the combined
-manual test in `docs/reports/phase-7.md`.
+ADR-0010) committed (`3bfad42`). **First run on a real phone on 2026-11-16**: an Android phone
+(Tecno Spark 30C) over USB with `adb reverse`, in Expo Go 57.0.9 sideloaded (the Play Store
+offers the SDK 58 Expo Go, which cannot open this SDK 57 project). The app crashed at start
+until `5038c71`: `src/push/notificationsModule.ts` no longer loads `expo-notifications` in
+Android Expo Go (that client lacks the native `ExpoTopicSubscriptionModule`; remote push is
+unavailable there anyway), and `pushDevice.ts` / `usePush.tsx` treat a null module as "no push".
+No full device test is recorded (camera, microphone, offline, SQLite, background task, push);
+the steps are in README sections 5 and 6 and in `docs/reports/phase-7.md`. Uncommitted since
+2026-11-16: live updates (below) and `BrandHeader` showing the logo and the app label only (the
+logo already shows the product name), and light mode with a System / Dark / Light choice plus
+a quieter sync indicator (below; tests pass, not yet seen on a phone). Resolved notifications (API, 2026-11-16)
+leave the phone through the sync pull, so the Alerts list and badge drop alerts that ask for
+nothing more.
 
 - **Smart capture** (Phase 7, ADR-0010):
   - Shown only when the organization summary's `aiFeatures.smartCapture` is on
@@ -63,7 +71,16 @@ manual test in `docs/reports/phase-7.md`.
     run at a time; sends the queue with `offlineSyncHeaders`, then pulls; triggers start,
     foreground, reconnect (`network.ts`, NetInfo; unknown counts as online), after a write,
     "Sync now", timer, background; backoff 2 s doubling to 15 minutes with full jitter, no attempt
-    limit; refused refresh → `needsSignIn`.
+    limit; refused refresh → `needsSignIn`. **Live updates (2026-11-16)**: the periodic run is
+    every 15 s in the foreground (was 5 minutes) and a timer run pulls when the last pull is
+    older than 10 s (was 60 s); stopped in the background; it doubles up to 5 minutes while
+    pulls fail; the periodic timer starts after the start run. `subscribePulls` reports each
+    successful pull with `scopeChanged` (a full answer to a stored cursor = roles or scope
+    changed). `useLiveUser` (mounted in `SignedInNavigator`) then calls the session manager's
+    `refreshUser` (at once on `scopeChanged`, else at most once a minute,
+    `logic/liveUpdates.ts`). Pull to refresh on Home, Tasks, Logs, Alerts, task and log detail,
+    and Profile now runs a real sync (`hooks/useServerRefresh.ts`, its own spinner state so the
+    automatic pulls do not flash it); Profile also re-checks the user.
   - `background.ts`: `expo-background-task`, at most every 15 minutes, development build only;
     unregistered at sign-out.
   - `identity.ts`, `lifecycle.ts`, `session.ts`, `runtime.ts`: the offline identity in
@@ -73,7 +90,23 @@ manual test in `docs/reports/phase-7.md`.
   - `legacyUploads.ts`: migrates the Phase 4 AsyncStorage upload queue into the write queue.
   - `localView.ts`: the cache with queued writes applied on top (a queued create appears with its
     `clientId` as id).
-- **Sync UI**: `SyncProvider` (`useSync()`), `SyncIndicator` in the header, `SyncBanner`,
+- **Light and dark mode (2026-11-16, uncommitted)**: `src/theme/`. `ThemeProvider` (in
+  `App.tsx`) resolves the device preference `system` / `dark` / `light` (`themePreference.ts`,
+  pure and tested; AsyncStorage key `ops.theme`, per phone, not per user, never sent to the API;
+  storage errors swallowed; default System) against `useColorScheme()` (live; unknown = dark)
+  into the shared `darkTheme` or `lightTheme`. `useTheme()` gives
+  `{ colors, scheme, preference, setPreference }`; `makeStyles((colors) => ({...}))` returns a
+  `useStyles()` hook with one cached `StyleSheet` per theme. **No file imports the static
+  `colors` any more.** The navigation theme (`DefaultTheme` / `DarkTheme` with the tokens), the
+  stack and tab headers (`useHeaderOptions()`), the status bar (light icons on dark, dark on
+  light), and the native root background (`expo-system-ui`) follow it. Profile has a Theme card
+  (`components/ThemeChoice.tsx`): System, Dark, Light (the web dashboard's order) with a radio
+  dot. `app.config.ts` has `userInterfaceStyle: 'automatic'` (needs an Expo restart with
+  `--clear`). The logo has rounded corners (a tile on the light theme). Not yet seen on a phone.
+- **Sync UI**: `SyncProvider` (`useSync()`), `SyncIndicator` in the header (since 2026-11-16
+  only when there is something to say: offline, waiting, sending, not accepted, sign in again;
+  nothing when all is sent, nor during a background refresh with nothing to send;
+  `indicatorPresentation` in `logic/sync.ts`), `SyncBanner`,
   `SyncNotices` (dropped links, photo storage), `SyncStateBadge` per log, `SyncSignOutDialog`,
   `SyncScreen` (stack route `Sync`); texts in `en.ts` under `sync` with one reason per API error
   code (`i18n/syncText.ts`); pure logic in `logic/sync.ts`.
@@ -131,8 +164,9 @@ manual test in `docs/reports/phase-7.md`.
   (the API error code list is typed, the phone never exports). The language is picked
   from the phone (`expo-localization`) with English as fallback. RTL: styles use `start` / `end`,
   `applyLayoutDirection()` at start-up, `extra.supportsRTL` in `app.config.ts`.
-- **Push** (`src/push/`): `pushSupport.ts` decides availability (no push in Expo Go on Android,
-  on simulators, or without an EAS project id); `pushService.ts` registers after sign-in and on
+- **Push** (`src/push/`): `notificationsModule.ts` exports `expo-notifications` or null (Android
+  Expo Go, where importing it crashes); `pushSupport.ts` decides availability (no push in Expo Go
+  on Android, on simulators, or without an EAS project id); `pushService.ts` registers after sign-in and on
   every cold start with a live session, again when the app returns to the foreground after 24
   hours, and unregisters (3 s timeout) before sign-out; `usePush.tsx` wires it to the app state
   and to taps, which open the task or log (`logic/notificationRouting.ts` accepts UUIDs only).
@@ -143,14 +177,18 @@ manual test in `docs/reports/phase-7.md`.
   `SyncSignOutDialog` (`useSignOut.ts`).
 - **Development build**: `expo-dev-client` installed; `eas.json` profile `development`
   (development client, internal distribution, Android APK, no iOS simulator build). Never built.
-- **Tests**: 332 unit tests in 28 suites (2026-11-02, re-run by the docs-keeper), including the
+- **Tests**: 351 unit tests in 30 suites (2026-11-16, re-run by the docs-keeper, including the
+  light-mode work; the live updates added `logic/liveUpdates.test.ts`
+  and engine cases), including the
   engine, queue, store, session, smart capture (offline-queued voice note processed on
   reconnect, manual filling while waiting), and a full offline journey
   (`offlineJourney.test.ts`) against fakes for SQLite, files, network, clock, and the API
   (`engineTestKit.ts`, `storeTestKit.ts`).
 
-Verified in the Phase 7 session (2026-11-02): tests re-run by the docs-keeper; lint, typecheck,
-and `npx expo install --check` (up to date) as reported by the coordinator. Earlier (Phase 4):
+Verified on 2026-11-16: the app runs on a real Android phone in Expo Go after the crash fix (as
+reported; what was tried on it is not recorded); `pnpm test` (docs-keeper). Verified in
+the Phase 7 session (2026-11-02): lint, typecheck, and `npx expo install --check` (up to date) as
+reported by the coordinator. Earlier (Phase 4):
 the repositories ran end to end against the real API outside a phone; `expo export`;
 `expo-doctor` 21/21 (not re-run since `expo-audio` was added).
 
@@ -190,7 +228,7 @@ the repositories ran end to end against the real API outside a phone; `expo expo
 | iOS `bundleIdentifier`, Android `package` | `EXPO_IOS_BUNDLE_IDENTIFIER` / `EXPO_ANDROID_PACKAGE`, default `ai.kaneri.operations`                                                                                                                                                                                                                                                         |
 | `extra`                                   | `supportsRTL: true`; `eas.projectId` from `EXPO_PUBLIC_EAS_PROJECT_ID` when set                                                                                                                                                                                                                                                               |
 | Plugins                                   | `expo-splash-screen`, `expo-system-ui`, `expo-secure-store`, `expo-image-picker` (camera and photos texts), `expo-location` (when in use only, no background), `expo-notifications`, `expo-localization`, `expo-sqlite`, `expo-background-task`, `expo-audio` (microphone text, `RECORD_AUDIO`, no background recording or playback; Phase 7) |
-| `userInterfaceStyle`, background          | `dark`, the `background` token                                                                                                                                                                                                                                                                                                                |
+| `userInterfaceStyle`, background          | `automatic`; background the dark `background` token (the app sets the theme's own at start-up)                                                                                                                                                                                                                                                |
 
 Expo Go ignores the config plugins and shows its own icon and splash; they apply to development
 and release builds.
@@ -250,7 +288,8 @@ section 5).
 - Never log a signed URL (its query string is a credential) or a push token.
 - **Never write a client name in a screen.** Read `brand` from `src/config/brand.ts`.
 - **Never write a colour, spacing, radius, or font size literal in a style.** Import the tokens;
-  touch sizes are in `src/components/sizes.ts`.
+  touch sizes are in `src/components/sizes.ts`. Colours only through the theme (`makeStyles` or
+  `useTheme().colors` from `src/theme/`), never the static `colors` export, so light mode works.
 - Read environment variables only in `src/config/env.ts` (and `app.config.ts`), with static dot
   notation. `DEFAULT_BRAND_NAME` exists in both; change both.
 - `@ops/shared` must be built before any Expo command, because `app.config.ts` imports it.
@@ -260,8 +299,8 @@ section 5).
 
 ## Known issues
 
-- **Not run on a phone or in the emulator.** The offline layer and smart capture are covered only
-  by fakes; recording with `expo-audio`, the microphone permission, and the m4a accepted by the
+- **Only a first start on a real phone (2026-11-16); never in the emulator.** The offline layer
+  and smart capture are covered only by fakes; recording with `expo-audio`, the microphone permission, and the m4a accepted by the
   real speech-to-text are unchecked. Accessibility (screen reader, dynamic type), sunlight
   readability, and glove use are unchecked.
 - A Snap photo used for a capture is uploaded again if the worker also attaches it to the log
@@ -270,7 +309,9 @@ section 5).
   extended controls.
 - **Android Expo Go has no remote push** (since SDK 53) and no background task; both need the
   development build, which has never been built. iOS Expo Go can receive push with an EAS
-  project id.
+  project id. Android Expo Go must be the SDK 57 client (57.0.9 sideloaded); the Play Store build
+  is SDK 58.
+- Light mode and the quieter sync indicator have not been seen on a phone yet.
 - The local database and photos are not encrypted beyond the OS sandbox (ADR-0008).
 - The first sign-in needs the server. Logs older than 30 days and photos already on the server
   need a connection.

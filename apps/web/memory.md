@@ -1,20 +1,41 @@
 # apps/web memory
 
-Package `@ops/web`. Last updated: 2026-11-02.
+Package `@ops/web`. Last updated: 2026-11-16.
 
 ## Purpose
 
 The manager dashboard: a web app where supervisors, managers, and admins monitor and manage the
 work that workers log. Built with Next.js (App Router) and React. The architecture is in
 [ADR-0009](../../docs/decisions/0009-web-dashboard-architecture.md); the AI screens follow
-[ADR-0011](../../docs/decisions/0011-daily-summaries-and-anomaly-rules.md).
+[ADR-0011](../../docs/decisions/0011-daily-summaries-and-anomaly-rules.md) and
+[ADR-0012](../../docs/decisions/0012-organization-ai-provider-keys.md) (own AI keys).
 
 ## Current state
 
-Phase 6 committed (`713f592`). Phase 7 (2026-10-30 to 2026-11-02) added the AI screens (below);
-code complete, tested, reviewed, about to be committed. **Not yet used in a browser with data**
-(it needs the owner's `pnpm db:reset`); only a smoke test in Phase 6. The browser steps are in
-the combined manual test in `docs/reports/phase-7.md`.
+Phase 7 committed (`3bfad42`). Uncommitted since 2026-11-16: the "Your AI keys" card and the
+model pickers (ADR-0012), live updates, the light theme, and the product name no longer repeated
+next to the logo (below). **No browser session with data is recorded** (the development database
+was reset by 2026-11-16, so it is now possible); the browser steps are in the combined manual
+test in `docs/reports/phase-7.md`.
+
+- **2026-11-16 additions**:
+  - Settings: `AiKeysSection` (`src/components/settings/ai-keys-section.tsx`, logic in
+    `src/lib/ai-keys.ts`, tested in `ai-keys.test.ts`; texts under `keys` in
+    `src/i18n/en/ai.ts`): per provider (Claude, OpenAI) the source in force, hint, model, an
+    unreadable warning; paste a key, **Check and save** (`PUT /ai/keys/:provider`), **Remove
+    key**; errors mapped to messages (invalid, no access to the model, unreachable, storage
+    unavailable, format, too many checks). Query key `queryKeys.ai.keys`. `AiSettingsSection`
+    gained **Claude model** and **Voice-note model** selects (`settings.ai.llmModel` /
+    `sttModel`, empty = "Server's default").
+  - Theme (`src/lib/theme.ts`, tested in `theme.test.ts`): `src/app/layout.tsx` writes
+    `themeStylesheet()` (dark on `:root`; light under `prefers-color-scheme: light` unless
+    `data-theme="dark"`, and on `data-theme="light"`) and the inline `THEME_INIT_SCRIPT`, which
+    sets `data-theme` on `<html>` before the first paint. The account menu (`user-menu.tsx`)
+    offers Theme: System / Dark / Light; the choice is kept in `localStorage` key `hz.theme`
+    (never sent to the API; "System" removes it). A Phase 8 nonce CSP must allow the inline
+    script.
+  - The brand name is no longer written next to the logo in `AuthShell` and the sidebar (the
+    logo shows it); only the app label is.
 
 - **Phase 7 (AI)**, in `src/components/ai/`, `src/lib/ai.ts`, `src/i18n/en/ai.ts`:
   - Overview: when `aiFeatures.dailySummary` is on, `LatestSummaryPanel` (the caller's latest
@@ -46,7 +67,7 @@ the combined manual test in `docs/reports/phase-7.md`.
   | `/people`               | manager (read only), admin | Invite (activation code shown once), reset code, archive and restore, memberships and scope, sessions and sign-out everywhere, language.                   |
   | `/structure`            | manager, admin             | Sites and teams as trees; log types with the custom-field editor (saved keys locked, a saved key cannot be reused; saving raises the version).             |
   | `/audit`                | admin                      | Audit log with filters, paging, and the redacted diff and offline facts.                                                                                   |
-  | `/settings`             | admin                      | Organization name, time zone, edit window, offline backdating limit (sends every settings key); the AI section (Phase 7); the API status card.             |
+  | `/settings`             | admin                      | Organization name, time zone, edit window, offline backdating limit (sends every settings key); the AI section with models; Your AI keys; API status.      |
   | `/summaries`            | supervisor, manager, admin | Own daily summaries, newest first, with detail (Phase 7).                                                                                                  |
   | `/ai-usage`             | admin                      | AI usage and limits (Phase 7).                                                                                                                             |
 
@@ -56,16 +77,25 @@ the combined manual test in `docs/reports/phase-7.md`.
   "Powered by Kaneri.ai". A worker sees "use the mobile app". Pages render only after the
   organization (and so its time zone) has loaded (`orgTimeGate` in `src/lib/time.ts`).
 - **Session**: `createAuthSessionManager({ mode: 'web' })` from `@ops/shared`; httpOnly cookies
-  the page cannot read, the CSRF token in memory only, `GET /auth/me` on load, one refresh on a 401. Nothing in `localStorage` or `sessionStorage`. The query cache is cleared when nobody is
+  the page cannot read, the CSRF token in memory only, `GET /auth/me` on load, one refresh on a 401. Nothing of the session in `localStorage` or `sessionStorage` (only the theme choice). The query cache is cleared when nobody is
   signed in.
+- **Live updates** (2026-11-16, `src/lib/api/live.ts`): the query client's default
+  `refetchInterval` (`liveRefetchInterval`) refetches the `dashboard`, `workLogs` (not
+  `attachments`: signed URLs), `tasks`, `users`, and `memberships` queries every 15 s while the
+  tab is visible (TanStack pauses it in a hidden tab), doubling up to 5 minutes while a query
+  fails, and stopping after a 4xx other than 429. The overview no longer sets its own 60 s.
+  `AuthProvider` re-checks the user (`refreshUser`) every 30 s while visible and on focus or
+  visibility change (throttled to 15 s). The web has no notification list (notifications are
+  shown on the phone only).
 - **Security headers** (`next.config.ts`): `X-Frame-Options: DENY`, CSP limited to
   `frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'`, `nosniff`,
   referrer and permissions policies, HSTS in production, `poweredByHeader: false`. No
   `default-src`, `script-src`, `style-src`, `img-src`, or `connect-src`: the hosts a Phase 8
   nonce-based policy must allow (tiles, storage, API) are listed in the comment there.
-- **Tests**: 191 unit tests in 12 files (2026-11-02, re-run by the docs-keeper), all in
+- **Tests**: 207 unit tests in 15 files (2026-11-16, re-run by the docs-keeper), all in
   `src/**/*.test.ts` (Vitest, `node` environment): `src/lib/*.test.ts` (Phase 7 added
-  `ai.test.ts`), `src/lib/work-logs/work-logs.test.ts`, and
+  `ai.test.ts`; 2026-11-16 `ai-keys.test.ts`, `theme.test.ts`, and `api/live.test.ts`),
+  `src/lib/work-logs/work-logs.test.ts`, and
   `src/components/manage/screens.render.test.ts` (renders management screens to a string).
 - Not built: photo upload from the browser (deferred to Phase 8: a CORS rule on the bucket);
   catalogues other than English; restoring archived log types (no API route).
@@ -74,13 +104,16 @@ the combined manual test in `docs/reports/phase-7.md`.
 
 | File or folder                                           | What it does                                                                                                                                                                                              |
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/app/layout.tsx`                                     | Root layout: brand metadata, theme tokens on `<html>`, `lang` / `dir` from `LOCALE`, `AuthProvider`, `QueryProvider`.                                                                                     |
+| `src/app/layout.tsx`                                     | Root layout: brand metadata, both themes' tokens in a `<style>` and the theme init script, `lang` / `dir` from `LOCALE`, `AuthProvider`, `QueryProvider`.                                                 |
+| `src/lib/theme.ts`                                       | Theme preference (System / Dark / Light), stylesheet, init script, `applyThemePreference`.                                                                                                                |
 | `src/app/(dashboard)/layout.tsx`                         | Wraps every dashboard page in `AppShell`.                                                                                                                                                                 |
 | `src/components/query-provider.tsx`                      | The TanStack Query client with the defaults of `src/lib/api/query.ts`.                                                                                                                                    |
 | `src/components/auth-provider.tsx`                       | Subscribes to the session manager, `RouteGuard`, `useAuth()`.                                                                                                                                             |
 | `src/components/ui/`                                     | DataTable, Pagination, filters, Loading/Empty/ErrorState, dialogs (`<dialog>`), form controls, StatusBadge, layout.                                                                                       |
 | `src/components/<area>/`                                 | One folder per page area: `overview`, `work-logs`, `tasks`, `map-page`, `report`, `exports`, `people`, `structure`, `audit`, `settings`, `manage` (shared parts of the admin screens), `ai` (Phase 7).    |
-| `src/lib/ai.ts`                                          | AI settings form state and body, summary and anomaly display helpers, `AI_USAGE_PATH` (tested in `ai.test.ts`).                                                                                           |
+| `src/lib/ai.ts`                                          | AI settings form state and body (with the models), summary and anomaly display helpers, `AI_USAGE_PATH` (tested in `ai.test.ts`).                                                                         |
+| `src/lib/ai-keys.ts`                                     | The AI keys card's logic: status text per source, error mapping (tested in `ai-keys.test.ts`).                                                                                                            |
+| `src/lib/api/live.ts`                                    | `liveRefetchInterval` (15 s for live query roots, backoff, stop on 4xx) and `USER_RECHECK_MS` (30 s).                                                                                                     |
 | `src/components/map/`                                    | `map-view.tsx` loads `leaflet-map.tsx` with `next/dynamic` (`ssr: false`).                                                                                                                                |
 | `src/hooks/`                                             | `use-caller` (role, capabilities), `use-organization`, `use-directory`, `use-list-params`, `use-work-logs`, sign-in and sign-out hooks.                                                                   |
 | `src/lib/api/client.ts`, `api/query.ts`, `api/errors.ts` | `authSession` and `apiClient` (null without an API URL); `queryKeys`, `unwrap`, retry rules; error to message mapping.                                                                                    |
@@ -164,9 +197,11 @@ Run from the repo root as `pnpm --filter @ops/web <script>`.
 
 ## Known issues
 
-- Not yet used in a browser with data; loading, empty, and error states, phone widths, and
+- No recorded browser session with data; loading, empty, and error states, phone widths, and
   keyboard use have not been checked by a person. The Phase 7 panels and pages have never shown
-  a real summary.
+  a real summary, and the AI keys card has never checked a real key.
+- The light colours are contrast tested but not yet looked at by a person on every page; the
+  theme choice is per browser, not per user.
 - The Summaries and AI usage entries are shown by role, also while the AI features are off (the
   pages then show no summaries or zero usage).
 - The API status card (`src/components/api-status.tsx`, `hooks/use-api-health.ts`) is shown on

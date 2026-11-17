@@ -75,6 +75,15 @@ export interface AuthSessionManager {
    * one is running share it.
    */
   start(): Promise<void>;
+  /**
+   * Asks the server again who the signed-in user is (`GET /auth/me`), so a role, scope or name
+   * changed by someone else shows without a restart. Does nothing unless signed in, never passes
+   * through `loading`, and changes the state only when the answer differs. With `maxAgeMs` it
+   * also does nothing when the user was confirmed less than that long ago (a throttle for
+   * frequent callers). Calls made while one is running share it. Never rejects: a failure keeps
+   * the known user (an ended session is handled by the transport, as for any request).
+   */
+  refreshUser(options?: { maxAgeMs?: number }): Promise<void>;
   signIn(identifier: string, password: string): Promise<AuthActionResult>;
   /** Ends the session of this device. Always leaves the app signed out. */
   signOut(): Promise<AuthActionResult>;
@@ -185,6 +194,9 @@ export function createAuthSessionManager(options: AuthSessionManagerOptions): Au
   let refreshing: Promise<boolean> | null = null;
   let lastRefresh: RefreshOutcome = 'renewed';
   let starting: Promise<void> | null = null;
+  let refreshingUser: Promise<void> | null = null;
+  /** When the server last confirmed the signed-in user (`Date.now()`), for `refreshUser`. */
+  let userConfirmedAt = 0;
 
   const client = createApiClient({
     baseUrl: options.baseUrl,
@@ -346,6 +358,7 @@ export function createAuthSessionManager(options: AuthSessionManagerOptions): Au
       if (storage === null) {
         csrfToken = result.data.csrfToken;
       }
+      userConfirmedAt = Date.now();
       setState({ status: 'signedIn', user: result.data.user });
       return;
     }
@@ -353,7 +366,37 @@ export function createAuthSessionManager(options: AuthSessionManagerOptions): Au
     setState({ status: 'signedOut', notice: 'unreachable' });
   }
 
-  return {
+  /**
+   * `refreshUser` without the throttle. Unlike `start()` it never bumps `epoch` and never shows
+   * `loading`: bumping `epoch` while the transport renews the session would make `renew()` drop
+   * the rotated pair it has just been given, which signs the user out.
+   */
+  async function runRefreshUser(): Promise<void> {
+    const startedIn = epoch;
+    const result = await client.auth.me();
+    const current = state;
+    if (startedIn !== epoch || current.status !== 'signedIn' || !result.ok) {
+      // Superseded (sign-out, sign-in), or no usable answer: keep what is known. A session that
+      // turned out to be gone was settled by `onAuthLost` on the way.
+      return;
+    }
+    const fresh = result.data.user;
+    if (fresh.id !== current.user.id) {
+      // The session now belongs to someone else (web: another tab signed in with the shared
+      // cookies). Check it from the start, as at launch, rather than swap users in place.
+      void manager.start();
+      return;
+    }
+    if (storage === null && result.data.csrfToken !== null) {
+      csrfToken = result.data.csrfToken;
+    }
+    userConfirmedAt = Date.now();
+    if (JSON.stringify(fresh) !== JSON.stringify(current.user)) {
+      setState({ status: 'signedIn', user: fresh });
+    }
+  }
+
+  const manager: AuthSessionManager = {
     client,
     getState: () => state,
     subscribe(listener) {
@@ -368,6 +411,22 @@ export function createAuthSessionManager(options: AuthSessionManagerOptions): Au
         starting = null;
       });
       return starting;
+    },
+
+    refreshUser(refreshOptions = {}) {
+      if (state.status !== 'signedIn') {
+        return Promise.resolve();
+      }
+      const { maxAgeMs } = refreshOptions;
+      if (maxAgeMs !== undefined && Date.now() - userConfirmedAt < maxAgeMs) {
+        return Promise.resolve();
+      }
+      refreshingUser ??= runRefreshUser()
+        .catch(() => undefined)
+        .finally(() => {
+          refreshingUser = null;
+        });
+      return refreshingUser;
     },
 
     async signIn(identifier, password) {
@@ -400,6 +459,7 @@ export function createAuthSessionManager(options: AuthSessionManagerOptions): Au
         await persist(result.data.tokens);
         tokens = result.data.tokens;
       }
+      userConfirmedAt = Date.now();
       setState({ status: 'signedIn', user: result.data.user });
       return { ok: true };
     },
@@ -451,4 +511,5 @@ export function createAuthSessionManager(options: AuthSessionManagerOptions): Au
       return result.ok ? { ok: true } : { ok: false, failure: setPasswordFailure(result.failure) };
     },
   };
+  return manager;
 }

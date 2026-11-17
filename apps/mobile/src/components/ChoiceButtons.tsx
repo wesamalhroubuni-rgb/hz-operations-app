@@ -1,6 +1,7 @@
-import { colors, fontSizes, fontWeights, radii, spacing } from '@ops/shared';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { fontSizes, fontWeights, radii, spacing } from '@ops/shared';
+import { Pressable, Text, View } from 'react-native';
 
+import { makeStyles } from '../theme';
 import { FieldShell } from './FieldShell';
 import { touch } from './sizes';
 
@@ -33,6 +34,7 @@ export function ChoiceButtons({
   hint?: string | null;
   required?: boolean;
 }>) {
+  const styles = useStyles();
   return (
     <FieldShell label={label} error={error} hint={hint} required={required}>
       <View style={styles.grid} accessibilityRole="radiogroup" accessibilityLabel={label}>
@@ -61,7 +63,7 @@ export function ChoiceButtons({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -99,4 +101,4 @@ const styles = StyleSheet.create({
   textSelected: {
     color: colors.onPrimary,
   },
-});
+}));

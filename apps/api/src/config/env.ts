@@ -274,6 +274,17 @@ export const envSchema = z
      * Off by default: switch it on only after checking it with a real key (ADR-0010).
      */
     AI_ANTHROPIC_REFUSAL_FALLBACK: booleanSetting(false),
+    /**
+     * Encrypts the AI provider keys organizations store themselves (ADR-0012), at least 32 random
+     * characters. Unset: admins cannot save a key (the server's keys or the test AI apply).
+     * Changing it makes stored keys unreadable: admins must paste them again.
+     */
+    AI_KEYS_ENCRYPTION_SECRET: optionalSecret().pipe(
+      z
+        .string()
+        .min(AUTH_SECRET_MIN_LENGTH, `must be at least ${AUTH_SECRET_MIN_LENGTH} characters`)
+        .optional(),
+    ),
   })
   .superRefine((env, ctx) => {
     if (env.AUTH_SESSION_ABSOLUTE_TTL_DAYS < env.AUTH_REFRESH_TOKEN_TTL_DAYS) {
@@ -316,6 +327,12 @@ export const envSchema = z
         path: ['STORAGE_PUBLIC_ENDPOINT'],
         message: 'must be an https:// URL in production',
       });
+    }
+    const keysSecret = env.AI_KEYS_ENCRYPTION_SECRET
+      ? weakSecretReason(env.AI_KEYS_ENCRYPTION_SECRET)
+      : null;
+    if (keysSecret) {
+      ctx.addIssue({ code: 'custom', path: ['AI_KEYS_ENCRYPTION_SECRET'], message: keysSecret });
     }
     const storageSecret = weakSecretReason(env.STORAGE_SECRET_ACCESS_KEY);
     if (storageSecret) {

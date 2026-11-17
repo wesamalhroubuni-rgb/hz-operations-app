@@ -131,6 +131,51 @@ describe('validateEnv', () => {
     );
   });
 
+  // ADR-0012: the secret that encrypts organizations' own AI keys.
+  describe('AI_KEYS_ENCRYPTION_SECRET', () => {
+    it('is optional: unset or empty means no key storage', () => {
+      expect(validateEnv({ ...BASE }).AI_KEYS_ENCRYPTION_SECRET).toBeUndefined();
+      expect(
+        validateEnv({ ...BASE, AI_KEYS_ENCRYPTION_SECRET: '  ' }).AI_KEYS_ENCRYPTION_SECRET,
+      ).toBeUndefined();
+    });
+
+    it('accepts a random secret of at least 32 characters, in production too', () => {
+      const env = validateEnv({
+        ...BASE,
+        NODE_ENV: 'production',
+        AI_KEYS_ENCRYPTION_SECRET: STRONG_SECRET,
+      });
+      expect(env.AI_KEYS_ENCRYPTION_SECRET).toBe(STRONG_SECRET);
+    });
+
+    it.each([['development'], ['production']])('refuses a short secret (%s)', (nodeEnv) => {
+      expect(
+        messageOf({ ...BASE, NODE_ENV: nodeEnv, AI_KEYS_ENCRYPTION_SECRET: 'too-short' }),
+      ).toContain('- AI_KEYS_ENCRYPTION_SECRET: must be at least 32 characters');
+    });
+
+    it('refuses a placeholder or repetitive secret in production only', () => {
+      for (const secret of [PLACEHOLDER_SECRET, 'a'.repeat(40)]) {
+        const raw = { ...BASE, AI_KEYS_ENCRYPTION_SECRET: secret };
+        expect(messageOf({ ...raw, NODE_ENV: 'production' })).toContain(
+          '- AI_KEYS_ENCRYPTION_SECRET:',
+        );
+        expect(messageOf({ ...raw, NODE_ENV: 'development' })).toBe('');
+      }
+    });
+
+    it('never echoes the value in an error', () => {
+      expect(
+        messageOf({
+          ...BASE,
+          NODE_ENV: 'production',
+          AI_KEYS_ENCRYPTION_SECRET: PLACEHOLDER_SECRET,
+        }),
+      ).not.toContain(PLACEHOLDER_SECRET);
+    });
+  });
+
   describe('the file storage settings', () => {
     it('requires an https STORAGE_PUBLIC_ENDPOINT in production, and allows http in development', () => {
       const http = { ...BASE, STORAGE_PUBLIC_ENDPOINT: 'http://192.168.1.20:9000' };

@@ -1,6 +1,6 @@
-import { colors, spacing } from '@ops/shared';
+import { spacing } from '@ops/shared';
 import { useMemo } from 'react';
-import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
+import { FlatList, RefreshControl, View } from 'react-native';
 
 import { Button } from '../components/Button';
 import { LogRow } from '../components/rows';
@@ -10,14 +10,19 @@ import { SyncBanner } from '../components/SyncBanner';
 import { useSync } from '../components/SyncProvider';
 import { readErrorKind, useMyLogs } from '../data/queries';
 import { useLookups } from '../hooks/useLookups';
+import { useServerRefresh } from '../hooks/useServerRefresh';
 import { usePendingPhotoCounts } from '../hooks/useUploads';
 import { t } from '../i18n';
 import { logSyncState } from '../logic/sync';
 import type { TabScreenProps } from '../navigation/types';
+import { makeStyles, useTheme } from '../theme';
 
 /** My logs, newest first, with their review status. */
 export function LogsScreen({ navigation }: Readonly<TabScreenProps<'Logs'>>) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   const logs = useMyLogs();
+  const server = useServerRefresh();
   const lookups = useLookups();
   const pendingPhotos = usePendingPhotoCounts();
   const { logStates } = useSync();
@@ -68,8 +73,8 @@ export function LogsScreen({ navigation }: Readonly<TabScreenProps<'Logs'>>) {
           }}
           refreshControl={
             <RefreshControl
-              refreshing={logs.isRefetching && !logs.isFetchingNextPage}
-              onRefresh={() => void logs.refetch()}
+              refreshing={server.refreshing}
+              onRefresh={server.refresh}
               tintColor={colors.primary}
               colors={[colors.primary]}
               progressBackgroundColor={colors.surface}
@@ -81,7 +86,7 @@ export function LogsScreen({ navigation }: Readonly<TabScreenProps<'Logs'>>) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -90,4 +95,4 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.lg,
   },
-});
+}));

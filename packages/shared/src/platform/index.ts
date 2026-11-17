@@ -1,6 +1,7 @@
 // Schemas of the reusable platform components (audit events, outbox events, authentication,
 // notifications, offline sync).
 export * from './ai.js';
+export * from './ai-keys.js';
 export * from './audit.js';
 export * from './auth.js';
 export * from './notifications.js';

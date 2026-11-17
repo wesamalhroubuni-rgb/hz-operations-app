@@ -332,6 +332,13 @@ export const en = {
     organization: 'Organization',
     signedInAs: AUTH_TEXT.signedInAs,
     version: 'App version {{version}}',
+    theme: {
+      title: 'Theme',
+      system: 'System',
+      dark: 'Dark',
+      light: 'Light',
+      systemHint: 'Follows the light or dark setting of the phone.',
+    },
     push: {
       title: 'Push notifications',
       on: 'On for this phone.',
@@ -490,6 +497,8 @@ export const en = {
       // Phase 7 (ADR-0010): smart capture.
       ai_disabled: 'Smart capture is switched off for your organization. Fill in the log by hand.',
       ai_limit_reached: 'Smart capture has reached its limit for today. Fill in the log by hand.',
+      ai_key_invalid: 'The AI provider refused the key.',
+      ai_key_storage_unavailable: 'AI keys cannot be saved on this server.',
       ai_unavailable: 'Smart capture is not available right now. It is tried again automatically.',
       network: 'No connection. It is sent when you have signal.',
       timeout: 'The server took too long to answer. It is tried again automatically.',

@@ -1,6 +1,6 @@
 # apps/api memory
 
-Package `@ops/api`. Last updated: 2026-11-02 (Phase 7).
+Package `@ops/api`. Last updated: 2026-11-16 (ADR-0012, organization AI keys).
 
 ## Purpose
 
@@ -9,10 +9,65 @@ permission rules, photo storage, notifications, the audit trail, the event outbo
 layer. Both clients (web and mobile) talk only to this API (and to object storage through URLs it
 signs); only the API talks to the AI providers.
 
+## Organization AI keys and models (2026-11-16, ADR-0012, uncommitted)
+
+An admin stores the organization's own Claude / OpenAI key and chooses the models; tested with
+network-free provider factories only (**no real key tried yet**). Migration
+`20261116090000_ai_provider_keys`: table `AiProviderKey` (unique per organization and provider;
+`ciphertext`, `iv`, `authTag`, `keyVersion`, `hint`, `updatedById`; FK to `Organization`
+`ON DELETE RESTRICT`) and enum `AiKeyProvider` (`anthropic`, `openai`). 2 paths, 3 routes.
+
+- **Platform**: `src/platform/crypto/` (`SecretBox`: AES-256-GCM, random 12-byte nonce, key =
+  SHA-256 of label and secret, associated data; never logs). In `src/platform/ai/`:
+  `provider-selector.ts` (`AiProviderSelector.forOrganization`: the organization's key with its
+  chosen model, else the server's real key with the chosen model, else the boot providers; under
+  `AI_PROVIDER=fake` organization keys and models are ignored; providers cached per organization,
+  model, and key fingerprint), `ai-key-checker.ts` (`AiKeyChecker`: reads the model's metadata,
+  costs nothing, bounded by `AI_REQUEST_TIMEOUT_MS`; HTTP 400/401/403/404/422 = `rejected`, else
+  `unavailable`; not traced), `AI_REAL_PROVIDER_FACTORIES` (build providers and check keys;
+  `checkAnthropicKey`, `checkOpenAiKey`), `AI_ORGANIZATION_KEYS` (the host's
+  `AiOrganizationKeysResolver`). `AiRunnerService` takes its providers from the selector per call;
+  `AiRunner.providers(organizationId)` is now async (used by `AiUsageReportService`).
+  `AiModule.register` takes `organizationKeys` and `imports`.
+- **Operations `src/operations/ai/keys/`**: `ai-key-vault.ts` (`AiKeyVault`: seal and open with
+  `AI_KEYS_ENCRYPTION_SECRET`, label `hz.ai-provider-key.v1`, associated data
+  `<organizationId>:<provider>`; an unreadable key is logged once per process with ids only),
+  `organization-ai-keys.ts` (`OrganizationAiKeys`: decrypted keys plus `settings.ai.llmModel` /
+  `sttModel`; archived organization = nothing of its own), `ai-keys.service.ts` (status, set,
+  remove through `ChangeRecorder`, entity `ai_provider_key`, payload `{ provider, stored }`),
+  `ai-keys.controller.ts` (`GET /ai/keys`, `PUT /ai/keys/:provider`, `DELETE /ai/keys/:provider`),
+  `ai-keys.module.ts` (`AiKeysModule`, `AiKeyVaultModule`).
+- **Rules**: policy `ai_key.manage` (admins). `PUT` checks the key for the organization's model:
+  422 `ai_key_invalid` (detail path `model` for a provider 404, else `apiKey`), 503
+  `ai_unavailable`, 503 `ai_key_storage_unavailable` without the secret, 429 after 5 checks per
+  admin per minute (`AI_KEY_CHECK_RATE_LIMIT`, `RATE_LIMITER`). A concurrent first save (P2002)
+  retries as an update. `DELETE` of a missing key is a no-op 200. The status carries `source`,
+  `hint`, `updatedAt`, `unreadable`, `model`, never the key.
+- **Elsewhere**: `config/env.ts` `AI_KEYS_ENCRYPTION_SECRET` (optional, at least 32 characters,
+  production refuses a weak one); `ai-prices.ts` row `claude-fable-5-2` ($8 / $40);
+  `prisma-enums.spec.ts` checks `AiKeyProvider`; the harness binds network-free
+  `AI_REAL_PROVIDER_FACTORIES` (`test/support/test-app.ts`); new suite `test/ai-keys.int-spec.ts`
+  and a matrix row; unit specs `ai-key-checker.spec.ts`, `crypto/secret-box.spec.ts`.
+
+## Resolved notifications (2026-11-16, uncommitted)
+
+Migration `20261116120000_notification_resolved_at` adds `Notification.resolvedAt`.
+`NotificationService.resolve(organizationId, ids, at)` (platform, knows no types, idempotent)
+sets it; `src/operations/notifications/notification-resolution.service.ts` registers outbox
+handlers (`task.status_changed`, `task.assignees_changed`, `task.archived`,
+`work_log.status_changed`, `work_log.archived`, `daily_summary.created`) that re-read the
+current state: `task.assigned` resolved when the task is done, cancelled, archived, or gone or the
+recipient is no longer an assignee; `work_log.rejected` when the log is no longer rejected or is
+archived; older `ai.daily_summary` when a summary of a later day arrives. `GET /notifications`,
+the unread count, mark-read (`notification-inbox.service.ts`), and `GET /sync/pull`
+(`sync.service.ts`) exclude resolved rows; rows stay as history. New suite
+`test/notification-resolution.int-spec.ts`; the expectations in `notifications.int-spec.ts` and
+`ai-off.int-spec.ts` were updated to this behaviour (a `task.assigned` is gone once the task is
+done). Applied to the development database with `pnpm --filter @ops/api db:deploy` (2026-11-16).
+
 ## Phase 7 additions (2026-10-30 to 2026-11-02, ADR-0010, ADR-0011)
 
-Code complete, tested with the fake providers, and reviewed; about to be committed. **No real
-provider has been called.** Migration `20261030090000_phase7_ai`: tables `SmartCapture`,
+Committed in `3bfad42` (2026-11-02). **No real provider has been called.** Migration `20261030090000_phase7_ai`: tables `SmartCapture`,
 `DailySummary`, `AnomalyFlag` (operations) and `AiTrace` (platform), seven enums,
 `WorkLogSource.ai` renamed in place to `ai_assisted`, FK `SmartCapture.workLogId` to `WorkLog`
 (`ON DELETE RESTRICT`, unique). 10 new paths (11 routes), five policies.
@@ -105,12 +160,12 @@ profile maps `locale`, the organization summary maps `timeZone` (`settings.timeZ
 
 ## Current state
 
-Phase 6 committed (`713f592`); Phase 7 as above.
+Phase 7 committed (`3bfad42`), the seed fix in `5038c71` (2026-11-16); ADR-0012 uncommitted.
 
-- **78 paths**: the Phase 2 resources, nine `/auth/*` routes, the two user code routes, from
+- **80 paths**: the Phase 2 resources, nine `/auth/*` routes, the two user code routes, from
   Phase 4 `POST /attachments/:id/complete`, `POST /attachments/:id/upload-url`, and five
-  `/notifications` paths, from Phase 5 `GET /sync/pull`, the 11 Phase 6 paths, and the 10
-  Phase 7 `/ai/*` paths. The full list with the policy of each route, the HTTP conventions, and
+  `/notifications` paths, from Phase 5 `GET /sync/pull`, the 11 Phase 6 paths, the 10
+  Phase 7 `/ai/*` paths, and `/ai/keys`, `/ai/keys/{provider}` (ADR-0012). The full list with the policy of each route, the HTTP conventions, and
   the permissions matrix are in [ARCHITECTURE.md](../../ARCHITECTURE.md).
 - **Offline sync** (ADR-0008): `Task.version` and `WorkLog.version` raised by every change;
   `expectedVersion` on log edits and status changes and task status changes (409
@@ -145,24 +200,25 @@ Phase 6 committed (`713f592`); Phase 7 as above.
   definition per resource; role-shaped responses (users `basic` / `contact` / `full`,
   organization `summary` / `full`).
 - **Data model**: 14 business models plus the Phase 7 `SmartCapture`, `DailySummary`,
-  `AnomalyFlag`; four auth tables, three notification platform tables (`Notification`,
-  `PushToken`, `OutboxConsumerCursor`), `IdempotencyRecord`, `AiTrace`; seven migrations; UUIDv7
-  ids.
+  `AnomalyFlag` and the ADR-0012 `AiProviderKey`; four auth tables, three notification platform
+  tables (`Notification`, `PushToken`, `OutboxConsumerCursor`), `IdempotencyRecord`, `AiTrace`;
+  nine migrations (since 2026-11-16 `Notification.resolvedAt`); UUIDv7 ids.
 - **Every write** is one transaction: business row, audit event, outbox event, through
   `ChangeRecorder`. Auth security events and push token changes go to the audit log only;
   notification rows are not audited.
 - **Swagger** at `/docs`, `/docs-json`, `/docs-yaml`, in development only, with a bearer scheme.
-- **Tests**: 706 unit tests in 35 suites; 1,687 integration tests in 27 suites.
+- **Tests**: 734 unit tests in 37 suites (2026-11-16); integration 1,719 tests in 29 suites,
+  all passing (2026-11-16).
 
-Verified in the Phase 7 session (2026-11-02): unit tests re-run by the docs-keeper; integration
-tests (1,681 in 26 suites plus 6 in `storage-minio`), lint, typecheck, format check, and build
-(prompt files present in `dist/operations/ai/prompts/`) as reported by the coordinator. **Not
-applied**: the Phase 5, 6, and 7 migrations on the development database, which holds a stray
-`20261018090000_phase5_offline_sync` from lost work; the owner must run `pnpm db:reset`. Earlier
-(Phase 4): storage against the real MinIO, a live in-app notification, push token removal on
-sign-out. **Not verified**: any real AI provider (Claude's acceptance of `output_config`, the
-refusal fallback beta, OpenAI with the phone's m4a), real Expo push delivery, any storage
-provider other than MinIO.
+Verified on 2026-11-16: `pnpm test` (docs-keeper); `pnpm test:integration` all 1,719 pass and
+`format:check` passes (as reported by the coordinator); the development database
+`operations_app` was reset (the stray Phase 5 migration is gone) and has all nine migrations.
+Verified in the Phase 7 session (2026-11-02): integration tests, lint, typecheck, format check, and build (prompt files present in
+`dist/operations/ai/prompts/`) as reported by the coordinator. Earlier (Phase 4): storage against
+the real MinIO, a live in-app notification, push token removal on sign-out. **Not verified**: any
+real AI provider (an organization key check against Anthropic or OpenAI, Claude's acceptance of
+`output_config`, the refusal fallback beta, OpenAI with the phone's m4a), real Expo push
+delivery, any storage provider other than MinIO.
 
 ## Layout
 
@@ -206,7 +262,9 @@ src/
     docs/                 Swagger setup (bearer and cookie schemes)
     ai/                   Phase 7: provider interfaces, registry, Anthropic and OpenAI adapters,
                           fakes, AiRunnerService, AiTraceService, AiUsageLimiter, prices, prompt
-                          loader, untrustedDataBlock, AiModule (registered by the host)
+                          loader, untrustedDataBlock, AiModule (registered by the host);
+                          ADR-0012: AiProviderSelector, AiKeyChecker
+    crypto/               SecretBox (AES-256-GCM secrets at rest, ADR-0012)
   operations/             the Operations domain
     operations.module.ts
     access/               policies.ts (registry), access.service.ts, access-context.ts,
@@ -222,7 +280,8 @@ src/
     reports/              GET /reports/work-logs
     history/              record histories for GET /work-logs/:id/history, /tasks/:id/history
     ai/                   Phase 7: OperationsAiModule, GET /ai/usage, capture/, summaries/,
-                          anomalies/, prompts/*.v<N>.md
+                          anomalies/, prompts/*.v<N>.md; keys/ (ADR-0012: vault, resolver,
+                          service, /ai/keys controller)
     organization/ users/ memberships/ sites/ teams/ log-types/ tasks/ work-logs/ attachments/
                           each: *.controller.ts, *.service.ts, *.module.ts
     memberships/admin-guard.ts   last-admin check under an advisory lock
@@ -240,7 +299,8 @@ prisma/
   migrations/             20261013112952_init, 20261013150000_attachment_storage_key_per_org,
                           20261014090000_auth, 20261017090000_phase4_mobile,
                           20261027090000_phase5_offline_sync, 20261028090000_phase6_dashboard,
-                          20261030090000_phase7_ai
+                          20261030090000_phase7_ai, 20261116090000_ai_provider_keys,
+                          20261116120000_notification_resolved_at
   seed.ts                 entry point of the seed
 scripts/
   copy-prompts.mjs        copies the prompt files into the seed build
@@ -256,7 +316,7 @@ test/
 
 | File                                                       | What it does                                                                                                                                                                                  |
 | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/config/env.ts`                                        | Environment schema. Production refuses placeholder or repetitive auth and storage secrets and a non-https `WEB_APP_URL` or `STORAGE_PUBLIC_ENDPOINT`.                                         |
+| `src/config/env.ts`                                        | Environment schema. Production refuses placeholder or repetitive auth, storage, and AI-key encryption secrets and a non-https `WEB_APP_URL` or `STORAGE_PUBLIC_ENDPOINT`.                     |
 | `src/platform/storage/s3-file-storage.ts`                  | `FileStorage` on S3: internal and signer clients, bucket check or creation at start-up, signed PUT (type and length) and GET, stat, ranged read, put.                                         |
 | `src/platform/storage/images.ts`                           | `verifyImage` (magic bytes, full decode, 24 MP cap, re-encode, 320 px thumbnail) and `ImageProcessor` (2 decodes at once, 30 s wait).                                                         |
 | `src/operations/attachments/attachments.service.ts`        | `startUpload`, `renewUpload`, `complete`, `archive`, `present` (signed URLs); key helpers `attachmentStorageKey`, `verifiedKeyOf`, `thumbnailKeyOf`.                                          |
@@ -297,6 +357,10 @@ test/
 | `src/operations/ai/capture/capture-confirmation.ts`        | Confirming a capture inside `POST /work-logs`: checks, `confirmed` with `workLogId`, `aiMetadata`, decision on the traces.                                                                    |
 | `src/operations/ai/summaries/summaries.service.ts`         | Recipients, facts under `runAsUser`, narrative or template, one `DailySummary` per recipient and day; `generateNow` for the admin route.                                                      |
 | `src/operations/ai/anomalies/anomaly-rules.ts`             | The four anomaly rules (pure), thresholds from `ANOMALY_THRESHOLDS` in `@ops/shared`.                                                                                                         |
+| `src/platform/ai/provider-selector.ts`                     | `AiProviderSelector`: each AI call's providers and models per organization (own key, chosen model, server key, fakes). ADR-0012.                                                              |
+| `src/platform/ai/ai-key-checker.ts`                        | `AiKeyChecker`: checks a pasted key by reading the model's metadata (free); `rejected` vs `unavailable`.                                                                                      |
+| `src/platform/crypto/secret-box.ts`                        | `SecretBox`: AES-256-GCM seal and open with associated data.                                                                                                                                  |
+| `src/operations/ai/keys/ai-keys.service.ts`                | `GET` / `PUT` / `DELETE /ai/keys`: status, check-then-store (rate limited), remove; audited without the key.                                                                                  |
 
 ## Environment variables
 
@@ -339,6 +403,7 @@ Values come from the root `.env`, except `NODE_ENV`, which the scripts set.
 | `AI_DAILY_COST_LIMIT_USD_PER_ORG`                               | Optional decimal, 0 to 100000, default 10.                                                     |
 | `AI_RATE_LIMIT_PER_USER_PER_MINUTE`                             | Optional, 1 to 600, default 6.                                                                 |
 | `AI_SUMMARY_SCHEDULER_ENABLED`, `AI_SUMMARY_POLL_INTERVAL_MS`   | Optional, defaults `true` and 60000 (5000 to 3600000).                                         |
+| `AI_KEYS_ENCRYPTION_SECRET`                                     | Optional, at least 32 characters; production refuses a weak one. Unset: keys cannot be saved.  |
 | `DATABASE_URL_TEST`                                             | Read only by the integration tests. Database name must end in `_test`.                         |
 
 If any is wrong, the process prints one line per variable and exits with code 1, never printing
@@ -363,7 +428,7 @@ needed.
 | `db:migrate`       | `prisma migrate dev` with the root `.env`                                                                                                                                  |
 | `db:deploy`        | `prisma migrate deploy` with the root `.env`                                                                                                                               |
 | `db:seed`          | `prisma generate`, compile `src` into `node_modules/.cache/ops-seed`, copy the prompt files there (`scripts/copy-prompts.mjs`), then `tsx prisma/seed.ts` in `development` |
-| `db:reset`         | `prisma migrate reset --force`, then `db:seed`. **Owner only, never an agent** (last run by the owner before 2026-10-17).                                                  |
+| `db:reset`         | `prisma migrate reset --force`, then `db:seed`. **Owner only, never an agent** (last run by 2026-11-16).                                                                   |
 | `db:studio`        | `prisma studio` with the root `.env`                                                                                                                                       |
 | `postinstall`      | `prisma generate`                                                                                                                                                          |
 
@@ -379,27 +444,29 @@ needed.
   set and users get activation codes instead. The seed prints names, roles, and identifiers, and
   where the passwords are defined; never a password.
 - The structure is created under `AccessService.runAsSystem`; tasks and work logs are created as
-  the demo users (creator, author), so they pass the same rules as a request. Work log `createdAt`
-  is back-dated with a direct update (seed only) so older logs are outside the edit window and
-  today's inside it; some logs are approved or rejected by the manager (rejections with a note),
+  the demo users (creator, author), so they pass the same rules as a request. Logs older than the
+  7-day backdate limit (ADR-0008) are created at the oldest accepted moment
+  (`acceptedOccurredAt`), then their real `occurredAt` and a back-dated `createdAt` are written
+  with a direct update (seed only; fixed in `5038c71`, before which `db:reset` failed in the
+  seed), so older logs are outside the edit window and today's inside it; some logs are approved or rejected by the manager (rejections with a note),
   and the blocked task has a reason. The seed creates no attachments and no notifications.
 - Idempotent on the slug: if the organization exists, nothing is written.
 - The seed compiles the API with `tsc` into `node_modules/.cache/ops-seed` (decorator metadata;
   `dist/` belongs to a running dev server).
-- The development database holds the Phase 3 seed with the Phase 4 migration applied, plus a
-  stray Phase 5 migration from lost work, and lacks the Phase 5, 6, and 7 migrations; it needs
-  the owner's `pnpm db:reset` (2026-11-02). The organization's settings get `timeZone`
+- The development database was reset by 2026-11-16 and holds this seed and all nine
+  migrations. The organization's settings get `timeZone`
   `Europe/Istanbul` (and a free `locale: 'en'` key); users keep the default `locale` `en`. The
   seed writes no `settings.ai`, so every AI feature starts off, and creates no captures,
   summaries, flags, or traces.
 
 ## Tests
 
-- **Unit** (`pnpm --filter @ops/api test`): `src/**/*.spec.ts`, 35 suites, 706 tests (2026-11-02;
+- **Unit** (`pnpm --filter @ops/api test`): `src/**/*.spec.ts`, 37 suites, 734 tests (2026-11-16;
   Phase 6 added `operations/dashboard/phase6.spec.ts`; Phase 7 added `platform/ai/ai-runner`,
   `providers`, `prompt-loader`, `operations/ai/capture/capture`, `anomalies/anomaly-rules`,
   `summaries/summary-facts`, `summary-schedule`, `summary-scheduler`,
-  `access/rules/anomaly.rules`, and `prisma-enums` specs).
+  `access/rules/anomaly.rules`, and `prisma-enums` specs; ADR-0012 added
+  `platform/ai/ai-key-checker` and `platform/crypto/secret-box`).
   No database, no `.env`. Covers the environment schema, health, `ZodPipe`, the platform modules,
   auth (tokens, cookies, CSRF, codes, policy, identifiers, rate limiter), `AuthAdminService`, scope
   resolution, the access rules (including `attachment.rules.spec.ts` and the Phase 5
@@ -407,12 +474,14 @@ needed.
   (`storage.spec.ts`), notifications and Expo push, the outbox consumer, the notification rules,
   and `route-policies.spec.ts`. Running it at the same time as other packages' test runners once
   failed four suites to load on 2026-10-17; a rerun alone passed.
-- **Integration** (`pnpm test:integration`): `test/*.int-spec.ts`, 27 suites, 1,687 tests (as
-  reported 2026-11-02: 1,681 in 26 suites plus 6 in `storage-minio`), a few minutes. Phase 7
+- **Integration** (`pnpm test:integration`): `test/*.int-spec.ts`, 29 suites, 1,719 tests
+  (2026-11-16, all passing), about 5 minutes. Phase 7
   suites: `ai-platform` (traces, limits, decisions), `smart-capture`, `smart-capture-safety`
   (another worker's capture, prompt injection, hostile model output), `ai-summaries`,
-  `ai-summaries-scope` (two supervisors, scope changes, flags), `ai-off` (core with AI off). The
-  harness's fake configuration holds no AI key, so the AI runs on the fakes. Suites: `harness`, `auth-and-errors`, `auth-login`,
+  `ai-summaries-scope` (two supervisors, scope changes, flags), `ai-off` (core with AI off), and
+  since 2026-11-16 `ai-keys` (ADR-0012) and `notification-resolution`. The harness's fake
+  configuration holds no AI key and binds network-free `AI_REAL_PROVIDER_FACTORIES`, so the AI
+  never reaches a provider. Suites: `harness`, `auth-and-errors`, `auth-login`,
   `auth-sessions`, `secrets`, `org-structure`, `log-types`, `tasks`, `work-logs`,
   `audit-outbox-transaction`, `audit-outbox-read`, `tenant-isolation`, `permissions-matrix` (every
   cell, fixture in `support/matrix-world.ts`), `permissions-cases`, and from Phase 4 `uploads`,
@@ -470,7 +539,10 @@ needed.
   re-check current state. Push text stays generic.
 - AI calls go only through `AI_RUNNER`; prompts are versioned files (never edit a used one, add
   `v<N+1>`); untrusted text only inside `untrustedDataBlock`; summary numbers come from code;
-  capture and summary audit payloads carry ids and counts only. A new model needs a price row.
+  capture and summary audit payloads carry ids and counts only. A new model needs a price row
+  (and, to be selectable, an entry in `AI_LLM_MODEL_CHOICES` / `AI_STT_MODEL_CHOICES`).
+- Provider keys of organizations exist in plain text only inside `AiProviderSelector` and the
+  key check; never in an answer, a log, `settings`, or an audit or outbox payload (ADR-0012).
 
 ## Known issues
 
@@ -484,6 +556,9 @@ needed.
   the prompts exist in English only (Turkish and Arabic fall back per key). Flags are computed
   once a day at summary time. The scheduler, the capture retention job, and the trace purge run
   in every API process (each claims its rows; the unique keys decide).
+- **AI keys (ADR-0012)**: never checked against a real provider. The 5-per-minute key-check limit
+  is in memory. A model changed in Settings after a key was saved is not re-checked (calls then
+  end `rejected`). Changing `AI_KEYS_ENCRYPTION_SECRET` makes stored keys unreadable; no rotation.
 - **Lockout can be used to keep a known account locked** (accepted, ADR-0004).
 - **Orphan upload bytes** after a PUT to a still-valid upload URL of a completed attachment; never
   served, never removed (ADR-0006). The purge covers attachments archived while pending, for

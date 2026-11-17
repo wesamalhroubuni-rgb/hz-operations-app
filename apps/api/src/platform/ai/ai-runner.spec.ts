@@ -7,7 +7,12 @@ import { AiRunnerService } from './ai-runner.service';
 import type { AiSettings } from './ai-settings';
 import type { AiTraceInput, AiTraceService } from './ai-trace.service';
 import { utcDayKey } from './ai-trace.service';
-import type { AiCall, AiOrganizationLimits, AiUsageRow } from './ai-types';
+import type {
+  AiCall,
+  AiOrganizationKeysResolver,
+  AiOrganizationLimits,
+  AiUsageRow,
+} from './ai-types';
 import { FakeLlmProvider } from './fake-llm-provider';
 import { FakeSpeechToTextProvider } from './fake-speech-to-text-provider';
 import {
@@ -18,6 +23,8 @@ import {
 } from './llm-provider';
 import { untrustedDataBlock } from './prompt-data';
 import { FilePromptLoader } from './prompt-loader';
+import { REAL_PROVIDERS, type RealProviderFactories } from './provider-registry';
+import { AiProviderSelector } from './provider-selector';
 import type { SpeechToTextProvider } from './speech-to-text-provider';
 import { AiUsageLimiter } from './usage-limiter';
 
@@ -119,7 +126,12 @@ describe('AiRunnerService', () => {
 
   function runner(
     llm: LlmProvider | null,
-    options: { settings?: Partial<AiSettings>; speech?: SpeechToTextProvider | null } = {},
+    options: {
+      settings?: Partial<AiSettings>;
+      speech?: SpeechToTextProvider | null;
+      factories?: RealProviderFactories;
+      keys?: AiOrganizationKeysResolver | null;
+    } = {},
   ) {
     const resolved = settings(options.settings);
     const limiter = new AiUsageLimiter(
@@ -127,10 +139,16 @@ describe('AiRunnerService', () => {
       { limitsFor: () => Promise.resolve(orgLimits) },
       traces,
     );
-    return new AiRunnerService(
+    const selector = new AiProviderSelector(
       resolved,
       llm,
       options.speech === undefined ? new FakeSpeechToTextProvider() : options.speech,
+      options.factories ?? REAL_PROVIDERS,
+      options.keys ?? null,
+    );
+    return new AiRunnerService(
+      resolved,
+      selector,
       new FilePromptLoader([promptDir]),
       { now: () => now },
       traces as unknown as AiTraceService,
@@ -504,9 +522,106 @@ describe('AiRunnerService', () => {
     });
   });
 
+  // ADR-0012: an organization's own key wins over the server's providers.
+  describe("an organization's own keys", () => {
+    const ORG_KEY = 'sk-ant-org-own-key-never-logged-0001';
+    const orgKeys = (anthropicApiKey: string | null): AiOrganizationKeysResolver => ({
+      keysFor: (organizationId) =>
+        Promise.resolve({
+          anthropicApiKey: organizationId === ORG ? anthropicApiKey : null,
+          openAiApiKey: null,
+        }),
+    });
+    function factories(built: string[]): RealProviderFactories {
+      return {
+        ...REAL_PROVIDERS,
+        llm: (apiKey, model) => {
+          built.push(apiKey);
+          const provider = new FakeLlmProvider();
+          return {
+            info: { name: 'anthropic', model, fake: false },
+            generate: (request, signal) => provider.generate(request, signal),
+            estimateCostUsd: (usage, m) => provider.estimateCostUsd(usage, m),
+          };
+        },
+      };
+    }
+    const text = { system: 's', messages: [], maxOutputTokens: 10 };
+
+    it("uses the organization's key in auto mode, building its provider once per key", async () => {
+      const built: string[] = [];
+      let key: string | null = ORG_KEY;
+      const run = runner(new FakeLlmProvider(), {
+        settings: { mode: 'auto' },
+        factories: factories(built),
+        keys: { keysFor: () => Promise.resolve({ anthropicApiKey: key, openAiApiKey: null }) },
+      });
+      expect(await run.providers(ORG)).toMatchObject({ llm: { name: 'anthropic', fake: false } });
+      expect((await run.generateText(call(), text)).ok).toBe(true);
+      expect((await run.generateText(call(), text)).ok).toBe(true);
+      expect(built).toEqual([ORG_KEY]);
+      expect(traces.rows.every((row) => row.provider === 'anthropic')).toBe(true);
+      // A replaced key builds a new provider; a removed one falls back to the server's.
+      key = `${ORG_KEY}-new`;
+      await run.generateText(call(), text);
+      expect(built).toEqual([ORG_KEY, `${ORG_KEY}-new`]);
+      key = null;
+      expect(await run.providers(ORG)).toMatchObject({ llm: { name: 'fake', fake: true } });
+    });
+
+    it("uses the server's key with the organization's chosen model, and only when one is chosen", async () => {
+      const built: string[] = [];
+      const serverLlm: LlmProvider = {
+        ...new FakeLlmProvider(),
+        info: { name: 'anthropic', model: 'claude-opus-5-5', fake: false },
+        generate: (request, signal) => new FakeLlmProvider().generate(request, signal),
+        estimateCostUsd: () => 0,
+      };
+      let llmModel: string | null = null;
+      const run = runner(serverLlm, {
+        settings: { mode: 'auto' },
+        factories: factories(built),
+        keys: {
+          keysFor: () => Promise.resolve({ anthropicApiKey: null, openAiApiKey: null, llmModel }),
+        },
+      });
+      expect(await run.providers(ORG)).toMatchObject({ llm: { model: 'claude-opus-5-5' } });
+      expect(built).toEqual([]);
+      llmModel = 'claude-haiku-5-5';
+      expect(await run.providers(ORG)).toMatchObject({ llm: { model: 'claude-haiku-5-5' } });
+      expect(built).toEqual([SECRET_KEY]);
+    });
+
+    it('keeps the server providers for another organization and under AI_PROVIDER=fake', async () => {
+      const built: string[] = [];
+      const auto = runner(new FakeLlmProvider(), {
+        settings: { mode: 'auto' },
+        factories: factories(built),
+        keys: orgKeys(ORG_KEY),
+      });
+      expect(await auto.providers('another-org')).toMatchObject({ llm: { fake: true } });
+      const fake = runner(new FakeLlmProvider(), {
+        settings: { mode: 'fake' },
+        factories: factories(built),
+        keys: orgKeys(ORG_KEY),
+      });
+      expect(await fake.providers(ORG)).toMatchObject({ llm: { fake: true } });
+      expect(built).toEqual([]);
+    });
+
+    it('falls back to the server providers when the key resolver throws, logging no key', async () => {
+      const run = runner(new FakeLlmProvider(), {
+        settings: { mode: 'auto' },
+        keys: { keysFor: () => Promise.reject(new Error(`boom ${ORG_KEY}`)) },
+      });
+      expect(await run.providers(ORG)).toMatchObject({ llm: { fake: true } });
+      expect(logLines.join('\n')).not.toContain(ORG_KEY);
+    });
+  });
+
   it('is unavailable without a provider and writes no trace', async () => {
     const run = runner(null, { speech: null });
-    expect(run.providers()).toEqual({ llm: null, speechToText: null });
+    expect(await run.providers(ORG)).toEqual({ llm: null, speechToText: null });
     expect(
       await run.generateText(call(), { system: 's', messages: [], maxOutputTokens: 10 }),
     ).toEqual({

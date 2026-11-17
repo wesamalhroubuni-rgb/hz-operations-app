@@ -595,13 +595,13 @@ describe('sync engine: pulling', () => {
     expect(await h.store.list('tasks')).toEqual([unknown]);
   });
 
-  it('a timer run that sent nothing does not pull again within a minute', async () => {
+  it('a timer run that sent nothing does not pull again within 10 seconds', async () => {
     const h = createHarness();
     await h.engine.syncNow('manual');
-    h.clock.advance(30_000);
+    h.clock.advance(5_000);
     await h.engine.syncNow('timer');
     expect(h.api.callsTo('sync.pull')).toHaveLength(1);
-    h.clock.advance(30_000);
+    h.clock.advance(5_000);
     await h.engine.syncNow('timer');
     expect(h.api.callsTo('sync.pull')).toHaveLength(2);
   });
@@ -645,5 +645,135 @@ describe('statusOf', () => {
       kind: 'synced',
       lastRefreshedAt: 'x',
     });
+  });
+});
+
+/** A foreground the test switches (React Native's AppState in the app). */
+function fakeForeground(active = true) {
+  let current = active;
+  const listeners = new Set<(active: boolean) => void>();
+  return {
+    isActive: () => current,
+    subscribe(listener: (active: boolean) => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    set(next: boolean) {
+      current = next;
+      for (const listener of listeners) listener(next);
+    },
+  };
+}
+
+function periodicTimers(h: Harness): number[] {
+  return [...h.scheduler.timers.values()].map((timer) => timer.ms);
+}
+
+describe('sync engine: live updates while in the foreground', () => {
+  it('pulls every 15 seconds while the app is open, so changes by others show within seconds', async () => {
+    const h = createHarness({ foreground: fakeForeground(true) });
+    h.engine.start();
+    await flush(40);
+    expect(h.api.callsTo('sync.pull')).toHaveLength(1); // the start run
+    expect(periodicTimers(h)).toContain(15_000);
+
+    for (const expected of [2, 3, 4]) {
+      h.clock.advance(15_000);
+      expect(h.scheduler.fire(15_000)).toBe(1);
+      await flush(40);
+      expect(h.api.callsTo('sync.pull')).toHaveLength(expected);
+    }
+    await h.engine.stop();
+  });
+
+  it('stops the periodic pull in the background and pulls at once on return', async () => {
+    const foreground = fakeForeground(true);
+    const h = createHarness({ foreground });
+    h.engine.start();
+    await flush(40);
+
+    foreground.set(false);
+    expect(periodicTimers(h)).not.toContain(15_000);
+
+    foreground.set(true);
+    await flush(40);
+    expect(h.api.callsTo('sync.pull')).toHaveLength(2); // start + foreground
+    expect(periodicTimers(h)).toContain(15_000);
+    await h.engine.stop();
+  });
+
+  it('backs off while pulls fail (doubling, capped) and returns to 15 s after a success', async () => {
+    const h = createHarness({ foreground: fakeForeground(true) });
+    h.api.pullResponses.push(
+      httpFailure('internal_error'), // start
+      httpFailure('internal_error'), // timer 1
+      httpFailure('internal_error'), // timer 2
+    );
+    h.engine.start();
+    await flush(40);
+    expect(periodicTimers(h)).toContain(30_000);
+
+    h.clock.advance(30_000);
+    h.scheduler.fire(30_000);
+    await flush(40);
+    expect(periodicTimers(h)).toContain(60_000);
+
+    h.clock.advance(60_000);
+    h.scheduler.fire(60_000);
+    await flush(40);
+    expect(periodicTimers(h)).toContain(120_000);
+
+    // The next pull succeeds (the fake answers an empty pull by default).
+    h.clock.advance(120_000);
+    h.scheduler.fire(120_000);
+    await flush(40);
+    expect(periodicTimers(h)).toContain(15_000);
+    await h.engine.stop();
+  });
+
+  it('never waits longer than the cap', async () => {
+    const h = createHarness({ foreground: fakeForeground(true), maxPeriodicIntervalMs: 60_000 });
+    for (let index = 0; index < 10; index += 1) h.api.pullResponses.push(NETWORK_DOWN);
+    h.engine.start();
+    await flush(40);
+    for (const wait of [30_000, 60_000, 60_000]) {
+      expect(periodicTimers(h)).toContain(wait);
+      h.clock.advance(wait);
+      h.scheduler.fire(wait);
+      await flush(40);
+    }
+    expect(periodicTimers(h)).toContain(60_000);
+    await h.engine.stop();
+  });
+
+  it('tells pull listeners when the server answered the cursor with a full pull (scope changed)', async () => {
+    const h = createHarness();
+    const seen: boolean[] = [];
+    const unsubscribe = h.engine.subscribePulls((pull) => seen.push(pull.scopeChanged));
+    h.api.pullResponses.push(
+      pullFixture({ full: true, cursor: 'cursor-1' }), // first pull: no cursor sent
+      pullFixture({ full: false, cursor: 'cursor-2' }), // ordinary delta
+      pullFixture({ full: true, cursor: 'cursor-3' }), // roles or scope changed
+      httpFailure('internal_error'), // a failed pull tells nobody
+    );
+
+    await h.engine.syncNow('manual');
+    await h.engine.syncNow('manual');
+    await h.engine.syncNow('manual');
+    await h.engine.syncNow('manual');
+    expect(seen).toEqual([false, false, true]);
+
+    unsubscribe();
+    await h.engine.syncNow('manual');
+    expect(seen).toHaveLength(3);
+  });
+
+  it('a pull listener that throws does not break the run', async () => {
+    const h = createHarness();
+    h.engine.subscribePulls(() => {
+      throw new Error('listener bug');
+    });
+    const result = await h.engine.syncNow('manual');
+    expect(result.pulled).toBe(true);
   });
 });

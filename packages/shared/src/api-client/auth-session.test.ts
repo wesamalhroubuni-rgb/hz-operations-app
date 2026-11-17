@@ -984,3 +984,157 @@ describe('failure mapping', () => {
     expect(setPasswordFailure(http(503, 'service_unavailable')).reason).toBe('unexpected');
   });
 });
+
+describe('refreshUser: a role or scope changed by someone else shows without a restart', () => {
+  const PROMOTED = { ...USER, roles: ['manager', 'supervisor', 'worker'], role: 'manager' };
+  const meMobile = (user: unknown) => ok({ user, session: SESSION, csrfToken: null });
+
+  it('mobile: asks /auth/me and updates the user, without passing through loading', async () => {
+    const { api, session } = await signedInMobile({ 'GET /auth/me': meMobile(PROMOTED) });
+    const seen: string[] = [];
+    session.subscribe(() => seen.push(session.getState().status));
+
+    await session.refreshUser();
+
+    expect(session.getState()).toEqual({ status: 'signedIn', user: PROMOTED });
+    expect(seen).toEqual(['signedIn']);
+    expect(api.last('GET /auth/me').headers.Authorization).toBe('Bearer access-a');
+  });
+
+  it('does not notify the listeners when nothing changed', async () => {
+    const { session } = await signedInMobile({ 'GET /auth/me': ME_MOBILE });
+    const listener = vi.fn();
+    session.subscribe(listener);
+
+    await session.refreshUser();
+
+    expect(listener).not.toHaveBeenCalled();
+    expect(session.getState()).toEqual({ status: 'signedIn', user: USER });
+  });
+
+  it('does nothing when nobody is signed in', async () => {
+    const api = fakeApi({});
+    const session = mobileSession(api, memoryStorage().storage);
+    await session.start();
+
+    await session.refreshUser();
+
+    expect(api.calls).toHaveLength(0);
+    expect(session.getState()).toEqual({ status: 'signedOut', notice: null });
+  });
+
+  it('keeps the known user when the server cannot be reached or fails', async () => {
+    const { session } = await signedInMobile({
+      'GET /auth/me': [offline, problem(500, 'internal_error')],
+    });
+
+    await session.refreshUser();
+    await session.refreshUser();
+
+    expect(session.getState()).toEqual({ status: 'signedIn', user: USER });
+  });
+
+  it('shares one request between overlapping calls', async () => {
+    const { api, session } = await signedInMobile({ 'GET /auth/me': meMobile(PROMOTED) });
+
+    await Promise.all([session.refreshUser(), session.refreshUser(), session.refreshUser()]);
+
+    expect(api.count('GET /auth/me')).toBe(1);
+  });
+
+  it('with maxAgeMs: asks only when the user was confirmed longer ago than that', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(NOW));
+      const { api, session } = await signedInMobile({ 'GET /auth/me': ME_MOBILE });
+
+      await session.refreshUser({ maxAgeMs: 60_000 });
+      expect(api.count('GET /auth/me')).toBe(0); // confirmed by the sign-in just now
+
+      vi.setSystemTime(new Date(Date.parse(NOW) + 59_000));
+      await session.refreshUser({ maxAgeMs: 60_000 });
+      expect(api.count('GET /auth/me')).toBe(0);
+
+      vi.setSystemTime(new Date(Date.parse(NOW) + 61_000));
+      await session.refreshUser({ maxAgeMs: 60_000 });
+      expect(api.count('GET /auth/me')).toBe(1);
+
+      // Confirmed again just now: throttled again; without maxAgeMs it always asks.
+      await session.refreshUser({ maxAgeMs: 60_000 });
+      expect(api.count('GET /auth/me')).toBe(1);
+      await session.refreshUser();
+      expect(api.count('GET /auth/me')).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('mobile: an expired access token is renewed on the way and the rotated pair kept', async () => {
+    const { api, session, current } = await signedInMobile({
+      'GET /auth/me': [UNAUTHENTICATED, meMobile(PROMOTED)],
+      'POST /auth/refresh': ok(mobileGrant('b')),
+    });
+
+    await session.refreshUser();
+
+    expect(session.getState()).toEqual({ status: 'signedIn', user: PROMOTED });
+    expect(api.last('GET /auth/me').headers.Authorization).toBe('Bearer access-b');
+    expect(current()).toEqual(tokenPair('b'));
+  });
+
+  it('a refused session signs out with the expired notice, as any request does', async () => {
+    const { session, current } = await signedInMobile({
+      'GET /auth/me': UNAUTHENTICATED,
+      'POST /auth/refresh': UNAUTHENTICATED,
+    });
+
+    await session.refreshUser();
+
+    expect(session.getState()).toEqual({ status: 'signedOut', notice: 'session_expired' });
+    await vi.waitFor(() => expect(current()).toBeNull());
+  });
+
+  it('an answer that arrives after sign-out does not bring the user back', async () => {
+    let answer: (response: Response) => void = () => undefined;
+    const { session } = await signedInMobile({
+      'GET /auth/me': () =>
+        new Promise<Response>((resolve) => {
+          answer = resolve;
+        }),
+      'POST /auth/logout': ok({}),
+    });
+
+    const pending = session.refreshUser();
+    await session.signOut();
+    answer(Response.json({ user: PROMOTED, session: SESSION, csrfToken: null }));
+    await pending;
+
+    expect(session.getState()).toEqual({ status: 'signedOut', notice: null });
+  });
+
+  it('web: updates the user and picks up the CSRF token of the answer', async () => {
+    const { api, session } = await signedInWeb({
+      'GET /auth/me': ok({ user: PROMOTED, session: SESSION, csrfToken: 'csrf-9' }),
+      'POST /auth/logout': ok({}),
+    });
+
+    await session.refreshUser();
+    expect(session.getState()).toEqual({ status: 'signedIn', user: PROMOTED });
+
+    await session.signOut();
+    expect(api.last('POST /auth/logout').headers['x-csrf-token']).toBe('csrf-9');
+  });
+
+  it('web: a session that now belongs to another user is checked again from the start', async () => {
+    const OTHER = { ...USER, id: '0190f3a2-7c1e-7000-8000-000000000009', displayName: 'Other' };
+    const { session } = await signedInWeb({
+      'GET /auth/me': ok({ user: OTHER, session: SESSION, csrfToken: 'csrf-2' }),
+    });
+    const seen: string[] = [];
+    session.subscribe(() => seen.push(session.getState().status));
+
+    await session.refreshUser();
+    await vi.waitFor(() => expect(session.getState()).toEqual({ status: 'signedIn', user: OTHER }));
+    expect(seen).toEqual(['loading', 'signedIn']);
+  });
+});

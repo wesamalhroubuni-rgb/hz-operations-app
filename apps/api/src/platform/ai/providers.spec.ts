@@ -270,7 +270,7 @@ describe('FakeLlmProvider', () => {
     });
     const instance = smallestInstance(toStructuredOutputJsonSchema(schema));
     expect(schema.safeParse(instance).success).toBe(true);
-    expect((instance as { logType: { key: unknown } }).logType.key).toBeNull();
+    expect(instance).toMatchObject({ logTypeKey: null, fields: [] });
     // Every nullable value is null (ADR-0010), also a reference enum as short as `null`.
     expect(instance).toMatchObject({ taskRef: null, siteRef: null });
   });

@@ -63,7 +63,7 @@ describe('AI platform layer', () => {
     });
 
   it('runs on the fakes and writes one trace row per call', async () => {
-    expect(runner.providers()).toEqual({
+    expect(await runner.providers(tenant.organization.id)).toEqual({
       llm: { name: 'fake', model: 'fake-llm-1', fake: true },
       speechToText: { name: 'fake', model: 'fake-stt-1', fake: true },
     });

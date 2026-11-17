@@ -1,11 +1,12 @@
-import { defaultTheme, themeCssVariables } from '@ops/shared';
+import { darkTheme, lightTheme } from '@ops/shared';
 import type { Metadata, Viewport } from 'next';
-import type { CSSProperties, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import { AuthProvider } from '@/components/auth-provider';
 import { QueryProvider } from '@/components/query-provider';
 import { DIRECTION, LOCALE } from '@/i18n';
 import { brand } from '@/lib/brand';
+import { THEME_INIT_SCRIPT, themeStylesheet } from '@/lib/theme';
 
 import './globals.css';
 
@@ -22,16 +23,26 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: defaultTheme.colors.background,
-  colorScheme: defaultTheme.scheme,
+  themeColor: [
+    { media: '(prefers-color-scheme: dark)', color: darkTheme.colors.background },
+    { media: '(prefers-color-scheme: light)', color: lightTheme.colors.background },
+  ],
+  colorScheme: 'dark light',
 };
 
-// The design tokens become CSS custom properties on <html>; every stylesheet reads them.
-const themeVariables = themeCssVariables(defaultTheme) as CSSProperties;
+// The design tokens become CSS custom properties on the root element; every stylesheet reads
+// them. Dark by default, light when the device prefers it, or the user's choice in the top bar
+// (`lib/theme.ts`), applied before the first paint by the inline script.
+const themeStyles = themeStylesheet();
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang={LOCALE} dir={DIRECTION} style={themeVariables}>
+    // The init script may set data-theme before React hydrates.
+    <html lang={LOCALE} dir={DIRECTION} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        <style>{themeStyles}</style>
+      </head>
       <body>
         <AuthProvider>
           <QueryProvider>{children}</QueryProvider>

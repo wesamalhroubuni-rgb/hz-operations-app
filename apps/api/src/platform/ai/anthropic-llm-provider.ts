@@ -106,6 +106,24 @@ export function anthropicErrorOf(error: unknown, signal: AbortSignal): AiProvide
 }
 
 /**
+ * Checks an Anthropic key without generating anything (ADR-0012): reads the configured model's
+ * metadata (`GET /v1/models/{model}`), which needs a valid key with access to that model and
+ * costs no tokens. Rejects with an `AiProviderError` (`http_401`, `http_404`, `network`, ...).
+ */
+export async function checkAnthropicKey(
+  apiKey: string,
+  model: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const client = new Anthropic({ apiKey, maxRetries: 0 });
+  try {
+    await client.models.retrieve(model, {}, { signal, maxRetries: 0 });
+  } catch (error) {
+    throw anthropicErrorOf(error, signal);
+  }
+}
+
+/**
  * Claude through the official SDK (ADR-0010 section 2). One request per call: the SDK's own
  * retries are off and the runner's timeout arrives as the abort signal. Structured output goes
  * as `output_config.format` (json_schema); effort is `low` (short extraction and narratives);

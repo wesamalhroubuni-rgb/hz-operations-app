@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { colors, radii, spacing, type Attachment } from '@ops/shared';
-import { Image, Pressable, StyleSheet, View } from 'react-native';
+import { radii, spacing, type Attachment } from '@ops/shared';
+import { Image, Pressable, View } from 'react-native';
 
 import { t } from '../i18n';
+import { makeStyles, useTheme } from '../theme';
 import { iconSize, thumbnailSize, touch } from './sizes';
 
 /** The photos of a saved log as thumbnails; tapping one opens it large. */
@@ -13,6 +14,8 @@ export function AttachmentGrid({
   attachments: readonly Attachment[];
   onOpen: (attachment: Attachment, index: number) => void;
 }>) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   return (
     <View style={styles.grid}>
       {attachments.map((attachment, index) => {
@@ -56,6 +59,8 @@ export function LocalPhotoGrid({
   onRemove: (localId: string) => void;
   onOpen: (uri: string, index: number) => void;
 }>) {
+  const styles = useStyles();
+  const { colors } = useTheme();
   return (
     <View style={styles.grid}>
       {photos.map((photo, index) => (
@@ -83,7 +88,7 @@ export function LocalPhotoGrid({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -128,4 +133,4 @@ const styles = StyleSheet.create({
   removePressed: {
     borderColor: colors.primary,
   },
-});
+}));

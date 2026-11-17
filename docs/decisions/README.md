@@ -68,3 +68,4 @@ What follows from the decision: rules to obey, work it creates, things to revisi
 | [0009](0009-web-dashboard-architecture.md)                   | Web dashboard architecture                                         | Accepted | 2026-10-28 |
 | [0010](0010-ai-layer-architecture.md)                        | AI layer architecture, providers, data handling, and cost controls | Accepted | 2026-10-30 |
 | [0011](0011-daily-summaries-and-anomaly-rules.md)            | Daily summaries and anomaly rules                                  | Accepted | 2026-10-30 |
+| [0012](0012-organization-ai-provider-keys.md)                | An organization's own AI provider keys                             | Accepted | 2026-11-16 |

@@ -3,18 +3,27 @@ import { ConfigService } from '@nestjs/config';
 import { AiRunnerService } from './ai-runner.service';
 import { AI_SETTINGS, aiSettingsFromConfig, type AiSettings } from './ai-settings';
 import { AiTraceService } from './ai-trace.service';
+import { AiKeyChecker } from './ai-key-checker';
 import {
+  AI_ORGANIZATION_KEYS,
   AI_ORGANIZATION_LIMITS,
   AI_PROMPT_DIRECTORIES,
   AI_RUNNER,
   AI_USAGE_READER,
   PROMPT_LOADER,
+  type AiOrganizationKeysResolver,
   type AiOrganizationLimitsResolver,
 } from './ai-types';
 import { AiUsageReportService } from './ai-usage-report.service';
 import { LLM_PROVIDER } from './llm-provider';
 import { FilePromptLoader } from './prompt-loader';
-import { resolveAiProviders, type AiProviders } from './provider-registry';
+import {
+  AI_REAL_PROVIDER_FACTORIES,
+  REAL_PROVIDERS,
+  resolveAiProviders,
+  type AiProviders,
+} from './provider-registry';
+import { AiProviderSelector } from './provider-selector';
 import { SPEECH_TO_TEXT_PROVIDER } from './speech-to-text-provider';
 import { AiUsageLimiter } from './usage-limiter';
 
@@ -26,6 +35,11 @@ export interface AiModuleOptions {
   promptDirectories: readonly string[];
   /** The host's resolver of an organization's own limits (bound to `AI_ORGANIZATION_LIMITS`). */
   organizationLimits: Type<AiOrganizationLimitsResolver>;
+  /**
+   * The host's resolver of an organization's own provider keys (ADR-0012), bound to
+   * AI_ORGANIZATION_KEYS. Without it every organization uses the server's providers.
+   */
+  organizationKeys?: Type<AiOrganizationKeysResolver>;
   /** Modules the resolver needs (global ones, such as the database, need not be listed). */
   imports?: ModuleMetadata['imports'];
 }
@@ -52,11 +66,12 @@ export class AiModule {
       imports: options.imports ?? [],
       providers: [
         { provide: AI_SETTINGS, inject: [ConfigService], useFactory: aiSettingsFromConfig },
+        { provide: AI_REAL_PROVIDER_FACTORIES, useValue: REAL_PROVIDERS },
         {
           provide: AI_PROVIDERS,
-          inject: [AI_SETTINGS],
-          useFactory: (settings: AiSettings): AiProviders => {
-            const providers = resolveAiProviders(settings);
+          inject: [AI_SETTINGS, AI_REAL_PROVIDER_FACTORIES],
+          useFactory: (settings: AiSettings, factories: typeof REAL_PROVIDERS): AiProviders => {
+            const providers = resolveAiProviders(settings, factories);
             new Logger('AiModule').log(
               `AI providers: llm=${describe(providers.llm?.info)} ` +
                 `speechToText=${describe(providers.speechToText?.info)}`,
@@ -82,6 +97,14 @@ export class AiModule {
         },
         options.organizationLimits,
         { provide: AI_ORGANIZATION_LIMITS, useExisting: options.organizationLimits },
+        ...(options.organizationKeys
+          ? [
+              options.organizationKeys,
+              { provide: AI_ORGANIZATION_KEYS, useExisting: options.organizationKeys },
+            ]
+          : []),
+        AiProviderSelector,
+        AiKeyChecker,
         AiTraceService,
         { provide: AI_USAGE_READER, useExisting: AiTraceService },
         {
@@ -106,6 +129,8 @@ export class AiModule {
         AiTraceService,
         AiUsageLimiter,
         AiUsageReportService,
+        AiProviderSelector,
+        AiKeyChecker,
       ],
     };
   }

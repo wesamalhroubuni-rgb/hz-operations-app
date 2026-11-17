@@ -1,10 +1,16 @@
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 
 import { t, type TranslationKey } from '@/i18n';
 import { useCaller } from '@/hooks/use-caller';
 import { useSignOut } from '@/hooks/use-sign-out';
+import {
+  applyThemePreference,
+  readThemePreference,
+  subscribeThemePreference,
+  THEME_MENU_ORDER,
+} from '@/lib/theme';
 
 import styles from './shell.module.css';
 
@@ -13,7 +19,8 @@ function initialOf(name: string): string {
 }
 
 /**
- * The account button of the top bar: name and role, "Sign out" and "Sign out everywhere".
+ * The account button of the top bar: name and role, the theme (System, Dark, Light), "Sign out"
+ * and "Sign out everywhere".
  * A disclosure (button + panel), closed by Escape, a click outside, or moving focus away.
  */
 export function UserMenu() {
@@ -23,6 +30,13 @@ export function UserMenu() {
   const panelId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const themeTitleId = useId();
+  // The server renders the default; the browser reads the stored choice.
+  const theme = useSyncExternalStore(
+    subscribeThemePreference,
+    readThemePreference,
+    () => 'system' as const,
+  );
 
   useEffect(() => {
     if (!open) {
@@ -80,6 +94,25 @@ export function UserMenu() {
           <div className={styles.menuHeader}>
             <p className={styles.menuName}>{t('shell.signedInAs', { name: user.displayName })}</p>
             <p className={styles.menuRole}>{t(roleKey)}</p>
+          </div>
+          <div className={styles.menuSection} role="group" aria-labelledby={themeTitleId}>
+            <p id={themeTitleId} className={styles.menuSectionTitle}>
+              {t('theme.label')}
+            </p>
+            {THEME_MENU_ORDER.map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={styles.menuItem}
+                aria-pressed={theme === value}
+                onClick={() => applyThemePreference(value)}
+              >
+                <span className={styles.menuCheck} aria-hidden="true">
+                  {theme === value ? '•' : ''}
+                </span>
+                {t(`theme.${value}`)}
+              </button>
+            ))}
           </div>
           <button
             type="button"

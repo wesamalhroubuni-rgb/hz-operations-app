@@ -5,26 +5,30 @@ import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { t } from '../i18n';
 import { syncText } from '../i18n/syncText';
-import { statusPresentation } from '../logic/sync';
-import { TONE_COLORS } from './Badge';
+import { indicatorPresentation } from '../logic/sync';
+import { useTheme } from '../theme';
+import { toneColor } from './Badge';
 import { iconSize, touch } from './sizes';
 import { useSync } from './SyncProvider';
 
 /**
- * The small sync status in the header of the tabs: synced / waiting N / not accepted N /
- * offline / sign in again. Tapping it opens the Sync screen. Hidden without an offline layer.
+ * The small sync status in the header of the tabs, shown only when there is something to say:
+ * waiting N / sending / not accepted N / offline / sign in again. Nothing while everything is
+ * sent and online. Tapping it opens the Sync screen. Hidden without an offline layer.
  */
 export function SyncIndicator() {
   const { available, status } = useSync();
   const navigation = useNavigation();
-  if (!available || status === null) return null;
-  const view = statusPresentation(status);
+  const { colors } = useTheme();
+  const view = available ? indicatorPresentation(status) : null;
+  if (view === null) return null;
   const label = syncText(view.text);
-  const color = TONE_COLORS[view.tone];
+  const color = toneColor(colors, view.tone);
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={t('sync.indicatorLabel', { status: label })}
+      accessibilityLiveRegion="polite"
       hitSlop={spacing.sm}
       onPress={() => navigation.navigate('Sync')}
       style={({ pressed }) => [styles.box, pressed && styles.pressed]}

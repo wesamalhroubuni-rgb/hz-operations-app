@@ -1,5 +1,6 @@
-import { colors, fontSizes, fontWeights } from '@ops/shared';
-import { StyleSheet, Text, type TextProps } from 'react-native';
+import { fontSizes, fontWeights } from '@ops/shared';
+import { Text, type TextProps } from 'react-native';
+import { makeStyles } from '../theme';
 
 export type TextVariant =
   'title' | 'heading' | 'body' | 'bodyStrong' | 'secondary' | 'muted' | 'label' | 'small';
@@ -13,6 +14,7 @@ export function AppText({
   style,
   ...props
 }: Readonly<TextProps & { variant?: TextVariant }>) {
+  const styles = useStyles();
   return (
     <Text
       accessibilityRole={variant === 'title' || variant === 'heading' ? 'header' : undefined}
@@ -22,7 +24,7 @@ export function AppText({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   base: {
     color: colors.textPrimary,
     textAlign: 'auto',
@@ -65,4 +67,4 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     lineHeight: fontSizes.sm * 1.4,
   },
-});
+}));

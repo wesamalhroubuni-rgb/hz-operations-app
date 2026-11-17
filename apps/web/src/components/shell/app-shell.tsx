@@ -91,10 +91,8 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
             sizes="36px"
             priority
           />
-          <span className={styles.brandName}>
-            {brand.name}
-            <span className={styles.brandLabel}>{t('common.appLabel')}</span>
-          </span>
+          {/* The logo already shows the product name: only the app label is written. */}
+          <span className={styles.brandLabel}>{t('common.appLabel')}</span>
         </Link>
         <nav className={styles.nav} aria-label={t('nav.label')}>
           <ul>

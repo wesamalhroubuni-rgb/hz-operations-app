@@ -46,6 +46,8 @@ are documented well enough for a new developer or AI session to continue.
 - [ ] The mobile app opens on a real phone in Expo Go and reaches the API. Part of the Phase 4
       phone test (the campus Wi-Fi blocks phone-to-PC traffic; the owner will use the phone's
       hotspot). The Phase 1 "API reachable" card was replaced by the worker screens in Phase 4.
+      On 2026-11-16 the app ran on a real Android phone in Expo Go (USB with `adb reverse`); what
+      was checked on it is not recorded.
 - [x] Independent `reviewer` pass completed and its should-fix findings resolved (2026-10-12).
 - [x] Git identity configured and the first commit made (commit `d03c843` on `main`, verified by
       the owner, 2026-10-13).
@@ -463,9 +465,8 @@ Tests, review, verification
       2026-10-27). Unit tests: 689 shared, 513 api, 46 web, 305 mobile (304 at the docs-keeper's
       run; one guard test added afterwards, as reported). Integration: 1,416 tests in 19 suites
       (as reported by the coordinator).
-- [ ] The migration `20261027090000_phase5_offline_sync` is applied to the development database
-      (needs the owner's `pnpm db:reset` first: the database holds a stray migration from lost
-      work).
+- [x] The migration `20261027090000_phase5_offline_sync` is applied to the development database
+      (the database was reset; `prisma migrate status` up to date, docs-keeper, 2026-11-16).
 - [ ] The offline test in the Android emulator (README section 6), including the conflict case.
 - [ ] Verified on a real phone in airplane mode, then back online.
 - [x] The Phase 5 work is committed and pushed (`2cf5a01`, in sync with `origin/main` on
@@ -531,8 +532,8 @@ Tests, review, verification
 - [x] `pnpm test` passes (re-run by the docs-keeper, 2026-10-28): 743 shared, 527 api, 174 web,
       305 mobile. `build`, `lint`, `typecheck`, `format:check`, and `test:integration` (1,534
       tests in 21 suites) pass as reported by the coordinator.
-- [ ] The migration `20261028090000_phase6_dashboard` is applied to the development database
-      (needs the owner's `pnpm db:reset`).
+- [x] The migration `20261028090000_phase6_dashboard` is applied to the development database
+      (`prisma migrate status`, 2026-11-16).
 - [ ] The owner's browser test (`docs/reports/phase-6.md`; since 2026-11-02 part of the combined
       Phases 4 to 7 test in `docs/reports/phase-7.md`) as `aylin`, `selin`, and `murat`.
 - [x] The Phase 6 work is committed and pushed (`713f592`, in sync with `origin/main` on
@@ -632,15 +633,38 @@ Tests, review, verification
       332 mobile. `build`, `lint`, `typecheck`, `format:check`, `test:integration` (1,681 tests
       in 26 suites plus 6 in `storage-minio`), and `npx expo install --check` pass as reported by
       the coordinator.
-- [ ] The migration `20261030090000_phase7_ai` is applied to the development database (needs the
-      owner's `pnpm db:reset`).
+- [x] The migration `20261030090000_phase7_ai` is applied to the development database
+      (`prisma migrate status`, 2026-11-16).
 - [ ] The owner's combined manual test of Phases 4 to 7 (`docs/reports/phase-7.md`).
-- [ ] The Phase 7 work is committed and pushed.
+- [x] The Phase 7 work is committed and pushed (`3bfad42`; `main` in sync with `origin/main` on
+      2026-11-16 at `5038c71`).
 
 Deferred (not in the v1 prompt or needing the owner): autonomous actions and natural-language
 questions over data (v2); other notification channels; Turkish and Arabic summary and
 notification catalogues and a prompt review with real samples; provider data agreements and zero
 data retention (Phase 8).
+
+Added after Phase 7 on the owner's request (2026-11-16, not yet committed):
+
+- [x] An admin can paste the organization's own Claude and OpenAI keys (checked, stored
+      encrypted, never shown again) and choose the Claude and voice-note models
+      ([ADR-0012](docs/decisions/0012-organization-ai-provider-keys.md); unit tests and the
+      `ai-keys` integration suite with network-free providers pass).
+- [ ] A real key checked and saved through the dashboard, and a capture and a summary run on it.
+- [x] Live updates: the phone syncs every 15 s in the foreground and re-checks the user when its
+      scope changes; dashboard lists refresh every 15 s and the user every 30 s (unit tests).
+- [x] The dashboard follows the device's light or dark setting (`lightTheme`), with a manual
+      choice (System / Dark / Light) in the account menu; the product name is no longer repeated
+      next to the logo.
+- [x] Alerts that ask for nothing more are resolved (`Notification.resolvedAt`) and leave the
+      list, the badge, and the phone (`notification-resolution` suite; all 1,719 integration
+      tests pass; migration applied to the development database, 2026-11-16).
+- [x] The phone follows light and dark mode with a manual choice (Profile → Theme), and the
+      header sync indicator hides when everything is sent (351 mobile tests pass).
+- [ ] The light and dark themes looked at on the phone and in the browser (the phone build was
+      opened after an Expo restart, but nobody has looked at the screens yet).
+
+Planned, not yet placed in a phase: the rest of the phone redesign, and Turkish and Arabic.
 
 ## Phase 8: Hardening & release
 
@@ -693,4 +717,6 @@ data retention (Phase 8).
 - [ ] AI providers in production (ADR-0010): data processing agreements with Anthropic and
       OpenAI, zero data retention where available, the price table in
       `apps/api/src/platform/ai/ai-prices.ts` re-checked, the prompts reviewed with real Turkish
-      and Arabic samples, and the per-user AI rate limit on the shared store (added 2026-11-02).
+      and Arabic samples, and the per-user AI rate limit on the shared store (added 2026-11-02);
+      a production `AI_KEYS_ENCRYPTION_SECRET` and the AI key-check limit on the shared store
+      (ADR-0012, added 2026-11-16).

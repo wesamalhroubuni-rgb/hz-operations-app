@@ -1,8 +1,9 @@
-import { colors, radii, spacing } from '@ops/shared';
-import { Image, StyleSheet, View } from 'react-native';
+import { radii, spacing } from '@ops/shared';
+import { Image, View } from 'react-native';
 
 import type { QueuedPhoto } from '../data/uploadQueue';
 import { t } from '../i18n';
+import { makeStyles } from '../theme';
 import { AppText } from './AppText';
 import { Button } from './Button';
 import { thumbnailSize } from './sizes';
@@ -30,6 +31,7 @@ export function UploadList({
   onRetry: () => void;
   onDiscard: (localId: string) => void;
 }>) {
+  const styles = useStyles();
   if (items.length === 0) return null;
   const anyFailed = items.some((item) => item.status === 'failed' || item.status === 'retrying');
   return (
@@ -73,7 +75,7 @@ export function UploadList({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   box: {
     gap: spacing.md,
   },
@@ -105,4 +107,4 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: colors.primary,
   },
-});
+}));

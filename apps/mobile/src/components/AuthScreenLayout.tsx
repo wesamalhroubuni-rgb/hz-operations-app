@@ -1,9 +1,10 @@
-import { colors, fontSizes, fontWeights, radii, spacing } from '@ops/shared';
+import { fontSizes, fontWeights, radii, spacing } from '@ops/shared';
 import type { ReactNode } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { brand } from '../config/brand';
+import { makeStyles } from '../theme';
 import { BrandHeader } from './BrandHeader';
 
 /**
@@ -16,6 +17,7 @@ export function AuthScreenLayout({
   intro,
   children,
 }: Readonly<{ title: string; intro?: string; children: ReactNode }>) {
+  const styles = useStyles();
   return (
     <SafeAreaView style={styles.screen}>
       <KeyboardAvoidingView
@@ -42,7 +44,7 @@ export function AuthScreenLayout({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) => ({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -80,4 +82,4 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: colors.textMuted,
   },
-});
+}));

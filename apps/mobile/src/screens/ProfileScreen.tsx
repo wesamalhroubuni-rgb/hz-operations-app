@@ -1,6 +1,6 @@
 import { spacing } from '@ops/shared';
 import Constants from 'expo-constants';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { AppText } from '../components/AppText';
@@ -13,7 +13,10 @@ import { Message } from '../components/Message';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { useSync } from '../components/SyncProvider';
 import { SyncSignOutDialog } from '../components/SyncSignOutDialog';
+import { ThemeChoice } from '../components/ThemeChoice';
+import { useAuth } from '../auth/AuthProvider';
 import { useData } from '../data/DataProvider';
+import { useServerRefresh } from '../hooks/useServerRefresh';
 import type { SignOutScope } from '../hooks/useSignOut';
 import { t } from '../i18n';
 import { roleName } from '../i18n/roles';
@@ -43,9 +46,14 @@ function pushText(state: PushState): string {
   }
 }
 
-/** Who is signed in, push status, the two ways to sign out, and the app version. */
+/** Who is signed in, push status, the theme, the two ways to sign out, and the app version. */
 export function ProfileScreen() {
   const { user } = useData();
+  const { refreshUser } = useAuth();
+  // Pull to refresh asks the server who the user is now (a role or scope changed on the
+  // dashboard), alongside a sync. It also happens by itself after the automatic pulls.
+  const recheckUser = useCallback(() => refreshUser(), [refreshUser]);
+  const server = useServerRefresh(recheckUser);
   const { busy, failure, run } = useSignOutWithChoice();
   const sync = useSync();
   // Sign-out with changes still on the phone asks first (ADR-0008, section 8).
@@ -94,7 +102,7 @@ export function ProfileScreen() {
   const version = Constants.expoConfig?.version ?? '';
 
   return (
-    <ScreenContainer inTab>
+    <ScreenContainer inTab refreshing={server.refreshing} onRefresh={server.refresh}>
       <Card>
         <AppText variant="label">{t('profile.signedInAs')}</AppText>
         <AppText variant="title">{user.displayName}</AppText>
@@ -107,6 +115,8 @@ export function ProfileScreen() {
         <AppText variant="heading">{t('profile.push.title')}</AppText>
         <AppText variant="secondary">{pushText(push)}</AppText>
       </Card>
+
+      <ThemeChoice />
 
       <View style={styles.actions}>
         {failure !== null ? <Message tone="error" text={failure} /> : null}
