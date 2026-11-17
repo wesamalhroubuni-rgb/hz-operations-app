@@ -1,4 +1,3 @@
-import { defaultTheme } from '@ops/shared';
 import type { ExpoConfig } from 'expo/config';
 
 /**
@@ -17,7 +16,11 @@ import type { ExpoConfig } from 'expo/config';
 // repeated here. Keep it equal to DEFAULT_BRAND_NAME in `src/config/env.ts`.
 const DEFAULT_BRAND_NAME = 'Operations';
 const brandName = process.env.EXPO_PUBLIC_BRAND_NAME?.trim() || DEFAULT_BRAND_NAME;
-const backgroundColor = defaultTheme.colors.background;
+// The brand colours, written out because EAS Build reads this file before `@ops/shared` is
+// built (the eas-build-post-install hook runs later). Keep them equal to the dark theme's
+// `background` and `primary` in packages/shared/src/theme/tokens.ts.
+const backgroundColor = '#000000';
+const brandGold = '#D4A454';
 
 // The store identifiers. The defaults are placeholders until the owner decides the final ones
 // (they cannot change after a store release). Set them before the first store build.
@@ -98,7 +101,7 @@ const config: ExpoConfig = {
     [
       'expo-notifications',
       {
-        color: defaultTheme.colors.primary,
+        color: brandGold,
       },
     ],
     'expo-localization',
