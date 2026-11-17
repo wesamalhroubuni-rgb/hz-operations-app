@@ -13,7 +13,7 @@ import { ApiException } from '../http/api-exception';
 import { NOTIFICATION_SENDER, type NotificationSender } from '../notifications/notification-sender';
 import { RequestContext } from '../request-context/request-context';
 import type { AuthTx } from './auth-db';
-import { AUTH_SETTINGS, isDevelopment, type AuthSettings } from './auth-settings';
+import { AUTH_SETTINGS, mayRevealCodes, type AuthSettings } from './auth-settings';
 import { AUTH_CLOCK, type Clock } from './clock';
 import { normalizeCode, OneTimeCodes } from './one-time-codes';
 import { PasswordHasher } from './password-hasher';
@@ -111,7 +111,7 @@ export class AuthAdminService {
       expiresAt: issued.expiresAt,
     });
 
-    const reveal = isDevelopment(this.settings);
+    const reveal = mayRevealCodes(this.settings);
     return {
       purpose: input.purpose,
       expiresAt: issued.expiresAt.toISOString(),

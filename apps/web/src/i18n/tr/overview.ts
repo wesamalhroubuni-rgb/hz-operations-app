@@ -40,7 +40,7 @@ export const overview: CatalogueShape<typeof enOverview> = {
     never: 'Hiç',
     openLogs: 'Kayıtları',
     openLogsOf: '{{name}} adlı kişinin kayıtlarını aç',
-    none: 'Bu gün her çalışan bir şey kaydetti.',
+    none: 'Bu gün kaydı eksik olan çalışan yok.',
     truncated: '{{total}} kişiden ilk {{shown}} gösteriliyor.',
   },
 };

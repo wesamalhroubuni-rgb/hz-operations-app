@@ -28,6 +28,12 @@ export interface AuthSettings {
   allowedOrigins: readonly string[];
   /** Base of the links sent with one-time codes, without a trailing slash. */
   webAppUrl: string;
+  /**
+   * Shows a new activation or reset code once, in the answer to the admin who issued it (the
+   * dashboard's "copy it now" dialog), outside development too. For deployments without an
+   * email or SMS sender, where the admin hands the code over in person. Never logged.
+   */
+  showCodesToAdmins: boolean;
   rateLimits: AuthRateLimits;
 }
 
@@ -110,6 +116,7 @@ export function authSettingsFromConfig(get: (key: string) => unknown): AuthSetti
       ? origins.filter((item): item is string => typeof item === 'string')
       : [],
     webAppUrl: typeof webAppUrl === 'string' ? webAppUrl.replace(/\/+$/, '') : '',
+    showCodesToAdmins: get('AUTH_SHOW_CODES_TO_ADMINS') === true,
     rateLimits: {
       ...DEFAULT_AUTH_RATE_LIMITS,
       ...(typeof rateLimits === 'object' && rateLimits !== null
@@ -117,6 +124,16 @@ export function authSettingsFromConfig(get: (key: string) => unknown): AuthSetti
         : {}),
     },
   };
+}
+
+/**
+ * Whether the answer to the admin who issued a one-time code may carry it: always in development,
+ * elsewhere only with AUTH_SHOW_CODES_TO_ADMINS. (Logging a code stays development-only.)
+ */
+export function mayRevealCodes(
+  settings: Pick<AuthSettings, 'nodeEnv' | 'showCodesToAdmins'>,
+): boolean {
+  return isDevelopment(settings) || settings.showCodesToAdmins;
 }
 
 /** True only in development: the one environment where a one-time code may be shown or logged. */

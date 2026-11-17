@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { AccessTokenService } from './access-token';
 import { parseCookies, readCredentials, serializeCookie } from './auth-http';
-import { authSettingsFromConfig } from './auth-settings';
+import { authSettingsFromConfig, mayRevealCodes } from './auth-settings';
 import type { Clock, RandomSource } from './clock';
 import { CsrfTokens, isAllowedOrigin, isSafeMethod } from './csrf';
 import { constantTimeEquals } from './hashing';
@@ -463,5 +463,18 @@ describe('authSettingsFromConfig', () => {
     });
     expect(from({ ...base, NODE_ENV: 'development' }).cookieSecure).toBe(false);
     expect(from({ ...base, NODE_ENV: 'staging' }).cookieSecure).toBe(true);
+  });
+
+  it('reveals a new code to the issuing admin only in development, or when switched on', () => {
+    expect(mayRevealCodes(from({ ...base, NODE_ENV: 'production' }))).toBe(false);
+    expect(mayRevealCodes(from({ ...base, NODE_ENV: 'test' }))).toBe(false);
+    expect(mayRevealCodes(from({ ...base, NODE_ENV: 'development' }))).toBe(true);
+    expect(
+      mayRevealCodes(from({ ...base, NODE_ENV: 'production', AUTH_SHOW_CODES_TO_ADMINS: true })),
+    ).toBe(true);
+    // Only a real boolean (the validated env) switches it on, never a stray string.
+    expect(
+      mayRevealCodes(from({ ...base, NODE_ENV: 'production', AUTH_SHOW_CODES_TO_ADMINS: 'true' })),
+    ).toBe(false);
   });
 });

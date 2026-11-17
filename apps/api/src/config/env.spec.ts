@@ -236,6 +236,7 @@ describe('validateEnv', () => {
         AUTH_MAX_FAILED_LOGINS: 5,
         AUTH_LOCKOUT_MINUTES: 15,
         AUTH_COOKIE_DOMAIN: undefined,
+        AUTH_SHOW_CODES_TO_ADMINS: false,
         WEB_APP_URL: 'https://app.example.com',
         STORAGE_ENDPOINT: 'http://127.0.0.1:9000',
         STORAGE_PUBLIC_ENDPOINT: 'https://files.example.com',

@@ -38,7 +38,7 @@ export const overview = {
     never: 'Never',
     openLogs: 'Their logs',
     openLogsOf: 'Open the logs of {{name}}',
-    none: 'Every worker logged something on this day.',
+    none: 'No worker is missing a log on this day.',
     truncated: 'Showing the first {{shown}} of {{total}}.',
   },
 } as const;

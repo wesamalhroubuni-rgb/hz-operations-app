@@ -47,7 +47,7 @@ export const overview: CatalogueShape<typeof enOverview> = {
     never: 'أبدًا',
     openLogs: 'سجلاته',
     openLogsOf: 'افتح سجلات {{name}}',
-    none: 'سجّل كل عامل شيئًا في هذا اليوم.',
+    none: 'لا يوجد عامل بلا سجل في هذا اليوم.',
     truncated: 'يُعرض أول {{shown}} من أصل {{total}}.',
   },
 };

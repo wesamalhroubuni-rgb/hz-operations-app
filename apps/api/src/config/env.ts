@@ -227,6 +227,11 @@ export const envSchema = z
       .trim()
       .optional()
       .transform((value) => (value ? value : undefined)),
+    /**
+     * Shows a new activation or reset code once to the admin who issued it, outside development
+     * too (no email or SMS sender yet: the admin hands it over in person). Never logged.
+     */
+    AUTH_SHOW_CODES_TO_ADMINS: booleanSetting(false),
     /** Sends push notifications through Expo. The in-app list works either way. */
     PUSH_ENABLED: booleanSetting(true),
     /** Runs the outbox consumer that turns domain events into notifications. */
