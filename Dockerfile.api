@@ -1,0 +1,21 @@
+# The API (apps/api) for Railway or any Docker host. Built from the repository root.
+# Node 24 and the pnpm version of `packageManager` in package.json, installed explicitly.
+FROM node:24-bookworm-slim
+
+# OpenSSL for Prisma's engines; CA certificates for https calls (storage, AI providers, push).
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+RUN npm install -g pnpm@12.11.2
+
+WORKDIR /app
+COPY . .
+
+# Only the API and what it depends on (shared, config), not the mobile or web apps.
+RUN pnpm install --frozen-lockfile --filter "@ops/api..."
+RUN pnpm --filter @ops/shared build && pnpm --filter @ops/api build
+
+ENV NODE_ENV=production
+EXPOSE 8080
+# Railway runs the migrations first (preDeployCommand in apps/api/railway.json).
+CMD ["pnpm", "--filter", "@ops/api", "start"]

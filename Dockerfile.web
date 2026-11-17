@@ -1,0 +1,28 @@
+# The manager dashboard (apps/web) for Railway or any Docker host. Built from the repository root.
+FROM node:24-bookworm-slim
+
+RUN npm install -g pnpm@12.11.2
+
+WORKDIR /app
+COPY . .
+
+# The NEXT_PUBLIC_* values are built into the dashboard: Railway passes the service variables
+# as build arguments.
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_ORGANIZATION_SLUG
+ARG NEXT_PUBLIC_BRAND_NAME
+ARG NEXT_PUBLIC_MAP_TILE_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+  NEXT_PUBLIC_ORGANIZATION_SLUG=$NEXT_PUBLIC_ORGANIZATION_SLUG \
+  NEXT_PUBLIC_BRAND_NAME=$NEXT_PUBLIC_BRAND_NAME \
+  NEXT_PUBLIC_MAP_TILE_URL=$NEXT_PUBLIC_MAP_TILE_URL \
+  NEXT_TELEMETRY_DISABLED=1
+
+# Only the dashboard and what it depends on (shared, config).
+RUN pnpm install --frozen-lockfile --filter "@ops/web..."
+RUN pnpm --filter @ops/shared build && pnpm --filter @ops/web build
+
+ENV NODE_ENV=production
+EXPOSE 3000
+# `next start` listens on PORT (Railway sets it).
+CMD ["pnpm", "--filter", "@ops/web", "start"]

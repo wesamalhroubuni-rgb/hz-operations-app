@@ -1,9 +1,9 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "builder": "RAILPACK",
-    "buildCommand": "pnpm --filter @ops/shared build && pnpm --filter @ops/api build",
-    "watchPatterns": ["apps/api/**", "packages/shared/**", "pnpm-lock.yaml"]
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile.api",
+    "watchPatterns": ["apps/api/**", "packages/**", "pnpm-lock.yaml", "Dockerfile.api"]
   },
   "deploy": {
     "preDeployCommand": ["pnpm --filter @ops/api db:deploy"],

@@ -1,0 +1,14 @@
+# Never in an image: secrets, installed packages, build output, local data.
+.env
+.env.*
+!.env.example
+.git
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/.expo
+apps/api/src/generated
+apps/mobile/android
+apps/mobile/ios
+*.log
