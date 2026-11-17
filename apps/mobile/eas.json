@@ -10,7 +10,7 @@
       "env": {
         "EXPO_PUBLIC_API_URL": "https://api.hazalang.com",
         "EXPO_PUBLIC_ORGANIZATION_SLUG": "hazalang",
-        "EXPO_PUBLIC_BRAND_NAME": "HZ Worker",
+        "EXPO_PUBLIC_BRAND_NAME": "HZ",
         "EXPO_PUBLIC_EAS_PROJECT_ID": "8a58d784-cfab-43c1-9bea-6984912a1a6d",
         "EXPO_ANDROID_PACKAGE": "com.hazalang.worker",
         "EXPO_IOS_BUNDLE_IDENTIFIER": "com.hazalang.worker"
