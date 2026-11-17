@@ -16,6 +16,7 @@
     "db:migrate": "dotenv -e ../../.env -- prisma migrate dev",
     "db:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
     "db:seed": "prisma generate --no-hints && tsc -p tsconfig.build.json --outDir node_modules/.cache/ops-seed --incremental false --sourceMap false && node scripts/copy-prompts.mjs node_modules/.cache/ops-seed && dotenv -e ../../.env -v NODE_ENV=development -- tsx prisma/seed.ts",
+    "db:bootstrap": "prisma generate --no-hints && tsc -p tsconfig.build.json --outDir node_modules/.cache/ops-seed --incremental false --sourceMap false && node scripts/copy-prompts.mjs node_modules/.cache/ops-seed && dotenv -e ../../.env -- tsx prisma/bootstrap.ts",
     "db:reset": "dotenv -e ../../.env -- prisma migrate reset --force && pnpm run db:seed",
     "db:studio": "dotenv -e ../../.env -- prisma studio"
   },

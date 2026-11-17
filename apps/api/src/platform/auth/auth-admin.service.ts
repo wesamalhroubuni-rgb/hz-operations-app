@@ -205,6 +205,39 @@ export class AuthAdminService {
   }
 
   /**
+   * Sets the password of a user who has never had one: the first administrator of a new
+   * organization, created by the operator's bootstrap command (no one can sign in yet, so no
+   * activation code could reach anyone). Allowed in every environment because it never replaces
+   * a password: a user with a credential is refused (409). Applies the password policy. The
+   * password is hashed here and never stored, logged or returned. Writes no audit event (the
+   * caller's transaction records the user).
+   */
+  async setFirstPassword(tx: AuthDb, input: SetPasswordInput): Promise<void> {
+    const db = tx as AuthTx;
+    const user = await db.user.findUnique({ where: { id: input.userId } });
+    if (!user || user.organizationId !== input.organizationId) {
+      throw ApiException.notFound('User', input.userId);
+    }
+    const existing = await db.authCredential.findUnique({ where: { userId: user.id } });
+    if (existing) {
+      throw ApiException.conflict('This user already has a password');
+    }
+    const problems = checkNewPassword(input.password, user);
+    if (problems.length > 0) {
+      throw ApiException.validation(problems, 'The password does not meet the policy');
+    }
+    const passwordHash = await this.hasher.hash(input.password);
+    await db.authCredential.create({
+      data: {
+        userId: user.id,
+        organizationId: user.organizationId,
+        passwordHash,
+        passwordChangedAt: this.clock.now(),
+      },
+    });
+  }
+
+  /**
    * Which of the given users have set a password, in one query (for lists). An empty input
    * answers an empty set without touching the database.
    */

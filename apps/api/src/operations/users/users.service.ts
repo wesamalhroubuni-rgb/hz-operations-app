@@ -260,6 +260,27 @@ export class UsersService {
   }
 
   /**
+   * BOOTSTRAP ONLY: creates the first user of a new organization with the password the operator
+   * chose (`pnpm db:bootstrap`). Only the system context may call it (`runAsSystem`, which cannot
+   * run inside a request), and `AuthAdminService.setFirstPassword` refuses a user who already has a
+   * password. The password is never stored, logged or returned here. No route calls this.
+   */
+  async createWithFirstPassword(input: CreateUser, password: string): Promise<UserFull> {
+    const context = await this.access.context();
+    if (!context.system) {
+      throw ApiException.forbidden('Only the bootstrap command creates a user with a password');
+    }
+    const { organizationId } = context;
+    return this.identifierConflictAsError(() =>
+      this.prisma.$transaction(async (tx) => {
+        const row = await this.insert(tx, organizationId, input);
+        await this.auth.setFirstPassword(tx, { userId: row.id, organizationId, password });
+        return toUserFull(row, true);
+      }),
+    );
+  }
+
+  /**
    * Changes a user the caller can see: an admin any field of anyone, everyone else only their
    * own display name (`canUpdateUser`). At least one login identifier must remain.
    */

@@ -21,6 +21,7 @@
     "db:logs": "docker compose logs -f postgres",
     "db:migrate": "pnpm --filter @ops/api db:migrate",
     "db:seed": "pnpm --filter @ops/shared build && pnpm --filter @ops/api db:seed",
+    "db:bootstrap": "pnpm --filter @ops/shared build && pnpm --filter @ops/api db:bootstrap",
     "db:reset": "pnpm --filter @ops/shared build && pnpm --filter @ops/api db:reset"
   },
   "prettier": "@ops/config/prettier.config.mjs",
