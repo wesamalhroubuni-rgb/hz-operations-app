@@ -219,7 +219,7 @@ Use the Android emulator `hz_pixel` as in README section 6 ("Start it": emulator
     set the site to **North Depot**, save. The photo uploads with progress; the log is under
     Logs. Open it and edit it.
 18. Profile: name, role, organization, push status (off in Expo Go on Android), app version,
-    "Powered by Kaneri.ai".
+    the Theme and Language choices (since 2026-11-17 there is no "Powered by Kaneri.ai" line).
 
 ### E. Review and notifications (Phases 4 and 6)
 

@@ -20,5 +20,7 @@ export const brand = {
     width: 512,
     height: 512,
     alt: `${env.brandName} logo`,
+    /** The emblem cropped to its ring, for the black brand areas (readable small). */
+    markSrc: '/brand/logo-mark.png',
   },
 } as const;

@@ -32,16 +32,16 @@ Naming: never hard-code a client name. The name shown in the apps comes from
 `NEXT_PUBLIC_BRAND_NAME` / `EXPO_PUBLIC_BRAND_NAME` through each app's brand module. "Operations"
 stays as the technical name (folder, `@ops/*`, `src/operations`, database `operations_app`).
 
-State on 2026-11-16: Phases 1 to 7 are committed (Phase 7 intelligent layer v1: `3bfad42`; seed
-and Expo Go fixes: `5038c71`). The development database was reset and has all nine
-migrations, and the owner ran the app on a real Android phone in Expo Go for the first time.
-Uncommitted: an organization's own AI keys and model choice (ADR-0012, Settings "Your AI
-keys"), live updates (phone sync every 15 s in the foreground, dashboard lists every 15 s), a
-light theme with a System / Dark / Light choice on the dashboard and the phone (the phone's not
-yet looked at on screen), notifications resolved once they ask for nothing more
-(`Notification.resolvedAt`), and the product name no longer repeated next to the logo; the API
-has 80 paths; all 1,719 integration tests pass. **No real AI provider has been called yet** (all AI off by default). The combined manual test of Phases 4 to 7
-(`docs/reports/phase-7.md`) is open. Phase 8 (Hardening & release) is next. See
+State on 2026-11-17: Phases 1 to 7 are committed and Phase 8 (Hardening & release) has started.
+Last commit `4fd59c7`; `origin/main` is at `644b773` (three local commits unpushed). Since
+Phase 7: organization AI keys and models (ADR-0012), live updates, light theme, resolved
+notifications, a redesign of both apps, Turkish and Arabic in both apps (chosen per browser or
+phone, ADR-0015), the smart capture answer as a field list with prompt v3 (ADR-0014), and the
+production bootstrap `pnpm db:bootstrap` (ADR-0013) with EAS `preview` / `production` profiles
+and `docs/release/`. The API has 80 paths; all 1,724 integration tests pass. The real Claude
+answered one English capture (2026-11-17); every other real AI path is untried, and all AI is off
+by default. The phone has run in Expo Go, but the 2026-11-17 phone changes have not been seen on
+a screen. The combined manual test of Phases 4 to 7 (`docs/reports/phase-7.md`) is open. See
 [MEMORY.md](MEMORY.md).
 
 ## Engineering principles
@@ -111,10 +111,11 @@ All from the repo root. Package names: `@ops/api`, `@ops/web`, `@ops/mobile`, `@
 | Formatting                        | `pnpm format` (writes), `pnpm format:check`                                                           |
 | Migrations                        | `pnpm db:migrate` (`prisma migrate dev`); `pnpm --filter @ops/api db:deploy`                          |
 | Demo data                         | `pnpm db:seed` (idempotent). `pnpm db:reset` wipes the dev database: **owner only**                   |
+| Real organization, no demo data   | `pnpm db:bootstrap` with the `BOOTSTRAP_*` variables (ADR-0013); never `db:seed` in production        |
 | Other Prisma                      | `pnpm --filter @ops/api db:generate`, `db:studio`                                                     |
 
 Ports: API 3001 on `127.0.0.1` (`/health`; in development also `/docs`, `/docs-json`,
-`/docs-yaml`), web 3000, Metro 8081, PostgreSQL 5432 (5433 on the owner's PC through the local
+`/docs-yaml`), web 3000 (3200 on the owner's PC, opened as `http://127.0.0.1:3200`), Metro 8081, PostgreSQL 5432 (5433 on the owner's PC through the local
 `.env`, because another project's PostgreSQL holds 5432), MinIO 9000 (S3 API) and 9001 (console).
 
 Calling the API in development: `POST /auth/login` with `"client": "mobile"` and send
@@ -370,7 +371,9 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   UX only. Security headers are in `next.config.ts` (no `script-src` CSP yet: needs nonces).
 - Web dashboard (Phase 6, ADR-0009): **every user-facing string goes through `t('...')`** from
   `src/i18n`; the catalogue is one file per namespace in `src/i18n/en/` (add keys to your page's
-  file, `core.ts` only for shared words). **Never use a plural category name (`zero`, `one`,
+  file, `core.ts` only for shared words), **with the same key in `src/i18n/tr/` and `ar/`** (the
+  typecheck fails otherwise; ADR-0015). The language is a per-browser choice applied by
+  `LanguageGate`; read it with `currentLocale()` / `localeTag()`, never a constant. **Never use a plural category name (`zero`, `one`,
   `two`, `few`, `many`, `other`) as a plain key**: an object with `other` is read as plural forms.
   **Logical CSS only** (`margin-inline-start`, `inset-inline-end`, `text-align: start`), never
   `left` / `right`. Server data through TanStack Query (`src/lib/api/query.ts`, the `queryKeys`
@@ -379,16 +382,22 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   (`next/dynamic` with `ssr: false`, `src/components/map/`); never import it from a server
   component. Show times only through `useOrgTime()` and filter days only through
   `zonedDaysRange`: the shell renders pages only after the organization's time zone has loaded
-  (`orgTimeGate`). On the owner's PC port 3000 is taken: use `WEB_PORT` (for example 3100) and put
-  that origin in `CORS_ORIGINS` and `WEB_APP_URL`.
+  (`orgTimeGate`). On the owner's PC port 3000 is taken and another project holds port 3001 on
+  IPv6: the local `.env` uses `WEB_PORT=3200`, `NEXT_PUBLIC_API_URL=http://127.0.0.1:3001`, and
+  the `127.0.0.1:3200` origin in `CORS_ORIGINS` and `WEB_APP_URL`; the dashboard runs there as a
+  production build (`build`, then `start`; rebuild after a web change) because the dev server
+  lags.
 - Mobile: no `metro.config.js` or `babel.config.js` (Expo defaults handle the pnpm layout). ESLint
   sets `settings.react.version` to `'19.2'` by hand; bump it when React changes. No `build` script
   by design. Expo config is `app.config.ts` (there is no `app.json`); it repeats the brand-name
   fallback from `src/config/env.ts` because it cannot import it. Expo Go shows its own icon and
-  splash. A phone cannot reach `localhost`: a phone test needs `API_HOST=0.0.0.0`,
-  `MINIO_BIND_HOST=0.0.0.0`, and the PC's address in `EXPO_PUBLIC_API_URL` and
-  `STORAGE_PUBLIC_ENDPOINT` (README section 5). No phone test has been done yet. The translation
-  core comes from `@ops/shared` (`src/i18n/translate.ts` only re-exports it).
+  splash; Android Expo Go must be the SDK 57 client (the Play Store offers SDK 58). A phone
+  reaches the PC's `localhost` only through `adb reverse` over USB (how the owner's phone runs,
+  since 2026-11-16); over a network it needs `API_HOST=0.0.0.0`, `MINIO_BIND_HOST=0.0.0.0`, and
+  the PC's address in `EXPO_PUBLIC_API_URL` and `STORAGE_PUBLIC_ENDPOINT` (README section 5). The
+  translation core comes from `@ops/shared` (`src/i18n/translate.ts` only re-exports it).
+  `eas.json` has `development`, `preview` (APK), and `production` (app bundle) profiles
+  (`docs/release/android-release.md`); none has been built.
 - Mobile rules: **every write goes through `src/data/repositories.ts` → the user's write queue**
   (`src/offline/writeQueue.ts`); the sync engine sends it. Screens never call `apiClient`, the
   queue, or the engine to change data; reads come from the local store through
@@ -396,8 +405,10 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
   per user (`offline-photos/<userId>/`): never read or send one user's data while another is
   signed in. **Never delete a queued write silently**: only when the server accepted it, when the
   worker discards it, or by the kept-queue rule (an explicit "keep for later" sign-out, after 30
-  days). **Every user-facing string goes through `src/i18n`** (`t('...')`, catalogue `en.ts`; a
-  new API error code needs a `sync.reasons` text; styles use `start` / `end`, never `left` /
+  days). **Every user-facing string goes through `src/i18n`** (`t('...')`, catalogues `en.ts`,
+  `tr.ts`, `ar.ts`, every key in all three; a new API error code needs a `sync.reasons` text;
+  `localeTag()` is a function and `brand` labels are getters, so text follows the language chosen
+  in Profile; styles use `start` / `end`, never `left` /
   `right`). **Tokens and the offline identity only in SecureStore**; form drafts in AsyncStorage
   (`src/storage/`), deleted after 14 days. Android Expo Go has no remote push; push
   needs the development build (`expo-dev-client`, `eas.json`, `dev:client`) and

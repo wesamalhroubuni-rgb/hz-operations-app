@@ -23,7 +23,7 @@ export function BrandBand({
   return (
     <View style={[styles.band, safeTop ? { paddingTop: insets.top + spacing.md } : null]}>
       <Image
-        source={brand.logo.source}
+        source={brand.logo.mark}
         style={styles.logo}
         accessible
         accessibilityRole="image"
@@ -54,8 +54,8 @@ const useStyles = makeStyles((colors) => ({
     backgroundColor: colors.brandInk,
   },
   logo: {
-    width: 44,
-    height: 44,
+    width: 56,
+    height: 56,
   },
   text: {
     flex: 1,

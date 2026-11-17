@@ -31,7 +31,7 @@ export function AuthScreenLayout({
         >
           <View style={[styles.hero, { paddingTop: insets.top + spacing.xxl }]}>
             <Image
-              source={brand.logo.source}
+              source={brand.logo.mark}
               style={styles.logo}
               accessible
               accessibilityRole="image"

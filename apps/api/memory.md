@@ -1,6 +1,7 @@
 # apps/api memory
 
-Package `@ops/api`. Last updated: 2026-11-16 (ADR-0012, organization AI keys).
+Package `@ops/api`. Last updated: 2026-11-17 (production bootstrap, capture answer format, prompt
+v3).
 
 ## Purpose
 
@@ -9,10 +10,52 @@ permission rules, photo storage, notifications, the audit trail, the event outbo
 layer. Both clients (web and mobile) talk only to this API (and to object storage through URLs it
 signs); only the API talks to the AI providers.
 
-## Organization AI keys and models (2026-11-16, ADR-0012, uncommitted)
+## Production bootstrap (2026-11-17, ADR-0013, `4fd59c7`)
 
-An admin stores the organization's own Claude / OpenAI key and chooses the models; tested with
-network-free provider factories only (**no real key tried yet**). Migration
+`pnpm db:bootstrap` (root: builds `@ops/shared`, then the API script) creates the deployment's
+real organization and its first administrator, with no demo data.
+
+- `package.json` `db:bootstrap`: `prisma generate`, compile `src` into
+  `node_modules/.cache/ops-seed` (like the seed), copy the prompts, then
+  `dotenv -e ../../.env -- tsx prisma/bootstrap.ts`. It sets **no `NODE_ENV`** (the seed sets
+  `development`), so the environment check runs as in production unless the environment says
+  otherwise: the placeholder secrets of `.env.example` are refused.
+- `prisma/bootstrap.ts` reads `BOOTSTRAP_ORG_NAME`, `BOOTSTRAP_ORG_SLUG`, `BOOTSTRAP_TIME_ZONE`,
+  `BOOTSTRAP_LOCALE` (default `en`), `BOOTSTRAP_ADMIN_NAME`, `BOOTSTRAP_ADMIN_EMAIL`,
+  `BOOTSTRAP_ADMIN_PASSWORD` (read as is, never printed) and prints the created ids and the slug
+  to put into the clients' slug variables. These variables are not in `config/env.ts` or
+  `turbo.json`.
+- `src/operations/seed/bootstrap-organization.ts` (`bootstrapOrganization(app, input)`):
+  idempotent on the slug; checks the password policy before any write; writes the organization
+  directly (settings `timeZone`, `locale`, the default edit window) and records it through
+  `ChangeRecorder`; then under `runAsSystem` creates the admin with
+  `UsersService.createWithFirstPassword` (refuses anything but the system context, 403) and an
+  org-wide `admin` membership through `MembershipsService`.
+- `AuthAdminService.setFirstPassword(tx, input)`: sets a password only for a user without an
+  `AuthCredential` (409 otherwise), applies the policy, hashes it; allowed in every environment
+  (unlike `setPasswordForSeed`); writes no audit event of its own.
+- Test: `test/bootstrap.int-spec.ts` (5 tests: creates and signs in, no demo rows, idempotent,
+  weak password and bad input refused before any write, refused outside the system context).
+  Never run against a real database yet.
+
+## Smart capture answer and prompt v3 (2026-11-17, ADR-0014)
+
+- The first real Claude call (`claude-opus-5-5`, organization key) answered HTTP 400: the
+  structured-output schema had 33 union-typed parameters, Anthropic allows 16. The schema is
+  built in `@ops/shared` (`buildCaptureOutputSchema`) and now lists field values
+  (`fields: [{ field: '<logType>.<field>', value, confidence }]`, at most six unions); the
+  capture service and `capture.spec.ts` follow it. After the fix a real English capture
+  succeeded (as reported).
+- `CAPTURE_EXTRACT_PROMPT` is `smart-capture-extract` **v3** (`smart-capture.service.ts`): v2
+  describes the list format, v3 asks for the proposed `text` as the worker's note polished in the
+  worker's own language, never translated. v1 and v2 stay for the traces. The summary prompt is
+  still `daily-summary-narrative` v1.
+
+## Organization AI keys and models (2026-11-16, ADR-0012, committed in `644b773`)
+
+An admin stores the organization's own Claude / OpenAI key and chooses the models. Tested with
+network-free provider factories; on 2026-11-17 a real Claude key was saved through the dashboard
+and used for a capture (as reported). Migration
 `20261116090000_ai_provider_keys`: table `AiProviderKey` (unique per organization and provider;
 `ciphertext`, `iv`, `authTag`, `keyVersion`, `hint`, `updatedById`; FK to `Organization`
 `ON DELETE RESTRICT`) and enum `AiKeyProvider` (`anthropic`, `openai`). 2 paths, 3 routes.
@@ -49,7 +92,7 @@ network-free provider factories only (**no real key tried yet**). Migration
   `AI_REAL_PROVIDER_FACTORIES` (`test/support/test-app.ts`); new suite `test/ai-keys.int-spec.ts`
   and a matrix row; unit specs `ai-key-checker.spec.ts`, `crypto/secret-box.spec.ts`.
 
-## Resolved notifications (2026-11-16, uncommitted)
+## Resolved notifications (2026-11-16, committed in `644b773`)
 
 Migration `20261116120000_notification_resolved_at` adds `Notification.resolvedAt`.
 `NotificationService.resolve(organizationId, ids, at)` (platform, knows no types, idempotent)
@@ -67,7 +110,8 @@ done). Applied to the development database with `pnpm --filter @ops/api db:deplo
 
 ## Phase 7 additions (2026-10-30 to 2026-11-02, ADR-0010, ADR-0011)
 
-Committed in `3bfad42` (2026-11-02). **No real provider has been called.** Migration `20261030090000_phase7_ai`: tables `SmartCapture`,
+Committed in `3bfad42` (2026-11-02). The first real provider call was on 2026-11-17 (above).
+Migration `20261030090000_phase7_ai`: tables `SmartCapture`,
 `DailySummary`, `AnomalyFlag` (operations) and `AiTrace` (platform), seven enums,
 `WorkLogSource.ai` renamed in place to `ai_assisted`, FK `SmartCapture.workLogId` to `WorkLog`
 (`ON DELETE RESTRICT`, unique). 10 new paths (11 routes), five policies.
@@ -91,7 +135,7 @@ Committed in `3bfad42` (2026-11-02). **No real provider has been called.** Migra
 - **Operations `src/operations/ai/`**: `ai.module.ts` (`OperationsAiModule`, imported by
   `OperationsModule`; `OPERATIONS_PROMPTS_DIRECTORY`), `organization-ai-limits.ts`,
   `ai-usage.controller.ts` (`GET /ai/usage`), `day-column.ts`, `prompts/`
-  (`smart-capture-extract.v1.md`, `daily-summary-narrative.v1.md`).
+  (`smart-capture-extract.v1.md` to `v3.md`, `daily-summary-narrative.v1.md`).
   - `capture/`: `smart-capture.controller.ts` (six routes; `POST /ai/capture` and `/discard`
     `@Idempotent()`, `/process` and `/upload-url` not, accepted in review),
     `smart-capture.service.ts` (create, upload URL with the API-chosen key
@@ -160,7 +204,9 @@ profile maps `locale`, the organization summary maps `timeZone` (`settings.timeZ
 
 ## Current state
 
-Phase 7 committed (`3bfad42`), the seed fix in `5038c71` (2026-11-16); ADR-0012 uncommitted.
+Phase 7 committed (`3bfad42`), the seed fix in `5038c71` (2026-11-16); ADR-0012, resolved
+notifications, and the capture format fix in `644b773`, prompt v3 in `2131bdf`, the bootstrap in
+`4fd59c7` (all 2026-11-17; only `644b773` pushed).
 
 - **80 paths**: the Phase 2 resources, nine `/auth/*` routes, the two user code routes, from
   Phase 4 `POST /attachments/:id/complete`, `POST /attachments/:id/upload-url`, and five
@@ -207,18 +253,20 @@ Phase 7 committed (`3bfad42`), the seed fix in `5038c71` (2026-11-16); ADR-0012 
   `ChangeRecorder`. Auth security events and push token changes go to the audit log only;
   notification rows are not audited.
 - **Swagger** at `/docs`, `/docs-json`, `/docs-yaml`, in development only, with a bearer scheme.
-- **Tests**: 734 unit tests in 37 suites (2026-11-16); integration 1,719 tests in 29 suites,
-  all passing (2026-11-16).
+- **Tests**: 734 unit tests in 37 suites (2026-11-17); integration 1,724 tests in 30 suites,
+  all passing (2026-11-17, as reported).
 
-Verified on 2026-11-16: `pnpm test` (docs-keeper); `pnpm test:integration` all 1,719 pass and
-`format:check` passes (as reported by the coordinator); the development database
-`operations_app` was reset (the stray Phase 5 migration is gone) and has all nine migrations.
+Verified on 2026-11-17: `pnpm test` (docs-keeper); `pnpm test:integration` all 1,724 pass, lint,
+typecheck, and `format:check` (as reported by the coordinator); one real Claude capture in
+English through an organization key (as reported). Verified on 2026-11-16: the development
+database `operations_app` was reset (the stray Phase 5 migration is gone) and has all nine
+migrations.
 Verified in the Phase 7 session (2026-11-02): integration tests, lint, typecheck, format check, and build (prompt files present in
 `dist/operations/ai/prompts/`) as reported by the coordinator. Earlier (Phase 4): storage against
-the real MinIO, a live in-app notification, push token removal on sign-out. **Not verified**: any
-real AI provider (an organization key check against Anthropic or OpenAI, Claude's acceptance of
-`output_config`, the refusal fallback beta, OpenAI with the phone's m4a), real Expo push
-delivery, any storage provider other than MinIO.
+the real MinIO, a live in-app notification, push token removal on sign-out. **Not verified**:
+Claude with a photo, a real summary narrative, Turkish or Arabic input, the refusal fallback
+beta, any OpenAI call (key check or the phone's m4a), real Expo push delivery, any storage
+provider other than MinIO, `db:bootstrap` against a real database.
 
 ## Layout
 
@@ -292,7 +340,7 @@ src/
                           operations-notifications.service.ts (registers the outbox handlers,
                           renders per recipient locale), module
     scope/                resolve-scope.ts (pure), scope.service.ts, scope.controller.ts
-    seed/                 demo-seed.ts (DEV_PASSWORDS)
+    seed/                 demo-seed.ts (DEV_PASSWORDS), bootstrap-organization.ts (ADR-0013)
   generated/              Prisma client. Git-ignored. Never edit
 prisma/
   schema.prisma
@@ -302,6 +350,7 @@ prisma/
                           20261030090000_phase7_ai, 20261116090000_ai_provider_keys,
                           20261116120000_notification_resolved_at
   seed.ts                 entry point of the seed
+  bootstrap.ts            entry point of db:bootstrap (BOOTSTRAP_* variables)
 scripts/
   copy-prompts.mjs        copies the prompt files into the seed build
 test/
@@ -329,7 +378,7 @@ test/
 | `src/platform/auth/auth.guard.ts`                          | The one global guard: development-only 404, public, authenticate (bearer or cookie, database check), CSRF, actor, policy. Order in its header comment.                                        |
 | `src/platform/auth/auth.service.ts`                        | Login (slug rule, lockout, generic failure), refresh, logout, sessions, set-password, change-password, the security audit events.                                                             |
 | `src/platform/auth/sessions.ts`                            | Session creation, refresh rotation with the race and reuse rule, revocation, and the `onSessionsEnded` hook (push tokens go with the session).                                                |
-| `src/platform/auth/auth-admin.service.ts`                  | The contract for business modules: `issueOneTimeCode`, `revokeUserSessions`, `listUserSessions`, `setPasswordForSeed`, `isActivated`, `activatedUserIds`.                                     |
+| `src/platform/auth/auth-admin.service.ts`                  | The contract for business modules: `issueOneTimeCode`, `revokeUserSessions`, `listUserSessions`, `setPasswordForSeed`, `setFirstPassword` (bootstrap), `isActivated`, `activatedUserIds`.     |
 | `src/platform/auth/auth-settings.ts`                       | Every auth setting and the default rate limits.                                                                                                                                               |
 | `src/platform/authz/policy.decorator.ts`                   | `@Policy`, `@Authenticated`, `@DevelopmentOnly`.                                                                                                                                              |
 | `src/platform/http/api-exception.filter.ts`                | Standard error body; maps Prisma `P2002` to 409, `P2003` to 422, `P2025` to 404; sets `Retry-After`.                                                                                          |
@@ -346,6 +395,7 @@ test/
 | `src/operations/common/references.ts`                      | `assertActiveReferences` (exists, same organization, not archived, visible to the caller, else 422) and `assertValidParent`.                                                                  |
 | `src/operations/scope/resolve-scope.ts`                    | The scope rules (1 to 8, including `colleagueIds`), as a pure function.                                                                                                                       |
 | `src/operations/seed/demo-seed.ts`                         | The demo data, `DEV_PASSWORDS`, and `seedDemo(app)`.                                                                                                                                          |
+| `src/operations/seed/bootstrap-organization.ts`            | `bootstrapOrganization(app, input)`: the real organization and its first admin, no demo data (ADR-0013).                                                                                      |
 | `test/support/test-app.ts`                                 | The integration harness: `as(userId)`, `loginAs`, `bearer`, `browser()`, `clock`, `notifications`, `rateLimiter`, the fake storage and Expo client.                                           |
 | `prisma.config.ts`                                         | Prisma 7 config. Attaches `DATABASE_URL` only when set.                                                                                                                                       |
 | `eslint.config.mjs`                                        | Base config, decorator parser options, and the rule that forbids `src/platform` importing `src/operations`.                                                                                   |
@@ -412,8 +462,8 @@ values. `DEV_AUTH_ENABLED` no longer exists.
 ## Scripts
 
 Run from the repo root as `pnpm --filter @ops/api <script>`. The root has shortcuts for
-`db:migrate`, `db:seed`, `db:reset`, and `test:integration` that build `@ops/shared` first where
-needed.
+`db:migrate`, `db:seed`, `db:bootstrap`, `db:reset`, and `test:integration` that build
+`@ops/shared` first where needed.
 
 | Script             | Command                                                                                                                                                                    |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -428,6 +478,7 @@ needed.
 | `db:migrate`       | `prisma migrate dev` with the root `.env`                                                                                                                                  |
 | `db:deploy`        | `prisma migrate deploy` with the root `.env`                                                                                                                               |
 | `db:seed`          | `prisma generate`, compile `src` into `node_modules/.cache/ops-seed`, copy the prompt files there (`scripts/copy-prompts.mjs`), then `tsx prisma/seed.ts` in `development` |
+| `db:bootstrap`     | Like `db:seed` (same compile and prompt copy), then `tsx prisma/bootstrap.ts` with the root `.env` and **no** `NODE_ENV` (ADR-0013)                                        |
 | `db:reset`         | `prisma migrate reset --force`, then `db:seed`. **Owner only, never an agent** (last run by 2026-11-16).                                                                   |
 | `db:studio`        | `prisma studio` with the root `.env`                                                                                                                                       |
 | `postinstall`      | `prisma generate`                                                                                                                                                          |
@@ -474,8 +525,8 @@ needed.
   (`storage.spec.ts`), notifications and Expo push, the outbox consumer, the notification rules,
   and `route-policies.spec.ts`. Running it at the same time as other packages' test runners once
   failed four suites to load on 2026-10-17; a rerun alone passed.
-- **Integration** (`pnpm test:integration`): `test/*.int-spec.ts`, 29 suites, 1,719 tests
-  (2026-11-16, all passing), about 5 minutes. Phase 7
+- **Integration** (`pnpm test:integration`): `test/*.int-spec.ts`, 30 suites, 1,724 tests
+  (2026-11-17, all passing as reported; the newest suite is `bootstrap`), about 5 minutes. Phase 7
   suites: `ai-platform` (traces, limits, decisions), `smart-capture`, `smart-capture-safety`
   (another worker's capture, prompt injection, hostile model output), `ai-summaries`,
   `ai-summaries-scope` (two supervisors, scope changes, flags), `ai-off` (core with AI off), and
@@ -549,14 +600,16 @@ needed.
 - **Rate limits are in memory per process** (sign-in, upload steps, and the per-user AI limit),
   and so are the decode limit and the summary scheduler's back-off; a restart clears them,
   several instances count separately. Bind a shared store under `RATE_LIMITER` before scaling out.
-- **AI (Phase 7)**: never called a real provider. AI daily limits count per UTC day, not the
+- **AI (Phase 7)**: one real Claude capture in English (2026-11-17); everything else only with
+  the fakes. AI daily limits count per UTC day, not the
   organization's day. A model missing from the price table counts $0 against the cost limit.
   Anomaly parameters are counted over the organization's data, so a reader may see a count that
   includes records outside their scope (accepted, ADR-0011). Summary and notification texts and
   the prompts exist in English only (Turkish and Arabic fall back per key). Flags are computed
   once a day at summary time. The scheduler, the capture retention job, and the trace purge run
   in every API process (each claims its rows; the unique keys decide).
-- **AI keys (ADR-0012)**: never checked against a real provider. The 5-per-minute key-check limit
+- **AI keys (ADR-0012)**: one Claude key checked and saved (2026-11-17); no OpenAI key yet. The
+  5-per-minute key-check limit
   is in memory. A model changed in Settings after a key was saved is not re-checked (calls then
   end `rejected`). Changing `AI_KEYS_ENCRYPTION_SECRET` makes stored keys unreadable; no rotation.
 - **Lockout can be used to keep a known account locked** (accepted, ADR-0004).

@@ -1,6 +1,9 @@
 # ADR-0010: AI layer architecture, providers, data handling, and cost controls
 
-- **Status**: Accepted
+- **Status**: Accepted; amended in part by
+  [ADR-0014](0014-smart-capture-answer-as-field-list.md) (2026-11-17: the capture output lists
+  field values instead of a union of log types with every field present; the proposed text is
+  the worker's note polished in its own language)
 - **Date**: 2026-10-30
 - **Phase**: 7
 

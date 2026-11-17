@@ -10,17 +10,22 @@ with unusual items flagged. The AI only proposes; a person decides.
 technical name "Operations". The name shown in the apps comes from configuration, so the same code
 can be deployed for another client.
 
-**Status (2026-11-02)**: Phase 7, the intelligent layer (smart capture and daily summaries), code
-complete and tested with built-in fake AI providers; no real AI key has been used yet (section
-11). Workers sign in on the phone, see and update their tasks, and create work logs with text,
+**Status (2026-11-17)**: Phases 1 to 7 are done in code and Phase 8 (Hardening & release) has
+started: a command creates a real organization with no demo data (`pnpm db:bootstrap`), and
+[docs/release/android-release.md](docs/release/android-release.md) is the guide to Google Play.
+The AI was first run against the real Claude on 2026-11-17 (one English capture; section 11);
+everything else AI runs on built-in fake providers. Both apps are in English, Turkish, and Arabic
+(chosen in the dashboard's account menu or sign-in page, and in the phone's Profile). Workers
+sign in on the phone, see and update their tasks, and create work logs with text,
 photos, location, and custom fields, with or without a connection, or let the AI propose one from
-a voice note, photo, or typed note (not yet run on a phone or in the emulator). They get in-app
+a voice note, photo, or typed note (the app has run on one Android phone in Expo Go; the full phone
+test is not done). They get in-app
 (and, in a development build, push) notifications when a task is assigned or a log is approved or
 rejected. Supervisors, managers, and admins use the web dashboard: an overview of the day with
 their daily summary and unusual items, work logs with review and approval, tasks, a map, CSV
 exports and a printable report, and for admins people, structure, the audit log, settings
-(including the AI switches), and AI usage. Nobody has used the dashboard in a browser with data
-yet. Photos are stored in S3-compatible storage (MinIO in development). See
+(including the AI switches and keys), and AI usage. Nobody has worked through the dashboard in a
+browser with data yet (only automated screenshots exist). Photos are stored in S3-compatible storage (MinIO in development). See
 [ROADMAP.md](ROADMAP.md); the full manual test of Phases 4 to 7 is in
 [docs/reports/phase-7.md](docs/reports/phase-7.md).
 
@@ -36,6 +41,7 @@ This guide is for a developer on Windows 11 using PowerShell.
 | `packages/shared` | Validation schemas, the typed API client, the sign-in session manager, and the design tokens |
 | `packages/config` | Shared ESLint, Prettier, and TypeScript settings                                             |
 | `docs/decisions`  | Architecture Decision Records                                                                |
+| `docs/release`    | The Android release checklist and a privacy policy draft                                     |
 | `docs/brand`      | The client's logo files                                                                      |
 
 More documentation:
@@ -45,6 +51,8 @@ More documentation:
 - [ROADMAP.md](ROADMAP.md): the phases and what "done" means for each
 - [MEMORY.md](MEMORY.md): current state, known limitations, and session log
 - [docs/decisions/](docs/decisions/README.md): why the main decisions were made
+- [docs/release/android-release.md](docs/release/android-release.md): taking the app to Google
+  Play and the dashboard and API to production (section 12)
 - [AGENTS.md](AGENTS.md): rules for AI agents working in this repository
 
 ## 1. Prerequisites
@@ -135,6 +143,18 @@ pnpm lint
 pnpm typecheck
 pnpm test
 ```
+
+### Updating an existing checkout to the changes of 2026-11-17
+
+The redesign, Turkish and Arabic, the smart capture fix for the real Claude, and the production
+bootstrap. No migration and no new package.
+
+1. Nothing to add to `.env` for development. The new `BOOTSTRAP_*` block at the end of
+   `.env.example` is only for `pnpm db:bootstrap` on a real server (section 12).
+2. Restart `pnpm dev` (or rebuild and restart the dashboard, see section 3), and start Expo once
+   with `--clear`.
+3. On the phone, a switch to or from Arabic in Profile → Language changes the layout direction
+   only after the app is closed and opened again.
 
 ### Updating an existing checkout to the changes of 2026-11-16
 
@@ -295,18 +315,38 @@ default Europe/Istanbul). The map loads its tiles from OpenStreetMap unless
 one only when the admin role is among the recipients); the Overview shows the latest one and the
 unusual items once daily summaries are switched on (section 11).
 
-**If port 3000 is taken** (on the owner's PC it is used by another project), pick another port
-and tell the API about the new address, then restart `pnpm dev`. In `.env`:
+**If port 3000 is taken**, pick another port and tell the API about the new address, then restart
+`pnpm dev`. `CORS_ORIGINS` may list several origins separated by commas; it must contain the
+exact address you open the dashboard from, or sign-in answers 403. `WEB_APP_URL` is where
+activation links point.
+
+**On the owner's PC** (since 2026-11-17) port 3000 is used by another project, and another
+project also listens on port 3001 over IPv6, so `localhost:3001` in a browser may reach that
+project instead of this API. Use `127.0.0.1` everywhere the browser is involved. The local `.env`
+has:
 
 ```dotenv
-WEB_PORT=3100
-CORS_ORIGINS=http://localhost:3100
-WEB_APP_URL=http://localhost:3100
+WEB_PORT=3200
+NEXT_PUBLIC_API_URL=http://127.0.0.1:3001
+CORS_ORIGINS=http://127.0.0.1:3200,http://localhost:3200
+WEB_APP_URL=http://127.0.0.1:3200
 ```
 
-`CORS_ORIGINS` may list several origins separated by commas; it must contain the exact address
-you open the dashboard from, or sign-in answers 403. `WEB_APP_URL` is where activation links
-point.
+There the development server of the dashboard is slow, so run it as a production build in its
+own terminal (with the database and the API running):
+
+```powershell
+pnpm --filter @ops/web build
+pnpm --filter @ops/web start
+```
+
+Then open <http://127.0.0.1:3200>. Build again after any change to the web code or to a
+`NEXT_PUBLIC_*` value (they are fixed at build time). `next build` downloads the Inter and IBM
+Plex Sans Arabic fonts, so it needs an internet connection.
+
+**Language and theme**: the account menu has Theme (System / Dark / Light) and
+Language (System / English / Türkçe / العربية); the sign-in page has the language choice too.
+Both are remembered by this browser only.
 
 ## 4. Sign in and try the API
 
@@ -457,8 +497,9 @@ The owner confirmed sign-in for `aylin`, `selin`, and `deniz` on 2026-10-17. Not
 **First run on a real phone on 2026-11-16**: an Android phone connected by USB, with the three
 `adb reverse` commands of section 6 instead of the hotspot (so `.env` keeps `localhost`), in Expo
 Go 57.0.9. The Play Store already offers the Expo Go build for SDK 58, which cannot open this SDK
-57 project: install the SDK 57 Expo Go APK by hand instead. The full test below is not recorded
-as done.
+57 project: install the SDK 57 Expo Go APK by hand instead (from the releases of Expo Go on
+GitHub), and **turn off automatic updates for Expo Go** in the Play Store (on 2026-11-17 it had
+updated itself to SDK 58 overnight). The full test below is not recorded as done.
 Without a phone that can reach this PC, use the Android emulator instead (section 6).
 
 A phone cannot reach `localhost` on your PC. It needs the PC's address for three things: the API
@@ -710,6 +751,7 @@ served with `pnpm --filter @ops/mobile dev:client`. Foreground sync never depend
 | `pnpm db:logs`          | Follows the PostgreSQL logs (MinIO: `docker compose logs -f minio`)                    |
 | `pnpm db:migrate`       | Applies migrations, and creates one when the schema changed (`prisma migrate dev`)     |
 | `pnpm db:seed`          | Adds the demo data. Does nothing when the demo organization already exists             |
+| `pnpm db:bootstrap`     | Creates the real organization and its first admin, no demo data (section 12)           |
 | `pnpm db:reset`         | **Deletes all data** in the development database, re-applies the migrations, and seeds |
 
 `pnpm db:reset` acts on whatever database `DATABASE_URL` points at and does not ask. Check `.env`
@@ -819,6 +861,7 @@ comment.
 | `EXPO_PUBLIC_ORGANIZATION_SLUG`                                      | Mobile            | Same as the web variable, for the mobile app                                                                                         |
 | `EXPO_PUBLIC_EAS_PROJECT_ID`                                         | Mobile            | EAS project id from `eas init`; needed for push. Empty: no push, the in-app list still works                                         |
 | `EXPO_IOS_BUNDLE_IDENTIFIER`, `EXPO_ANDROID_PACKAGE`                 | Mobile            | App identifiers for builds; empty means `ai.kaneri.operations` (a placeholder until decided)                                         |
+| `BOOTSTRAP_*` (seven, see `.env.example`)                            | `db:bootstrap`    | The real organization and its first admin, for one run of `pnpm db:bootstrap` (section 12). Remove the password afterwards           |
 
 `NODE_ENV` is not in `.env`. The scripts set it: `pnpm dev` runs the API in `development`, and
 `pnpm --filter @ops/api start` runs it in `production`, where the API refuses the placeholder
@@ -945,6 +988,14 @@ stored keys become unreadable (the card says so) and must be pasted again. With
 AI): set `AI_PROVIDER=auto` (the default) and restart the API. Usage is billed to your provider
 account; the daily limits (**AI usage**) still apply.
 
+**Tried so far (2026-11-17)**: a Claude key pasted here and an English typed capture with Opus
+5.5. The proposed text is the worker's note tidied up (spelling, grammar, filler words removed)
+in the language the worker used; it is never translated. A low **daily request limit** in the AI
+settings stops captures with "limit reached" for the rest of the UTC day (the test runs of
+2026-11-17 stopped at a limit of 9): raise it before trying more. Photos (Snap), voice notes
+(needs the OpenAI key), daily summaries, and Turkish and Arabic input have not been tried with
+real providers yet.
+
 ### Try them without keys (the fake providers)
 
 With no key in `.env` the API uses built-in fake providers in development (the API log at start
@@ -1050,3 +1101,48 @@ open, never in the background. In the Android emulator the microphone is silent 
 on the host microphone (the emulator's "..." button, Microphone, "Virtual microphone uses host
 audio input"); with the fakes that does not matter, with the real speech-to-text a silent note
 ends "Couldn't understand".
+
+## 12. Release: a real organization and the Android app
+
+The full checklist (decisions, accounts, production server, the Android build, the Play Console
+listing, the data safety form) is [docs/release/android-release.md](docs/release/android-release.md);
+a privacy policy draft to complete and publish is
+[docs/release/privacy-policy.md](docs/release/privacy-policy.md). Nothing in it has been run yet
+(2026-11-17).
+
+### Create the real organization (no demo data)
+
+A production database starts empty. **Never run `pnpm db:seed` against it**: the seed creates the
+invented "HZ Demo" organization. Instead, after the migrations (`pnpm --filter @ops/api
+db:deploy`), create the real organization and its first administrator once
+([ADR-0013](docs/decisions/0013-production-bootstrap.md)):
+
+1. In the `.env` the command reads (the root one), set the `BOOTSTRAP_*` block from the end of
+   `.env.example`: `BOOTSTRAP_ORG_NAME`, `BOOTSTRAP_ORG_SLUG`, `BOOTSTRAP_TIME_ZONE`,
+   `BOOTSTRAP_LOCALE` (optional, `en` by default), `BOOTSTRAP_ADMIN_NAME`,
+   `BOOTSTRAP_ADMIN_EMAIL`, and `BOOTSTRAP_ADMIN_PASSWORD` (it must meet the password policy).
+2. Run `pnpm db:bootstrap` from the repository root. It prints the organization and the
+   administrator it created, never the password. If the slug exists already, it changes nothing.
+3. **Remove `BOOTSTRAP_ADMIN_PASSWORD`** (and the rest of the block) from `.env`.
+4. Set `NEXT_PUBLIC_ORGANIZATION_SLUG` and `EXPO_PUBLIC_ORGANIZATION_SLUG` to the new slug, then
+   sign in to the dashboard as that administrator and add sites, teams, log types, and people.
+
+The command runs the API's environment check like a production start (it sets no `NODE_ENV`, and
+unset means production), so the placeholder secrets of `.env.example` are refused.
+
+### Android builds
+
+`apps/mobile/eas.json` has three profiles: `development` (the development build of section 5),
+`preview` (an APK to install on test phones), and `production` (the app bundle for Google Play;
+EAS raises the version code by itself, and `submit` uploads to the internal testing track as a
+draft). From `apps\mobile`, after `npx eas-cli login` and `npx eas-cli init`:
+
+```powershell
+npx eas-cli build -p android --profile preview
+npx eas-cli build -p android --profile production
+npx eas-cli submit -p android --profile production
+```
+
+The production values (`EXPO_PUBLIC_API_URL` with https, the organization slug, the brand name,
+the EAS project id, `EXPO_ANDROID_PACKAGE`) are set in the EAS **production** environment, not in
+the local `.env` (release guide section 4).

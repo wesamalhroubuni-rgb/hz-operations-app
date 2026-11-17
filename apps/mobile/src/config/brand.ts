@@ -1,4 +1,5 @@
 import logo from '../../assets/brand/logo-512.png';
+import logoMark from '../../assets/brand/logo-mark.png';
 import { t } from '../i18n';
 import { env } from './env';
 
@@ -22,6 +23,8 @@ export const brand = {
   },
   logo: {
     source: logo,
+    /** The emblem cropped to its ring, for in-app use on the black brand areas (readable small). */
+    mark: logoMark,
     get accessibilityLabel(): string {
       return t('common.logoLabel', { brand: env.brandName });
     },

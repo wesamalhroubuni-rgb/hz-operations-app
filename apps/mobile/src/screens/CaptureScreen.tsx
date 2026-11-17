@@ -5,6 +5,7 @@ import {
   spacing,
 } from '@ops/shared';
 import { useHeaderHeight } from '@react-navigation/elements';
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
@@ -18,6 +19,7 @@ import { ScreenContainer } from '../components/ScreenContainer';
 import { CaptureRow } from '../components/SmartCapture';
 import { useRepositories } from '../data/DataProvider';
 import { useSmartCapture } from '../data/queries';
+import { queryKeys } from '../data/queryKeys';
 import { PHOTO_STORAGE_FULL } from '../data/repositories';
 import { deleteLocalFile } from '../device/files';
 import { pickPhotos } from '../device/photos';
@@ -49,6 +51,7 @@ export function CaptureScreen({ route, navigation }: Readonly<StackScreenProps<'
   const [sendError, setSendError] = useState<string | null>(null);
   const [captureClientId, setCaptureClientId] = useState<string | null>(null);
   const capture = useSmartCapture(captureClientId ?? undefined);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     navigation.setOptions({ title: t(`capture.titles.${kind}`) });
@@ -103,6 +106,8 @@ export function CaptureScreen({ route, navigation }: Readonly<StackScreenProps<'
       return;
     }
     setCaptureClientId(result.data.captureClientId);
+    // The list on this screen and on Home reads the phone's store: show the new capture at once.
+    void queryClient.invalidateQueries({ queryKey: queryKeys.captures });
   }
 
   const openReview = () => {
@@ -142,7 +147,15 @@ export function CaptureScreen({ route, navigation }: Readonly<StackScreenProps<'
           </View>
         }
       >
-        {view ? <CaptureRow view={view} onPress={openReview} /> : null}
+        {view ? (
+          <CaptureRow view={view} onPress={openReview} />
+        ) : (
+          // Until the list has the new capture (a moment), say what happens instead of nothing.
+          <Card>
+            <AppText variant="bodyStrong">{t(`capture.kinds.${kind}`)}</AppText>
+            <AppText variant="small">{t('capture.status.waiting')}</AppText>
+          </Card>
+        )}
       </ScreenContainer>
     );
   }

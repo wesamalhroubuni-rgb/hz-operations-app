@@ -15,7 +15,7 @@ export function LoadingScreen() {
   return (
     <View style={styles.screen}>
       <Image
-        source={brand.logo.source}
+        source={brand.logo.mark}
         style={styles.logo}
         accessible
         accessibilityRole="image"

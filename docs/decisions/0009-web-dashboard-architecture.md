@@ -1,6 +1,9 @@
 # ADR-0009: Web dashboard architecture
 
-- **Status**: Accepted
+- **Status**: Accepted; amended in part by [ADR-0015](0015-interface-language-per-device.md)
+  (2026-11-17: Turkish and Arabic catalogues; the dashboard's language is a per-browser choice,
+  not `User.locale`) and, for the shell, by the 2026-11-17 redesign (no "Powered by Kaneri.ai"
+  line)
 - **Date**: 2026-10-28
 - **Phase**: 6
 

@@ -1,6 +1,6 @@
 # packages/shared memory
 
-Package `@ops/shared`. Last updated: 2026-11-16.
+Package `@ops/shared`. Last updated: 2026-11-17.
 
 ## Purpose
 
@@ -12,8 +12,10 @@ and wording that must behave the same on the server and in both apps, and the de
 
 Seven areas plus the health schema, all re-exported from `src/index.ts`. Phase 6 (2026-10-28)
 added the dashboard contracts, the time-zone, CSV, and locale helpers, and `src/i18n/`; Phase 7
-(2026-10-30 to 2026-11-02) the AI contracts (below); 2026-11-16 (uncommitted) the AI keys
-contract, the model choices, `refreshUser`, and the light theme (below).
+(2026-10-30 to 2026-11-02) the AI contracts (below); 2026-11-16 the AI keys contract, the model
+choices, `refreshUser`, and the light theme; 2026-11-17 the capture answer as a field list, the
+brand-area tokens, and the Turkish and Arabic sign-in wording (below). All committed
+(`644b773`, `2131bdf`, `ffaa5d8`).
 
 | Area              | Contents                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -24,13 +26,36 @@ contract, the model choices, `refreshUser`, and the light theme (below).
 | `src/platform/`   | `auth.ts` (the sign-in wire contract), `notifications.ts` (Phase 4), `offline-sync.ts` (Phase 5), `ai.ts` (Phase 7: usage report, trace enums), `ai-keys.ts` (ADR-0012), `audit.ts`, `outbox.ts`. `AUDIT_REDACTED`.                                                                                                                                                                                          |
 | `src/forms/`      | `custom-field-form.ts` (Phase 4): form descriptors, initial values, reconciling with a changed log type, number parsing, conversion to wire values through `validateCustomFieldValues`, mapping API error details back to fields.                                                                                                                                                                            |
 | `src/theme/`      | `tokens.ts`, `contrast.ts`, `css.ts`.                                                                                                                                                                                                                                                                                                                                                                        |
-| `src/api-client/` | `client.ts` (transport with auth hooks and refresh-once, `ApiResult`, `CSRF_HEADER`, `REQUEST_ID_HEADER`), `create-api-client.ts` (`createApiClient`), `auth-session.ts` (`createAuthSessionManager`), `auth-text.ts`, `auth-forms.ts`, `attachment-upload.ts` (Phase 4), `health-monitor.ts`, `health-status.ts`, `index.ts`.                                                                               |
+| `src/api-client/` | `client.ts` (transport with auth hooks and refresh-once, `ApiResult`, `CSRF_HEADER`, `REQUEST_ID_HEADER`), `create-api-client.ts` (`createApiClient`), `auth-session.ts` (`createAuthSessionManager`), `auth-text.ts`, `auth-translations.ts` (2026-11-17), `auth-forms.ts`, `attachment-upload.ts` (Phase 4), `health-monitor.ts`, `health-status.ts`, `index.ts`.                                          |
 
-815 unit tests in 18 files, confirmed on 2026-11-16 (Phase 6 added `csv.test.ts`,
+829 unit tests in 18 files, confirmed on 2026-11-17 (Phase 6 added `csv.test.ts`,
 `time-zone.test.ts`, `dashboard-contracts.test.ts`; Phase 7 `domain/ai-contracts.test.ts`;
-2026-11-16 added cases to `auth-session.test.ts` and `ai-contracts.test.ts`).
+2026-11-16 and 2026-11-17 added cases to `auth-session.test.ts`, `ai-contracts.test.ts`, and the
+theme tests).
 
-## Changes of 2026-11-16 (ADR-0012, live updates, light theme; uncommitted)
+## Changes of 2026-11-17 (ADR-0014, ADR-0015, redesign)
+
+- **Capture answer as a field list** (`domain/ai-capture-output.ts`, ADR-0014): the first real
+  Claude call was refused because the old schema (a union of log types, every field nullable) had
+  33 union-typed parameters and Anthropic allows 16. `CaptureModelOutput` is now `logTypeKey`
+  (offered key or null), `logTypeConfidence`, `fields: CaptureModelField[]` (`{ field:
+'<logTypeKey>.<fieldKey>', value, confidence }`; `captureFieldName()` builds the name), `taskRef`
+  / `siteRef` (or null) with confidences, `text` (or null) with its confidence, `occurredAt` (or
+  null). Confidences are never null. `buildCaptureOutputSchema` has at most six union-typed
+  parameters whatever is offered; `ai-contracts.test.ts` counts them in the JSON Schema
+  ("stays within the 16 union-typed parameters ..."). `interpretCaptureOutput` keeps the first
+  entry per field, ignores fields of other log types, and drops a value that fails its rule.
+- **Brand-area tokens** (`theme/tokens.ts`): `brandInk` (`#000000` in both themes),
+  `onBrandInk` (`#F5F1E8`), `onBrandInkMuted` (`#B3AC9F`), `brandInkRaised` (`#1C1A17`), with
+  contrast requirements for `onBrandInk`, `onBrandInkMuted`, and `brandGold` on `brandInk` and
+  `brandInkRaised`. Used for the dashboard sidebar, the phone's headers and brand band, and the
+  sign-in heroes.
+- **Sign-in wording in Turkish and Arabic** (`api-client/auth-translations.ts`):
+  `AUTH_TRANSLATIONS` `{ tr, ar }`, each an `AuthWording` (`text` keyed like `AUTH_TEXT`,
+  `failures` per `AuthFailureReason`, `notices` per `AuthSessionNotice`). Both apps' catalogues
+  take their sign-in texts from it; English stays in `auth-text.ts`.
+
+## Changes of 2026-11-16 (ADR-0012, live updates, light theme; committed in `644b773`)
 
 - **AI keys** (`platform/ai-keys.ts`): `AI_KEY_PROVIDERS` (`anthropic`, `openai`; must match the
   Prisma enum `AiKeyProvider`), `AI_KEY_SOURCES` (`organization`, `environment`, `test`, `none`),
@@ -57,9 +82,9 @@ contract, the model choices, `refreshUser`, and the light theme (below).
   key), `smartCaptureStartedSchema` (`{ capture, upload }`), proposal and confidence schemas,
   `aiWorkLogMetadataSchema`, `smartCaptureEndpoints` (`create`, `list`, `get`, `renewUpload`,
   `process`, `discard`).
-- **Capture output** (`domain/ai-capture-output.ts`): `buildCaptureOutputSchema` (a union over the
-  offered log types, every field present, select options as enums, references as enums, a
-  confidence per field), `toStructuredOutputJsonSchema`, `interpretCaptureOutput` (references to
+- **Capture output** (`domain/ai-capture-output.ts`): `buildCaptureOutputSchema` (in Phase 7 a
+  union over the offered log types with every field present; a field list since 2026-11-17,
+  above; select options as enums, references as enums), `toStructuredOutputJsonSchema`, `interpretCaptureOutput` (references to
   ids, field rules; a failing value is dropped), `compareWithProposal` (kept, changed, added).
 - **Settings** (`domain/ai-settings.ts`): `organizationAiSettingsSchema` (`settings.ai`),
   `aiSettingsOf`, `effectiveAiLimit`, `AI_SUMMARY_RECIPIENT_ROLES`, `DEFAULT_AI_SUMMARY_TIME`,
@@ -195,6 +220,7 @@ put, onProgress, checkpoint })` runs start, PUT, and complete and returns an
 | `src/api-client/create-api-client.ts` | `createApiClient(options)`: the transport plus every resource's endpoint functions, including `auth`.                                                               |
 | `src/api-client/auth-session.ts`      | `createAuthSessionManager` (web and mobile modes), `TokenStorage`, `AuthState`, `signInFailureReason`, `setPasswordFailure`.                                        |
 | `src/api-client/auth-text.ts`         | Every sign-in, activation, and sign-out sentence (`AUTH_TEXT`, `AUTH_FAILURE_MESSAGES`, `AUTH_NOTICE_MESSAGES`) and `roleLabel`.                                    |
+| `src/api-client/auth-translations.ts` | The same sign-in wording in Turkish and Arabic (`AUTH_TRANSLATIONS`), used by both apps' catalogues (2026-11-17).                                                   |
 | `src/api-client/auth-forms.ts`        | `validateSignInForm`, `validateSetPasswordForm`, `newPasswordProblem`, `isFormValid`.                                                                               |
 | `src/api-client/attachment-upload.ts` | `uploadAttachment` (resumable start, PUT, complete) and the retry helpers.                                                                                          |
 | `src/forms/custom-field-form.ts`      | The custom-field form logic the mobile app generates forms from.                                                                                                    |
@@ -204,7 +230,7 @@ put, onProgress, checkpoint })` runs start, PUT, and complete and returns an
 | `src/platform/offline-sync.ts`        | Offline sync headers, clock skew helpers, idempotency constants, audit metadata schema (Phase 5).                                                                   |
 | `src/domain/sync.ts`                  | `GET /sync/pull` schemas, constants, and endpoint (Phase 5).                                                                                                        |
 | `src/api-client/health-monitor.ts`    | `createHealthMonitor` with retries after 2, 4, 8, 16 seconds.                                                                                                       |
-| `src/theme/tokens.ts`                 | `darkTheme`, `lightTheme`, `themeForScheme`, `colors`, `spacing`, `radii`, `fontSizes`, `fontWeights`, `CONTRAST_REQUIREMENTS`.                                     |
+| `src/theme/tokens.ts`                 | `darkTheme`, `lightTheme` (with the brand-area tokens), `themeForScheme`, `colors`, `spacing`, `radii`, `fontSizes`, `fontWeights`, `CONTRAST_REQUIREMENTS`.        |
 | `tsconfig.json`                       | Extends `@ops/config/tsconfig/library.json`. Adds the `DOM` lib, only for `fetch`, `AbortController`, and timers.                                                   |
 
 ## The API client and the session manager
@@ -243,8 +269,10 @@ const logs = await session.client.workLogs.list({ sort: 'occurredAt:desc' });
 - Palette from the client's logo: `background` `#000000`, `primary` / `brandGold` `#D4A454`,
   `brandRed` / `accent` `#D80611`, `accentText` / `danger` `#FF6B6E`, `textPrimary` `#F5F1E8`.
 - `lightTheme` (2026-11-16): warm neutrals (`background` `#F7F6F3`, `surface` `#FFFFFF`), a darker
-  gold `primary` `#8A6416` that passes AA as text on white, `accentText` `#B0050E`. The web
-  follows `prefers-color-scheme`; the phone still uses `darkTheme` only.
+  gold `primary` `#8A6416` that passes AA as text on white, `accentText` `#B0050E`. Both apps
+  follow the device or a manual System / Dark / Light choice.
+- Brand area (2026-11-17): `brandInk` and its companions are the same in both themes, so the
+  logo's black never shows as a tile.
 - `brandRed` fails WCAG AA as normal text on black; use it only for decoration.
 - `CONTRAST_REQUIREMENTS` lists the allowed pairings; `theme.test.ts` checks every one.
 
@@ -253,8 +281,8 @@ const logs = await session.client.workLogs.list({ sort: 'occurredAt:desc' });
 - `build` runs `tsc -p tsconfig.build.json` and emits **CommonJS**, declarations, and source maps
   into `dist/`. `main`, `types`, and `exports` point at `dist/`.
 - **It must be built before any dependant can typecheck, lint, test, or build**, and before any
-  Expo command. Turbo does this through `^build`; the root `db:seed`, `db:reset`, and
-  `test:integration` scripts build it explicitly.
+  Expo command. Turbo does this through `^build`; the root `db:seed`, `db:bootstrap`,
+  `db:reset`, and `test:integration` scripts build it explicitly.
 - `dev` runs the same compile in watch mode.
 
 ## Scripts
@@ -288,8 +316,11 @@ const logs = await session.client.workLogs.list({ sort: 'occurredAt:desc' });
   `AI_TRACE_STATUSES`, `AI_DECISIONS`) and `AI_KEY_PROVIDERS` must match the Prisma enums, like
   `enums.ts`
   (`apps/api/src/prisma-enums.spec.ts` checks them).
-- The capture output schema must stay within the JSON Schema subset structured outputs accept;
+- The capture output schema must stay within the JSON Schema subset structured outputs accept
+  and at most six union-typed parameters (Anthropic allows 16 per schema, ADR-0014);
   `toStructuredOutputJsonSchema` is the one conversion, tested in `ai-contracts.test.ts`.
+- A change to the sign-in wording in `auth-text.ts` needs the Turkish and Arabic sentence in
+  `auth-translations.ts` (the types require every key).
 - Catalogue keys of the translator: never a plural category name (`zero`, `one`, `two`, `few`,
   `many`, `other`) as a plain key; an object holding `other` is read as plural forms.
 - No runtime dependency other than Zod. Only `fetch`, `AbortController`, and timers; no other DOM

@@ -26,7 +26,7 @@ export function AuthShell({
       <aside className={styles.brandPanel}>
         <Image
           className={styles.logo}
-          src={brand.logo.src}
+          src={brand.logo.markSrc}
           width={brand.logo.width}
           height={brand.logo.height}
           alt={brand.logo.alt}

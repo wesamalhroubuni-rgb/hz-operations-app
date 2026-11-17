@@ -86,7 +86,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
         <Link href="/" className={styles.brand}>
           <Image
             className={styles.brandLogo}
-            src={brand.logo.src}
+            src={brand.logo.markSrc}
             width={brand.logo.width}
             height={brand.logo.height}
             alt={t('common.logoLabel', { brand: brand.name })}

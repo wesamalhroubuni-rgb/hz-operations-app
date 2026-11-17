@@ -12,8 +12,8 @@ Criteria for Phases 3 to 8 are the current plan and should be refined at the sta
 | 4     | Mobile worker app            | Committed (`280c50a`); phone test and development build open              |
 | 5     | Offline mode & sync          | Committed (`2cf5a01`); emulator and phone test open                       |
 | 6     | Web manager dashboard        | Committed (`713f592`); browser test open                                  |
-| 7     | Intelligent layer v1         | Code complete and tested with fakes; real keys, device, browser open      |
-| 8     | Hardening & release          | Planned                                                                   |
+| 7     | Intelligent layer v1         | Committed; one real Claude capture (2026-11-17); device, browser open     |
+| 8     | Hardening & release          | Started 2026-11-17 (bootstrap, EAS profiles, release guide)               |
 
 ## Phase 1: Setup & architecture
 
@@ -136,6 +136,7 @@ Branding
       are shared by both apps, and the contrast pairings are unit tested against WCAG AA. Verified
       on 2026-10-13 as far as a build can show: the production web build has the title
       "HZ · Manager dashboard"; `expo export` succeeds for Android and iOS; `expo-doctor` 21/21.
+      (On 2026-11-17 the owner had the "Powered by Kaneri.ai" line removed from both apps.)
 - [x] The branding is seen in a real browser after `pnpm dev` is restarted: the owner signed in on
       the branded web pages as three roles (reported 2026-10-17).
 - [ ] The app icon and splash screen are seen in a real build on a phone. Needs the Phase 4
@@ -321,7 +322,8 @@ Worker app (code complete; every item needs the phone test)
       the rejection reason.
 - [ ] Notifications: the in-app list (new task assigned, log approved or rejected) works on the
       phone.
-- [ ] Profile: name, role, sign out, sign out everywhere, app version, "Powered by Kaneri.ai".
+- [ ] Profile: name, role, sign out, sign out everywhere, app version, "Powered by Kaneri.ai"
+      (the line was removed on 2026-11-17; Profile now also has Theme and Language).
 - [ ] Supervisors and managers get the same worker screens for their own work; no approval screens
       on mobile (built that way; check on the phone).
 
@@ -329,7 +331,8 @@ Design and usability
 
 - [x] All user-facing text goes through an i18n layer (`apps/mobile/src/i18n/`), English now; a new
       language is a new catalogue file with no screen changes, and the layout is ready for right
-      to left (`start` / `end`, `applyLayoutDirection`).
+      to left (`start` / `end`, `applyLayoutDirection`). (Turkish and Arabic were added on
+      2026-11-17, ADR-0015.)
 - [x] The form keeps what the worker typed until it is saved: the new-log form is drafted on the
       phone per user, a failed save keeps the form, and photos wait in a persisted upload queue.
       (Since Phase 5 the edit form is drafted too.)
@@ -548,8 +551,9 @@ daily summaries with rule-based anomaly flags for supervisors and managers.
 The criteria below were rewritten on 2026-11-02 to match the owner's Phase 7 prompt
 (`docs/prompts/phase-7.md`). "Verified" means by the unit and integration suites **with the
 deterministic fake providers**, the `test-writer`, and the `reviewer` during the session of
-2026-10-30 to 2026-11-02. **No real provider has been called (no keys yet), nothing has run on a
-phone or in the emulator, and the dashboard has not been used in a browser with data**, so items
+2026-10-30 to 2026-11-02. **At that time no real provider had been called (the first real Claude
+call was on 2026-11-17), nothing had run on a
+phone or in the emulator, and the dashboard had not been used in a browser with data**, so items
 that need one of those stay open even where the code is complete.
 
 **Done when**
@@ -594,7 +598,11 @@ Architecture and safety (verified with fakes)
 - [ ] Real providers checked with keys: Claude accepts the structured-output request
       (`output_config`), the photo path, and a summary narrative; OpenAI transcribes the phone's
       m4a in Turkish, English, and Arabic; the refusal fallback beta before
-      `AI_ANTHROPIC_REFUSAL_FALLBACK` is turned on. **Needs the owner's keys.**
+      `AI_ANTHROPIC_REFUSAL_FALLBACK` is turned on. **Progress (2026-11-17, as reported)**: Claude
+      (`claude-opus-5-5`, organization key) accepted the structured-output request after the
+      answer format was changed to stay under its 16-union limit (ADR-0014) and answered an
+      English typed capture. Still open: the photo path, a summary narrative, Turkish and Arabic,
+      OpenAI, the refusal fallback.
 
 Smart capture
 
@@ -644,13 +652,16 @@ questions over data (v2); other notification channels; Turkish and Arabic summar
 notification catalogues and a prompt review with real samples; provider data agreements and zero
 data retention (Phase 8).
 
-Added after Phase 7 on the owner's request (2026-11-16, not yet committed):
+Added after Phase 7 on the owner's request (written 2026-11-16, committed on 2026-11-17 in
+`644b773`, pushed):
 
 - [x] An admin can paste the organization's own Claude and OpenAI keys (checked, stored
       encrypted, never shown again) and choose the Claude and voice-note models
       ([ADR-0012](docs/decisions/0012-organization-ai-provider-keys.md); unit tests and the
       `ai-keys` integration suite with network-free providers pass).
 - [ ] A real key checked and saved through the dashboard, and a capture and a summary run on it.
+      (2026-11-17, as reported: a Claude key saved and an English capture run on it; no summary
+      yet.)
 - [x] Live updates: the phone syncs every 15 s in the foreground and re-checks the user when its
       scope changes; dashboard lists refresh every 15 s and the user every 30 s (unit tests).
 - [x] The dashboard follows the device's light or dark setting (`lightTheme`), with a manual
@@ -664,13 +675,41 @@ Added after Phase 7 on the owner's request (2026-11-16, not yet committed):
 - [ ] The light and dark themes looked at on the phone and in the browser (the phone build was
       opened after an Expo restart, but nobody has looked at the screens yet).
 
-Planned, not yet placed in a phase: the rest of the phone redesign, and Turkish and Arabic.
+Added on the owner's request on 2026-11-17 (`2131bdf`, `ffaa5d8`; not pushed on 2026-11-17):
+
+- [x] A redesign of both apps: brand-area tokens (`brandInk`, ...; contrast tested), black brand
+      headers and a Home brand band with Quick capture tiles on the phone, a black sidebar with
+      icons and a split sign-in page on the dashboard; "Powered by Kaneri.ai" removed (unit
+      tests pass).
+- [x] Turkish and Arabic catalogues in both apps, chosen per browser or phone, Arabic right to
+      left ([ADR-0015](docs/decisions/0015-interface-language-per-device.md); typechecked against
+      English; 3 new tests in each app).
+- [ ] The redesign and the three languages looked at on the phone (Arabic after a restart) and in
+      a browser by a person (only headless screenshots of the dashboard in light, dark, and
+      Arabic exist).
+- [ ] The Turkish and Arabic texts reviewed by native speakers.
+- [x] The smart capture proposal's text is the worker's note polished in the worker's own
+      language (prompt v3, ADR-0014). Checked with the real Claude in English only.
 
 ## Phase 8: Hardening & release
 
 **Goals**: ready for real users.
 
+Started on 2026-11-17 with release readiness (`4fd59c7`, not pushed on 2026-11-17): the
+production bootstrap, the Android build profiles, and the release guide
+([docs/release/android-release.md](docs/release/android-release.md)) with a privacy policy draft.
+The criteria below are still the plan and should be refined against the release guide.
+
 **Done when**
+
+- [x] A production database can start empty and get the real organization and its first
+      administrator with no demo data: `pnpm db:bootstrap` (ADR-0013; idempotent, password
+      policy checked before any write, password never printed or audited). Verified by
+      `test/bootstrap.int-spec.ts` (5 tests, as reported 2026-11-17); not yet run against a
+      production database. Added 2026-11-17.
+- [ ] The decisions and accounts in section 1 and 2 of the release guide are made (application
+      id, app name, organization slug, https domains, Play Console, Expo, Firebase). Added
+      2026-11-17.
 
 - [ ] Security review completed and findings resolved.
 - [ ] A retention and erasure decision for personal data in the audit log and outbox is recorded
@@ -684,7 +723,9 @@ Planned, not yet placed in a phase: the rest of the phone redesign, and Turkish 
 - [ ] Production deployment for the API, web app, and database, with backups and a tested restore.
 - [ ] Monitoring, alerting, and error reporting in place.
 - [ ] Mobile release builds for iOS and Android submitted for store review or internal
-      distribution.
+      distribution. Since 2026-11-17 `apps/mobile/eas.json` has the Android `preview` (APK) and
+      `production` (app bundle, remote auto-incremented version code, submit to the internal
+      track as a draft) profiles; nothing has been built. No iOS release profile or guide yet.
 - [ ] Performance checked against agreed targets on low-end phones and slow networks.
 - [ ] Rate limiting and input size limits on the API. The `/auth/*` limits (Phase 3) and the
       upload limits (Phase 4) are in memory per process: bind a shared store (Redis or PostgreSQL)

@@ -1,6 +1,6 @@
 # apps/mobile memory
 
-Package `@ops/mobile`. Last updated: 2026-11-16.
+Package `@ops/mobile`. Last updated: 2026-11-17.
 
 ## Purpose
 
@@ -20,12 +20,37 @@ until `5038c71`: `src/push/notificationsModule.ts` no longer loads `expo-notific
 Android Expo Go (that client lacks the native `ExpoTopicSubscriptionModule`; remote push is
 unavailable there anyway), and `pushDevice.ts` / `usePush.tsx` treat a null module as "no push".
 No full device test is recorded (camera, microphone, offline, SQLite, background task, push);
-the steps are in README sections 5 and 6 and in `docs/reports/phase-7.md`. Uncommitted since
-2026-11-16: live updates (below) and `BrandHeader` showing the logo and the app label only (the
-logo already shows the product name), and light mode with a System / Dark / Light choice plus
-a quieter sync indicator (below; tests pass, not yet seen on a phone). Resolved notifications (API, 2026-11-16)
-leave the phone through the sync pull, so the Alerts list and badge drop alerts that ask for
-nothing more.
+the steps are in README sections 5 and 6 and in `docs/reports/phase-7.md`. On the night of
+2026-11-16 to 2026-11-17 the Play Store auto-updated Expo Go to SDK 58; 57.0.9 was reinstalled
+from Expo Go's GitHub release APK (turn off auto-update for Expo Go). Committed on 2026-11-17:
+live updates, light mode with a System / Dark / Light choice, and a quieter sync indicator
+(`644b773`, pushed); the redesign (`2131bdf`) and Turkish and Arabic (`ffaa5d8`); the
+`preview` and `production` EAS profiles (`4fd59c7`) (the last three not pushed). **None of the
+2026-11-16 and 2026-11-17 screen changes has been seen on a phone** (the phone was locked on
+2026-11-17). Resolved notifications (API, 2026-11-16) leave the phone through the sync pull, so
+the Alerts list and badge drop alerts that ask for nothing more.
+
+- **Redesign (2026-11-17)**: brand headers in the `brandInk` colour (black in both themes) and a
+  status bar with light icons (`<StatusBar style="light" />` in `App.tsx`); Home has a brand band
+  (`components/BrandBand.tsx`: logo, organization, sync status), a Quick capture card of three
+  tiles (Speak, Snap, Type a note, when smart capture is on), section headers with "See all"
+  (`components/SectionHeader.tsx`), and only "New log" in the footer; the date field shows a
+  calendar icon instead of the word "Change"; Profile opens with an avatar header; the loading
+  screen is black; the sign-in screens have a hero (`AuthScreenLayout.tsx`).
+  `components/BrandHeader.tsx` was deleted, and "Powered by Kaneri.ai" removed (`brand.poweredBy`
+  is gone).
+- **Languages (2026-11-17, ADR-0015)**: catalogues `src/i18n/en.ts`, `tr.ts`, `ar.ts` (Turkish
+  and Arabic typed against English; sign-in texts from `AUTH_TRANSLATIONS` in `@ops/shared`).
+  `src/i18n/index.ts`: `deviceLanguage()` (the phone's languages, else English), `setLanguage`,
+  `currentLanguage`, `localeTag()` (now a function; Arabic `ar-u-nu-latn`, Latin digits),
+  `isRtl`, `applyLayoutDirection()` (returns true when a restart is needed), the date and number
+  formatters. `i18n/languagePreference.ts` (tested): `system` / `en` / `tr` / `ar`, AsyncStorage
+  key `ops.language`, per phone, never sent to the API. `i18n/LanguageProvider.tsx` (in
+  `App.tsx`, `useLanguage()`): loads the choice, applies it, and remounts `Root` keyed by the
+  language. Profile has a Language card (`components/LanguageChoice.tsx`: System, English,
+  Türkçe, العربية, each in its own language) that says when the layout direction changes only
+  after the app is reopened. `brand.appLabel` and the logo's accessible label are getters so
+  they follow the language.
 
 - **Smart capture** (Phase 7, ADR-0010):
   - Shown only when the organization summary's `aiFeatures.smartCapture` is on
@@ -90,7 +115,7 @@ nothing more.
   - `legacyUploads.ts`: migrates the Phase 4 AsyncStorage upload queue into the write queue.
   - `localView.ts`: the cache with queued writes applied on top (a queued create appears with its
     `clientId` as id).
-- **Light and dark mode (2026-11-16, uncommitted)**: `src/theme/`. `ThemeProvider` (in
+- **Light and dark mode (2026-11-16, committed in `644b773`)**: `src/theme/`. `ThemeProvider` (in
   `App.tsx`) resolves the device preference `system` / `dark` / `light` (`themePreference.ts`,
   pure and tested; AsyncStorage key `ops.theme`, per phone, not per user, never sent to the API;
   storage errors swallowed; default System) against `useColorScheme()` (live; unknown = dark)
@@ -102,7 +127,8 @@ nothing more.
   light), and the native root background (`expo-system-ui`) follow it. Profile has a Theme card
   (`components/ThemeChoice.tsx`): System, Dark, Light (the web dashboard's order) with a radio
   dot. `app.config.ts` has `userInterfaceStyle: 'automatic'` (needs an Expo restart with
-  `--clear`). The logo has rounded corners (a tile on the light theme). Not yet seen on a phone.
+  `--clear`). Since the redesign the logo sits on the black brand area in both themes. Not yet
+  seen on a phone.
 - **Sync UI**: `SyncProvider` (`useSync()`), `SyncIndicator` in the header (since 2026-11-16
   only when there is something to say: offline, waiting, sending, not accepted, sign in again;
   nothing when all is sent, nor during a background refresh with nothing to send;
@@ -120,16 +146,17 @@ nothing more.
   (Phase 7). The map is in `types.ts`. The signed-in tree is
   keyed by user id and wrapped in `SyncProvider`. `navigationRef.ts` holds a target from a
   tapped notification until the navigator is ready.
-- **Screens**: Home (tasks due today and overdue first, recent logs, a big "New log" button);
+- **Screens**: Home (brand band, Quick capture tiles, tasks due today and overdue first, recent
+  logs, "New log" in the footer);
   Tasks (chips Open, Today, Overdue, Done); Task detail (the moves an assignee may make, "Mark as
   blocked" with a required reason, "Update the reason" on a blocked task, "Log work for this
   task"); New/Edit log (log types most-used first, the generated custom-field form with Yes/No
   buttons, select as buttons up to 4 options else a searchable list, a date picker; up to 10
   photos; task, site, team; When; a location card); Logs; Log detail (status, rejection reason,
   edit window, photos with upload progress and Retry, Submit, Resubmit, Edit); Notifications (mark
-  read, mark all read); Profile (name, role, organization, push status, sign out, sign out
-  everywhere, app version, "Powered by Kaneri.ai"). Login and Activate are the Phase 3 screens
-  restyled.
+  read, mark all read); Profile (avatar header, name, role, organization, push status, Theme,
+  Language, sign out, sign out everywhere, app version). Login and Activate are the Phase 3
+  screens with the 2026-11-17 sign-in hero.
 - **Data layer** (`src/data/`): reads through TanStack Query hooks (`queries.ts`,
   `queryKeys.ts`, `DataProvider.tsx`) that read the local store with the queue applied
   (`localView.ts`), invalidated when the store or queue changes; only attachments (signed URLs)
@@ -156,14 +183,14 @@ nothing more.
   start drafts older than 14 days are deleted for every user of the phone (`retention.ts`).
   Queued writes and their photos are never deleted by age (see the offline layer); a user's
   drafts and dropped-link notices are deleted with their offline data.
-- **i18n** (`src/i18n/`): every sentence comes from the typed catalogue `en.ts` through `t(key)`;
-  `authText.ts`, `errorText.ts`, and `roles.ts` map shared codes to keys. Since Phase 6
-  (2026-10-28, ADR-0009) the translation core (`createTranslator`, plurals, `{{name}}`,
-  `pickLanguage`, `isRtlLanguage`) lives in `@ops/shared` (`src/i18n/translate.ts`) and
-  `src/i18n/translate.ts` only re-exports it; `en.ts` gained the `export_too_large` error text
-  (the API error code list is typed, the phone never exports). The language is picked
-  from the phone (`expo-localization`) with English as fallback. RTL: styles use `start` / `end`,
-  `applyLayoutDirection()` at start-up, `extra.supportsRTL` in `app.config.ts`.
+- **i18n** (`src/i18n/`): every sentence comes from the typed catalogues (`en.ts`, `tr.ts`,
+  `ar.ts`) through `t(key)`; `authText.ts`, `errorText.ts`, and `roles.ts` map shared codes to
+  keys. Since Phase 6 (2026-10-28, ADR-0009) the translation core (`createTranslator`, plurals,
+  `{{name}}`, `pickLanguage`, `isRtlLanguage`) lives in `@ops/shared` (`src/i18n/translate.ts`)
+  and `src/i18n/translate.ts` only re-exports it; `en.ts` has the `export_too_large` error text
+  (the API error code list is typed, the phone never exports). The language is the Profile
+  choice or the phone's (see Languages above). RTL: styles use `start` / `end`,
+  `applyLayoutDirection()` at start-up and on a change, `extra.supportsRTL` in `app.config.ts`.
 - **Push** (`src/push/`): `notificationsModule.ts` exports `expo-notifications` or null (Android
   Expo Go, where importing it crashes); `pushSupport.ts` decides availability (no push in Expo Go
   on Android, on simulators, or without an EAS project id); `pushService.ts` registers after sign-in and on
@@ -175,18 +202,23 @@ nothing more.
   identity when the server cannot be reached; a refused refresh keeps the queue and the sign-in
   screen names the waiting changes; sign-out with queued items goes through
   `SyncSignOutDialog` (`useSignOut.ts`).
-- **Development build**: `expo-dev-client` installed; `eas.json` profile `development`
-  (development client, internal distribution, Android APK, no iOS simulator build). Never built.
-- **Tests**: 351 unit tests in 30 suites (2026-11-16, re-run by the docs-keeper, including the
-  light-mode work; the live updates added `logic/liveUpdates.test.ts`
-  and engine cases), including the
+- **EAS builds** (`eas.json`, `appVersionSource: remote`): `development` (development client,
+  internal distribution, Android APK, no iOS simulator build, EAS environment `development`),
+  since 2026-11-17 `preview` (internal distribution, Android APK, environment `preview`) and
+  `production` (environment `production`, Android app bundle, `autoIncrement`), and
+  `submit.production` (Android internal track, `releaseStatus: draft`). Nothing has been built.
+  The release steps are in `docs/release/android-release.md`.
+- **Tests**: 354 unit tests in 31 suites (2026-11-17, re-run by the docs-keeper; the live
+  updates added `logic/liveUpdates.test.ts` and engine cases, the languages
+  `i18n/languagePreference.test.ts`), including the
   engine, queue, store, session, smart capture (offline-queued voice note processed on
   reconnect, manual filling while waiting), and a full offline journey
   (`offlineJourney.test.ts`) against fakes for SQLite, files, network, clock, and the API
   (`engineTestKit.ts`, `storeTestKit.ts`).
 
-Verified on 2026-11-16: the app runs on a real Android phone in Expo Go after the crash fix (as
-reported; what was tried on it is not recorded); `pnpm test` (docs-keeper). Verified in
+Verified on 2026-11-17: `pnpm test` (docs-keeper); lint and typecheck (as reported). Verified on
+2026-11-16: the app runs on a real Android phone in Expo Go after the crash fix (as reported;
+what was tried on it is not recorded). Verified in
 the Phase 7 session (2026-11-02): lint, typecheck, and `npx expo install --check` (up to date) as
 reported by the coordinator. Earlier (Phase 4):
 the repositories ran end to end against the real API outside a phone; `expo export`;
@@ -194,30 +226,31 @@ the repositories ran end to end against the real API outside a phone; `expo expo
 
 ## Key files
 
-| File                                                                   | What it does                                                                                                                                                                                                                 |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `index.ts`                                                             | Entry point (`main` in `package.json`). Registers the sync engine (`src/offline/engineRegistration.ts`, which also defines the background task) and `App`.                                                                   |
-| `App.tsx`                                                              | Layout direction, the 14-day draft retention sweep, providers (`SafeAreaProvider`, `AuthProvider`, `DataProvider`, `PushProvider`), the navigator by sign-in state, the navigation theme from the tokens.                    |
-| `src/offline/types.ts`                                                 | The offline contracts: `LocalStore`, `WriteQueue`, `QueueItem`, `LocalPhotoStore`, `SyncEngine`, `SyncStatus`, `KEPT_QUEUE_MAX_DAYS`, the photo limit.                                                                       |
-| `app.config.ts`                                                        | Expo config: name, identifiers, EAS project id, plugins and iOS permission texts (see below).                                                                                                                                |
-| `eas.json`                                                             | EAS Build profile `development`.                                                                                                                                                                                             |
-| `src/data/repositories.ts`                                             | The one write path: writes into the user's queue and answers optimistically.                                                                                                                                                 |
-| `src/data/queries.ts`                                                  | All reads (TanStack Query hooks over the local store and queue).                                                                                                                                                             |
-| `src/data/uploadQueue.ts`                                              | Read-only view of the queued photos and their error kinds.                                                                                                                                                                   |
-| `src/hooks/useLogForm.ts`                                              | State of the new and edit log form: custom fields, photos, location, draft, save; the review of a smart capture (proposal, confidence, `ai_assisted` save).                                                                  |
-| `src/screens/CaptureScreen.tsx`, `src/components/SmartCapture.tsx`     | Speak, Snap, Type a note; the capture buttons and rows (Phase 7).                                                                                                                                                            |
-| `src/offline/smartCaptureSteps.ts`, `captureStore.ts`, `audioStore.ts` | The queued capture's steps; the `smart_captures` table; the per-user voice-note folder (Phase 7).                                                                                                                            |
-| `src/logic/`                                                           | Pure logic: `logForm.ts`, `tasks.ts` (filters, allowed moves), `workLogs.ts` (edit window), `dates.ts`, `notificationRouting.ts`.                                                                                            |
-| `src/device/`                                                          | Camera and gallery, resizing, local files, upload PUT, location.                                                                                                                                                             |
-| `src/push/`                                                            | Push availability, registration lifecycle, provider.                                                                                                                                                                         |
-| `src/storage/`                                                         | `keyValueStore.ts` (interface), `deviceStore.ts` (AsyncStorage), `draftStore.ts`, `localPhoto.ts`, `retention.ts`.                                                                                                           |
-| `src/i18n/`                                                            | Catalogue, translator, language and RTL.                                                                                                                                                                                     |
-| `src/auth/`                                                            | `AuthProvider.tsx`, `token-storage.ts` (SecureStore).                                                                                                                                                                        |
-| `src/api/client.ts`                                                    | `authSession` and `apiClient`, both `null` without an API URL; `DEVICE_NAME`.                                                                                                                                                |
-| `src/config/env.ts`                                                    | The only place the bundle reads environment variables: `apiUrl`, `brandName`, `organizationSlug`, `easProjectId`.                                                                                                            |
-| `src/config/brand.ts`                                                  | `brand`: name, app label, logo, the "Powered by" line.                                                                                                                                                                       |
-| `src/components/`                                                      | Large-target UI pieces: `Button`, `FormField`, `CustomFieldInput`, `ChoiceButtons`, `YesNoField`, `PickerField`, `DateTimeField`, `PhotoGrid`, `UploadList`, `FilterChips`, `StateViews`, `ScreenContainer`, `sizes.ts`, ... |
-| `jest.config.js`                                                       | `jest-expo` preset; tests are `src/**/*.test.ts(x)`.                                                                                                                                                                         |
+| File                                                                                         | What it does                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`                                                                                   | Entry point (`main` in `package.json`). Registers the sync engine (`src/offline/engineRegistration.ts`, which also defines the background task) and `App`.                                                                                                                                          |
+| `App.tsx`                                                                                    | Layout direction, the 14-day draft retention sweep, providers (`ThemeProvider`, `LanguageProvider` remounting `Root` per language, `SafeAreaProvider`, `AuthProvider`, `DataProvider`, `PushProvider`), the light status bar, the navigator by sign-in state, the navigation theme from the tokens. |
+| `src/offline/types.ts`                                                                       | The offline contracts: `LocalStore`, `WriteQueue`, `QueueItem`, `LocalPhotoStore`, `SyncEngine`, `SyncStatus`, `KEPT_QUEUE_MAX_DAYS`, the photo limit.                                                                                                                                              |
+| `app.config.ts`                                                                              | Expo config: name, identifiers, EAS project id, plugins and iOS permission texts (see below).                                                                                                                                                                                                       |
+| `eas.json`                                                                                   | EAS Build profiles `development`, `preview`, `production`, and the `production` submit profile.                                                                                                                                                                                                     |
+| `src/data/repositories.ts`                                                                   | The one write path: writes into the user's queue and answers optimistically.                                                                                                                                                                                                                        |
+| `src/data/queries.ts`                                                                        | All reads (TanStack Query hooks over the local store and queue).                                                                                                                                                                                                                                    |
+| `src/data/uploadQueue.ts`                                                                    | Read-only view of the queued photos and their error kinds.                                                                                                                                                                                                                                          |
+| `src/hooks/useLogForm.ts`                                                                    | State of the new and edit log form: custom fields, photos, location, draft, save; the review of a smart capture (proposal, confidence, `ai_assisted` save).                                                                                                                                         |
+| `src/screens/CaptureScreen.tsx`, `src/components/SmartCapture.tsx`                           | Speak, Snap, Type a note; the capture buttons and rows (Phase 7).                                                                                                                                                                                                                                   |
+| `src/offline/smartCaptureSteps.ts`, `captureStore.ts`, `audioStore.ts`                       | The queued capture's steps; the `smart_captures` table; the per-user voice-note folder (Phase 7).                                                                                                                                                                                                   |
+| `src/logic/`                                                                                 | Pure logic: `logForm.ts`, `tasks.ts` (filters, allowed moves), `workLogs.ts` (edit window), `dates.ts`, `notificationRouting.ts`.                                                                                                                                                                   |
+| `src/device/`                                                                                | Camera and gallery, resizing, local files, upload PUT, location.                                                                                                                                                                                                                                    |
+| `src/push/`                                                                                  | Push availability, registration lifecycle, provider.                                                                                                                                                                                                                                                |
+| `src/storage/`                                                                               | `keyValueStore.ts` (interface), `deviceStore.ts` (AsyncStorage), `draftStore.ts`, `localPhoto.ts`, `retention.ts`.                                                                                                                                                                                  |
+| `src/i18n/`                                                                                  | Catalogues (`en.ts`, `tr.ts`, `ar.ts`), translator, the language choice (`languagePreference.ts`, `LanguageProvider.tsx`), RTL.                                                                                                                                                                     |
+| `src/auth/`                                                                                  | `AuthProvider.tsx`, `token-storage.ts` (SecureStore).                                                                                                                                                                                                                                               |
+| `src/api/client.ts`                                                                          | `authSession` and `apiClient`, both `null` without an API URL; `DEVICE_NAME`.                                                                                                                                                                                                                       |
+| `src/config/env.ts`                                                                          | The only place the bundle reads environment variables: `apiUrl`, `brandName`, `organizationSlug`, `easProjectId`.                                                                                                                                                                                   |
+| `src/config/brand.ts`                                                                        | `brand`: name, app label and logo label (getters that follow the language), logo.                                                                                                                                                                                                                   |
+| `src/components/BrandBand.tsx`, `SectionHeader.tsx`, `LanguageChoice.tsx`, `ThemeChoice.tsx` | Home's brand band; section headers with "See all"; Profile's Language and Theme cards.                                                                                                                                                                                                              |
+| `src/components/`                                                                            | Large-target UI pieces: `Button`, `FormField`, `CustomFieldInput`, `ChoiceButtons`, `YesNoField`, `PickerField`, `DateTimeField`, `PhotoGrid`, `UploadList`, `FilterChips`, `StateViews`, `ScreenContainer`, `sizes.ts`, ...                                                                        |
+| `jest.config.js`                                                                             | `jest-expo` preset; tests are `src/**/*.test.ts(x)`.                                                                                                                                                                                                                                                |
 
 ## Expo configuration
 
@@ -272,7 +305,10 @@ section 5).
 - **Per-user data only**: never open, read, or send another user's database, photo folder, or
   drafts. Never delete a queued write silently (only accepted, discarded by the worker, or the
   explicit kept-queue rule).
-- A new API error code needs a `sync.reasons` text in `en.ts`.
+- A new API error code needs a `sync.reasons` text in `en.ts`, `tr.ts`, and `ar.ts`; every new key
+  needs all three (the typecheck fails otherwise).
+- Never capture a translated string or `localeTag()` in a module-level constant: the language can
+  change at runtime (use a function or a getter, as `brand.ts` does).
 - SQLite migrations (`MIGRATIONS` in `sqliteDatabase.ts`) are append-only and spelled out; never
   change a shipped step (step 1 lists its tables by name so adding to `OFFLINE_TABLES` does not
   change it).
@@ -310,15 +346,19 @@ section 5).
 - **Android Expo Go has no remote push** (since SDK 53) and no background task; both need the
   development build, which has never been built. iOS Expo Go can receive push with an EAS
   project id. Android Expo Go must be the SDK 57 client (57.0.9 sideloaded); the Play Store build
-  is SDK 58.
-- Light mode and the quieter sync indicator have not been seen on a phone yet.
+  is SDK 58 and replaces it overnight unless auto-update is off for Expo Go (it happened on
+  2026-11-17).
+- Light mode, the quieter sync indicator, the 2026-11-17 redesign, and the Turkish and Arabic
+  screens have not been seen on a phone yet. No native speaker has reviewed the Turkish and
+  Arabic texts.
 - The local database and photos are not encrypted beyond the OS sandbox (ADR-0008).
 - The first sign-in needs the server. Logs older than 30 days and photos already on the server
   need a connection.
 - A user replaced on the phone while their session had expired keeps their queue until they sign
   in again (never swept automatically).
 - No activation deep links: activation links open the web page.
-- An Arabic (RTL) catalogue switches the layout only after the next app start.
+- Switching to or from Arabic changes the text at once but the layout direction only after the
+  app is reopened (React Native applies `forceRTL` on the next start).
 - The bundle identifiers are placeholders until the owner decides.
 - No `metro.config.js` or `babel.config.js`; Expo's defaults handle the pnpm layout.
 - The ESLint config sets `settings.react.version` to `'19.2'` by hand. Bump it when React changes.

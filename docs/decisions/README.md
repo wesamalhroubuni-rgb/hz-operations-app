@@ -55,18 +55,20 @@ What follows from the decision: rules to obey, work it creates, things to revisi
 
 ## Index
 
-| ADR                                                          | Title                                                              | Status   | Date       |
-| ------------------------------------------------------------ | ------------------------------------------------------------------ | -------- | ---------- |
-| [0001](0001-tech-stack.md)                                   | Tech stack                                                         | Accepted | 2026-10-12 |
-| [0002](0002-flexible-organization-and-scope-model.md)        | Flexible organization and scope model                              | Accepted | 2026-10-13 |
-| [0003](0003-configurable-log-types-with-custom-fields.md)    | Configurable log types with custom fields                          | Accepted | 2026-10-13 |
-| [0004](0004-authentication.md)                               | In-house authentication behind a platform interface                | Accepted | 2026-10-14 |
-| [0005](0005-authorization-model.md)                          | Authorization model and the 404-versus-403 rule                    | Accepted | 2026-10-14 |
-| [0006](0006-file-storage-and-upload-flow.md)                 | File storage and the photo upload flow                             | Accepted | 2026-10-17 |
-| [0007](0007-push-notifications-and-notification-channels.md) | Push notifications, notification channels, and the outbox consumer | Accepted | 2026-10-17 |
-| [0008](0008-offline-storage-sync-and-conflicts.md)           | Offline storage, sync, and conflict rules                          | Accepted | 2026-10-27 |
-| [0009](0009-web-dashboard-architecture.md)                   | Web dashboard architecture                                         | Accepted | 2026-10-28 |
-| [0010](0010-ai-layer-architecture.md)                        | AI layer architecture, providers, data handling, and cost controls | Accepted | 2026-10-30 |
-| [0011](0011-daily-summaries-and-anomaly-rules.md)            | Daily summaries and anomaly rules                                  | Accepted | 2026-10-30 |
-| [0012](0012-organization-ai-provider-keys.md)                | An organization's own AI provider keys                             | Accepted | 2026-11-16 |
-| [0013](0013-production-bootstrap.md)                         | Production bootstrap of the real organization                      | Accepted | 2026-11-17 |
+| ADR                                                          | Title                                                                | Status   | Date       |
+| ------------------------------------------------------------ | -------------------------------------------------------------------- | -------- | ---------- |
+| [0001](0001-tech-stack.md)                                   | Tech stack                                                           | Accepted | 2026-10-12 |
+| [0002](0002-flexible-organization-and-scope-model.md)        | Flexible organization and scope model                                | Accepted | 2026-10-13 |
+| [0003](0003-configurable-log-types-with-custom-fields.md)    | Configurable log types with custom fields                            | Accepted | 2026-10-13 |
+| [0004](0004-authentication.md)                               | In-house authentication behind a platform interface                  | Accepted | 2026-10-14 |
+| [0005](0005-authorization-model.md)                          | Authorization model and the 404-versus-403 rule                      | Accepted | 2026-10-14 |
+| [0006](0006-file-storage-and-upload-flow.md)                 | File storage and the photo upload flow                               | Accepted | 2026-10-17 |
+| [0007](0007-push-notifications-and-notification-channels.md) | Push notifications, notification channels, and the outbox consumer   | Accepted | 2026-10-17 |
+| [0008](0008-offline-storage-sync-and-conflicts.md)           | Offline storage, sync, and conflict rules                            | Accepted | 2026-10-27 |
+| [0009](0009-web-dashboard-architecture.md)                   | Web dashboard architecture                                           | Accepted | 2026-10-28 |
+| [0010](0010-ai-layer-architecture.md)                        | AI layer architecture, providers, data handling, and cost controls   | Accepted | 2026-10-30 |
+| [0011](0011-daily-summaries-and-anomaly-rules.md)            | Daily summaries and anomaly rules                                    | Accepted | 2026-10-30 |
+| [0012](0012-organization-ai-provider-keys.md)                | An organization's own AI provider keys                               | Accepted | 2026-11-16 |
+| [0013](0013-production-bootstrap.md)                         | Production bootstrap of the real organization                        | Accepted | 2026-11-17 |
+| [0014](0014-smart-capture-answer-as-field-list.md)           | Smart capture answers fields as a list, polished in its own language | Accepted | 2026-11-17 |
+| [0015](0015-interface-language-per-device.md)                | Interface language chosen per browser and per phone                  | Accepted | 2026-11-17 |

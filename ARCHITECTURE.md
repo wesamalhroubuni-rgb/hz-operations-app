@@ -12,16 +12,20 @@ Phase 6 web manager dashboard with its read endpoints (overview, directory, map,
 audited CSV exports, report), bulk review, session administration, the organization time zone,
 and per-user languages, and the Phase 7 intelligent layer: smart capture (voice, photo, or typed
 note to a proposed work log the worker confirms), daily summaries with rule-based anomaly flags,
-AI traces, usage limits, and admin switches. The AI layer has only run against its deterministic
-fake providers; no real provider has been called.
+AI traces, usage limits, and admin switches. Added on 2026-11-16 and 2026-11-17 (committed on
+2026-11-17): an organization's own AI keys and models, live updates, a light theme, resolved
+notifications, Turkish and Arabic in both clients, a redesign of both clients, and the production
+bootstrap command. The real Claude has answered smart capture once (2026-11-17, English); every
+other AI path has run only against the deterministic fake providers.
 
 ## Naming
 
 - **HZ** is the product. It belongs to the client. The name shown in the apps comes from
   configuration (`NEXT_PUBLIC_BRAND_NAME`, `EXPO_PUBLIC_BRAND_NAME`), because the same codebase may
   be deployed for other clients.
-- **Kaneri.ai** builds and powers the product. Its name appears in the apps once, as a small
-  "Powered by Kaneri.ai" line.
+- **Kaneri.ai** builds and powers the product. Since 2026-11-17 its name does not appear in the
+  apps (the "Powered by Kaneri.ai" line was removed from both; `apps/web/src/lib/brand.test.ts`
+  checks that the web brand names no builder).
 - **Operations** is the technical name and stays: the repository folder `Operations_App`, the
   package scope `@ops`, the API folder `src/operations` (the "Operations domain"), the database
   `operations_app`, and the Swagger title "Operations API". Do not rename these to a client's name.
@@ -39,11 +43,11 @@ only proposes; a person decides and acts.
 ```mermaid
 flowchart TB
   subgraph clients [Clients]
-    mobile["apps/mobile<br/>Worker app (Expo / React Native)<br/>tasks, work logs, photos, location,<br/>smart capture (Speak, Snap, Type),<br/>notifications, profile;<br/>offline cache + write queue (SQLite per user)"]
-    web["apps/web<br/>Manager dashboard (Next.js)<br/>overview with daily summary and flags,<br/>work logs, review, tasks, map, summaries,<br/>people, structure, audit, settings<br/>(AI switches, models, own AI keys), AI usage"]
+    mobile["apps/mobile<br/>Worker app (Expo / React Native)<br/>tasks, work logs, photos, location,<br/>smart capture (Speak, Snap, Type),<br/>notifications, profile;<br/>offline cache + write queue (SQLite per user);<br/>English, Turkish, Arabic"]
+    web["apps/web<br/>Manager dashboard (Next.js)<br/>overview with daily summary and flags,<br/>work logs, review, tasks, map, summaries,<br/>people, structure, audit, settings<br/>(AI switches, models, own AI keys), AI usage;<br/>English, Turkish, Arabic"]
   end
 
-  shared["packages/shared<br/>Zod schemas, typed API client,<br/>auth session manager, upload helper,<br/>custom-field forms, time zone, CSV,<br/>translation core, design tokens"]
+  shared["packages/shared<br/>Zod schemas, typed API client,<br/>auth session manager and sign-in wording (en, tr, ar),<br/>upload helper, custom-field forms, time zone, CSV,<br/>translation core, design tokens"]
 
   subgraph api [apps/api - NestJS REST API]
     host["Host: config, Prisma, health"]
@@ -121,8 +125,8 @@ flowchart TB
   aiplat --> stt
 ```
 
-Every arrow exists in the code. The AI layer has run only against its fakes (no real provider
-call yet). The arrows from auth to the access layer and from the consumer to the notification
+Every arrow exists in the code. Of the provider arrows, only the LLM has been called for real
+(one smart capture, 2026-11-17); speech-to-text has run only against its fake. The arrows from auth to the access layer and from the consumer to the notification
 rules and the AI features are injected: the platform defines a token or a registration function,
 the Operations domain provides the implementation, so the import still points one way. The same
 holds for the AI platform: Operations registers it with its prompt folder, organization limits,
@@ -140,13 +144,13 @@ web button: an admin calls it from Swagger or a script.
 
 ### Apps and packages
 
-| Path              | Package       | Responsibility                                                                                    | Today                                                                                                                                                                                                |
-| ----------------- | ------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api`        | `@ops/api`    | REST API. Owns the database, business rules, sign-in, permissions, files, notifications, audit.   | 80 paths, sign-in, a policy on every route, scoped queries, photo uploads, notifications, outbox consumer, audit, sync pull, idempotency, dashboard reads, exports, AI layer with organization keys. |
-| `apps/web`        | `@ops/web`    | Manager dashboard for supervisors, managers, and admins.                                          | Sign-in pages and the dashboard: overview (with daily summary and flags), work logs, tasks, map, summaries, people, structure, audit log, settings, AI usage, CSV exports.                           |
-| `apps/mobile`     | `@ops/mobile` | Worker app for iOS and Android from one codebase.                                                 | Worker screens (home, tasks, work logs, smart capture, notifications, profile, sync), push, offline cache and write queue, live sync. First run on a real phone 2026-11-16.                          |
-| `packages/shared` | `@ops/shared` | The wire contract, defined once: schemas, the typed API client, shared validation, design tokens. | Schemas and endpoints for every resource, `/auth/*`, notifications, sync, the AI routes; error codes; session manager, upload helper, custom-field forms, capture schema.                            |
-| `packages/config` | `@ops/config` | Shared ESLint, Prettier, and TypeScript settings.                                                 | ESLint base flat config, Prettier config, `strict.json`, `base.json`, and `library.json` tsconfigs. Unchanged since Phase 1.                                                                         |
+| Path              | Package       | Responsibility                                                                                    | Today                                                                                                                                                                                                 |
+| ----------------- | ------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api`        | `@ops/api`    | REST API. Owns the database, business rules, sign-in, permissions, files, notifications, audit.   | 80 paths, sign-in, a policy on every route, scoped queries, photo uploads, notifications, outbox consumer, audit, sync pull, idempotency, dashboard reads, exports, AI layer with organization keys.  |
+| `apps/web`        | `@ops/web`    | Manager dashboard for supervisors, managers, and admins.                                          | Sign-in pages and the dashboard: overview (with daily summary and flags), work logs, tasks, map, summaries, people, structure, audit log, settings, AI usage, CSV exports. English, Turkish, Arabic.  |
+| `apps/mobile`     | `@ops/mobile` | Worker app for iOS and Android from one codebase.                                                 | Worker screens (home, tasks, work logs, smart capture, notifications, profile, sync), push, offline cache and write queue, live sync, English, Turkish, Arabic. First run on a real phone 2026-11-16. |
+| `packages/shared` | `@ops/shared` | The wire contract, defined once: schemas, the typed API client, shared validation, design tokens. | Schemas and endpoints for every resource, `/auth/*`, notifications, sync, the AI routes; error codes; session manager, upload helper, custom-field forms, capture schema.                             |
+| `packages/config` | `@ops/config` | Shared ESLint, Prettier, and TypeScript settings.                                                 | ESLint base flat config, Prettier config, `strict.json`, `base.json`, and `library.json` tsconfigs. Unchanged since Phase 1.                                                                          |
 
 Each folder has a `memory.md` with its key files and conventions.
 
@@ -227,7 +231,7 @@ logs the providers in force (`AI providers: llm=... speechToText=...`).
 | `attachments/`                                                                                                      | The upload flow (`attachments.service.ts`: start, renew, complete, archive, signed URLs) and `attachment-cleanup.service.ts` (hourly expiry and purge). ADR-0006.                                                                                                                                   |
 | `notifications/`                                                                                                    | Which events notify whom (`notification-rules.ts`, pure), the text catalogue per locale (`notification-messages.ts`, English complete), and the service that registers the outbox handlers. ADR-0007.                                                                                               |
 | `ai/`                                                                                                               | Phase 7 (ADR-0010, ADR-0011): `OperationsAiModule` (registers `AiModule`, `GET /ai/usage`), `capture/` (smart capture and its retention job), `summaries/`, `anomalies/`, `prompts/` (versioned prompt files); `keys/` (ADR-0012: `AiKeyVault`, `OrganizationAiKeys`, `AiKeysService`, `/ai/keys`). |
-| `seed/`                                                                                                             | `demo-seed.ts`: the demo data, created through the real services; `DEV_PASSWORDS`.                                                                                                                                                                                                                  |
+| `seed/`                                                                                                             | `demo-seed.ts`: the demo data, created through the real services; `DEV_PASSWORDS`. `bootstrap-organization.ts` (ADR-0013): the real organization and its first admin, no demo data (`pnpm db:bootstrap`, see below).                                                                                |
 
 ### Data model
 
@@ -836,7 +840,7 @@ The model, the reasoning, and the documented limits are in
   first, `highestRole`, `isAdmin`, `isManagerOrAbove`, `isSupervisorOrAbove`, resolved scope),
   resolved once per request from `ScopeService` and cached on the request's context store. No
   actor, or an archived or missing user: 401. `runAsSystem(organizationId, work)` gives code
-  outside a request (the seed, the anomaly rules, the summary job's own writes) an admin context
+  outside a request (the seed, the bootstrap, the anomaly rules, the summary job's own writes) an admin context
   that is nobody's author. `runAsUser(organizationId, userId, work)` (Phase 7) gives a background
   job exactly one user's freshly resolved scope, read only (`authorOf` refuses it; an archived
   user or one without an active membership is 401); the daily summary computes each recipient's
@@ -958,7 +962,20 @@ prisma.$transaction(tx =>
 `<entityType>.<verb>`, and the same transaction client, so the rows commit or roll back together.
 A service must never write a business row outside this pattern. (The auth module writes its own
 security events through `AuditService` directly, in its own transactions, and never to the outbox.
-The seed back-dates work log `createdAt` with a direct update, outside the pattern, on purpose.)
+The seed back-dates work log `createdAt` with a direct update, outside the pattern, on purpose.
+The seed and `db:bootstrap` create the organization row directly, but record it through
+`ChangeRecorder` in the same transaction.)
+
+**Production bootstrap** (ADR-0013, 2026-11-17): `pnpm db:bootstrap` compiles the API like the
+seed and runs `apps/api/prisma/bootstrap.ts`, which reads the `BOOTSTRAP_*` variables and calls
+`bootstrapOrganization` (`src/operations/seed/bootstrap-organization.ts`). Idempotent on the slug.
+It checks the password policy before writing anything, creates the organization (one audited
+row), then under `runAsSystem` the first administrator through
+`UsersService.createWithFirstPassword` (system context only; no route calls it) and an org-wide
+`admin` membership. The password goes only to `AuthAdminService.setFirstPassword`, which sets a
+password only for a user who has none (409 otherwise). Nothing else is created; the admin sets up
+sites, teams, log types, and people in the dashboard. The script does not set `NODE_ENV`, so it
+runs with the environment's value (unset means production, with the production refusals).
 
 - **Audit event**: actor (`user` with the id, or `system` when there is no request, as in the
   seed), action, entity type and id, `before`, `after`, `changes` (a top-level field diff), correlation
@@ -1000,7 +1017,7 @@ Domain actions and event types (44):
 
 | Entity            | Verbs                                                                                                 |
 | ----------------- | ----------------------------------------------------------------------------------------------------- |
-| `organization`    | `created` (seed only; no endpoint creates organizations), `updated`                                   |
+| `organization`    | `created` (seed and `db:bootstrap` only; no endpoint creates organizations), `updated`                |
 | `user`            | `created`, `updated`, `archived`, `restored`                                                          |
 | `membership`      | `created`, `updated`, `archived`                                                                      |
 | `site`            | `created`, `updated`, `archived`, `restored`                                                          |
@@ -1294,8 +1311,8 @@ off (`ai-off` suite).
   metadata, bounded by `AI_REQUEST_TIMEOUT_MS`, not traced, logged with ids and codes only).
   `AiRunner.providers(organizationId)` is async.
 - `src/operations/ai/`: smart capture (`capture/`), daily summaries (`summaries/`), anomaly rules
-  (`anomalies/`), the prompt files (`prompts/smart-capture-extract.v1.md`,
-  `daily-summary-narrative.v1.md`), `OrganizationAiLimits` (reads `settings.ai`), `GET /ai/usage`,
+  (`anomalies/`), the prompt files (`prompts/smart-capture-extract.v1.md` to `v3.md`, v3 in use
+  since 2026-11-17; `daily-summary-narrative.v1.md`), `OrganizationAiLimits` (reads `settings.ai`), `GET /ai/usage`,
   and `keys/` (ADR-0012: `AiKeyVault` over the platform `SecretBox`, `OrganizationAiKeys` bound
   to `AI_ORGANIZATION_KEYS`, `AiKeysService`, `AiKeysController`). They read through the normal
   visibility filters and write their own rows only through `ChangeRecorder`. The platform layer
@@ -1348,6 +1365,16 @@ POST /work-logs {source: ai_assisted,      --> one transaction: the log, capture
 or POST /ai/capture/:id/discard            --> capture discarded, decision on the traces
 ```
 
+**The extraction answer** (ADR-0014, since 2026-11-17): the model answers `logTypeKey` (an
+offered key or null), a list `fields` of `{ field: '<logTypeKey>.<fieldKey>', value, confidence }`
+(a value not stated is absent), `taskRef` and `siteRef` (offered `T1`... / `S1`... or null),
+`text`, and `occurredAt`, with a non-null confidence for each. Anthropic's structured outputs
+accept at most 16 union-typed parameters per schema; this shape has at most six whatever is
+offered (a unit test holds it). The code keeps the first entry per field, ignores fields of
+another log type, and checks each value against its field rule. Prompt v3 asks for `text` as the
+worker's note polished (spelling, grammar, filler removed, every fact kept) in the worker's own
+language, never translated.
+
 The phone queues all of it (Phase 5 queue, kinds `smartCapture` and `discardSmartCapture`), so a
 voice note recorded offline is processed when the phone is back online; the worker can fill the
 form by hand at any time. A capture is `confirmed` by exactly one log (409 for a second).
@@ -1398,7 +1425,8 @@ note is deleted once its capture is processed or discarded.
   `responseType: 'text'`), and since Phase 7 `smartCapture`, `aiSummaries`, `aiUsage`. The
   capture output schema is built per capture in `@ops/shared` (`buildCaptureOutputSchema`,
   `toStructuredOutputJsonSchema`, `interpretCaptureOutput`, `compareWithProposal` in
-  `domain/ai-capture-output.ts`), so the API and the tests share one definition. Write endpoints take
+  `domain/ai-capture-output.ts`; field values as a list since 2026-11-17, ADR-0014), so the API
+  and the tests share one definition. Write endpoints take
   `ApiCallOptions` (`headers`); the phone's queue passes `offlineSyncHeaders({ idempotencyKey,
 deviceTime })` (`platform/offline-sync.ts`).
 - **Upload helper** (`uploadAttachment`, `attachment-upload.ts`): start, PUT (supplied by the
@@ -1421,8 +1449,10 @@ deviceTime })` (`platform/offline-sync.ts`).
 /auth/me` on start. `mode: 'mobile'`: tokens in a `TokenStorage` (SecureStore in the app), the
   rotated pair saved before it is used. Single-flight refresh, sign-out that renews once if the
   access token had expired, and "sign out everywhere" that stays signed in when the server could
-  not confirm it. `auth-text.ts` holds every user-facing sentence and `roleLabel`; `auth-forms.ts`
-  the form validation both apps use.
+  not confirm it. `auth-text.ts` holds every user-facing sentence (English) and `roleLabel`;
+  `auth-translations.ts` (2026-11-17) the same sentences, failures, and notices in Turkish and
+  Arabic (`AUTH_TRANSLATIONS`), which both apps' catalogues use; `auth-forms.ts` the form
+  validation both apps use.
 - **Health monitor** (`createHealthMonitor`): unchanged; retries after 2, 4, 8, and 16 seconds.
 
 Each app builds its session once (`apps/web/src/lib/api/client.ts`, `apps/mobile/src/api/client.ts`)
@@ -1435,6 +1465,11 @@ and it is `null` when the API URL is not configured.
   gold primary `#D4A454`, brand red `#D80611`. Since 2026-11-16 there are two themes:
   `darkTheme` (the default) and `lightTheme` (warm neutrals, a darker gold `#8A6416` that passes
   AA as text on white); `themeForScheme(scheme)` picks one (unknown = dark).
+- **Brand area** (2026-11-17): `brandInk` (`#000000`, the logo's own black in both themes),
+  `onBrandInk`, `onBrandInkMuted`, and `brandInkRaised` colour the dashboard's sidebar, the
+  phone's headers and Home brand band, and both sign-in heroes, so the logo never shows as a
+  black tile on a light background. `onBrandInk`, `onBrandInkMuted`, and `brandGold` on
+  `brandInk` and `brandInkRaised` are in the contrast requirements.
 - **Contrast is tested.** `CONTRAST_REQUIREMENTS` lists every foreground and background pairing,
   and the unit tests check each against WCAG AA. The brand red is decoration only; red text uses
   `accentText` / `danger` (`#FF6B6E`).
@@ -1445,19 +1480,23 @@ and it is `null` when the API URL is not configured.
   choice is kept in `localStorage` (`hz.theme`, never sent to the API) and set as `data-theme` on
   `<html>` before the first paint by an inline script (`THEME_INIT_SCRIPT`; the Phase 8 nonce CSP
   must allow it). "System" follows the device or browser setting live. Stylesheets use only
-  `var(--...)`.
-- **Mobile** (2026-11-16, uncommitted): components and screens take their colours from
-  `useTheme().colors` (`apps/mobile/src/theme/`), never the static `colors` export; the theme
-  follows the device or Profile → Theme: System / Dark / Light (`userInterfaceStyle:
-'automatic'` in `app.config.ts`). The header sync indicator is hidden when everything is sent.
-  Bundled and opened on a phone,
-  not yet looked at on the screen (see `apps/mobile/memory.md`).
+  `var(--...)`. Fonts (2026-11-17): Inter (Latin and Latin Extended, for Turkish) and IBM Plex
+  Sans Arabic through `next/font/google` in `src/app/layout.tsx` (downloaded at build time and
+  served by the app). The logo is blended into the black brand area with
+  `mix-blend-mode: lighten`.
+- **Mobile**: components and screens take their colours from `useTheme().colors`
+  (`apps/mobile/src/theme/`), never the static `colors` export; the theme follows the device or
+  Profile → Theme: System / Dark / Light (`userInterfaceStyle: 'automatic'` in `app.config.ts`).
+  The headers use the brand area in both themes and the status bar has light icons. The header
+  sync indicator is hidden when everything is sent. Not yet looked at on a phone's screen (see
+  `apps/mobile/memory.md`).
 - **Brand module**: each app has one (`apps/web/src/lib/brand.ts`, `apps/mobile/src/config/brand.ts`)
-  holding the name, app label, logo, and "Powered by Kaneri.ai". The name falls back to
-  "Operations" when the variable is not set. The logo already shows the product name, so since
-  2026-11-16 the name is not repeated as text next to it (mobile `BrandHeader`, web `AuthShell`
-  and sidebar): only the app label is written; the name stays in the logo's accessible label and
-  the page title.
+  holding the name, app label, and logo; on the phone the label and the logo's accessible label
+  are getters, so they follow the chosen language. The name falls back to "Operations" when the
+  variable is not set. The logo already shows the product name, so the name is not repeated as
+  text next to it; the dashboard shows the organization's name beside the logo in the sidebar,
+  and the phone's Home brand band (`BrandBand.tsx`) shows the logo, the organization, and the
+  sync status.
 
 To re-brand for another client: set `NEXT_PUBLIC_BRAND_NAME` and `EXPO_PUBLIC_BRAND_NAME`; replace
 `apps/web/public/brand/logo-512.png`, `apps/web/src/app/icon.png`, `apps/web/src/app/apple-icon.png`,
@@ -1466,7 +1505,8 @@ and the three files in `apps/mobile/assets/brand/` (same names and sizes); chang
 that deployment; restart the dev servers. For a separate mobile app, set
 `EXPO_IOS_BUNDLE_IDENTIFIER` and `EXPO_ANDROID_PACKAGE` (default `ai.kaneri.operations`, a placeholder until the owner decides the
 final values; they cannot change after a store release) and that deployment's
-`EXPO_PUBLIC_EAS_PROJECT_ID`. Mobile text is in `apps/mobile/src/i18n/en.ts` and names no client.
+`EXPO_PUBLIC_EAS_PROJECT_ID`. Mobile text is in `apps/mobile/src/i18n/en.ts`, `tr.ts`, and `ar.ts`
+and names no client.
 
 ### Structure inside the clients
 
@@ -1476,8 +1516,9 @@ final values; they cannot change after a store release) and that deployment's
     `/work-logs/report`, `/map`, `/tasks` (list and board), `/tasks/[id]`, `/people`,
     `/structure`, `/audit`, `/settings`. The shell shows the navigation by role
     (`src/lib/navigation.ts` maps each route to a capability of `src/lib/permissions.ts`, which
-    mirrors the policy registry), the organization name and time zone, the account menu, and
-    "Powered by Kaneri.ai"; a worker gets "use the mobile app", a role without the capability
+    mirrors the policy registry), the organization name and time zone, the account menu (sign out,
+    Theme, Language); since 2026-11-17 a black sidebar with an icon per entry and a split sign-in
+    page with a language switch; a worker gets "use the mobile app", a role without the capability
     "not available for your role". The shell renders a page only once the organization's time
     zone has loaded (`orgTimeGate`). All of this is UX only; the API is the authority.
 
@@ -1518,11 +1559,21 @@ final values; they cannot change after a store release) and that deployment's
   - **Map**: Leaflet 1.9.4 with react-leaflet 5, loaded client-only (`next/dynamic`,
     `ssr: false`, `src/components/map/`), OpenStreetMap tiles unless `NEXT_PUBLIC_MAP_TILE_URL`
     is set. Every point is also reachable as text.
-  - **i18n** (`src/i18n/`): `t('key')` over the shared translation core; the English catalogue is
-    split into one file per namespace in `src/i18n/en/` (`core`, `overview`, `work-logs`, `tasks`,
-    `people`, `structure`, `audit`, `settings`, `map-page`, `report`, `csv-export`, `ai`). The
-    dashboard's `LOCALE` is fixed to `en` until a second catalogue exists. Stylesheets use logical
-    properties only (RTL-ready).
+  - **i18n** (`src/i18n/`, [ADR-0015](docs/decisions/0015-interface-language-per-device.md)):
+    `t('key')` over the shared translation core; one file per namespace in `src/i18n/en/`
+    (`core`, `overview`, `work-logs`, `tasks`, `people`, `structure`, `audit`, `settings`,
+    `map-page`, `report`, `csv-export`, `ai`), and the same namespaces in `tr/` and `ar/`, typed
+    against English. **The language switches at runtime**: `src/lib/language.ts` keeps the
+    browser's choice (System / English / Türkçe / العربية, `localStorage` key `hz.language`,
+    never sent to the API), and an inline script sets `lang` and `dir` on `<html>` before the
+    first paint; `LanguageGate` (`src/components/language-gate.tsx`, around everything in the
+    root layout) renders nothing on the server, calls `setLocale` before its children render, and
+    remounts them when the choice changes. `currentLocale()`, `localeTag()` (Arabic with Latin
+    digits), and `direction()` give the language in force; `LOCALE` / `DIRECTION` are only what
+    the server writes into `<html>`. The choice is in the account menu and, before sign-in, in
+    `language-switch.tsx`; `src/lib/auth-text.ts` routes the shared sign-in wording through the
+    catalogue. The browser-tab titles (Next.js metadata) stay English. Stylesheets use logical
+    properties only, so Arabic mirrors by itself.
   - **Folders**: `src/components/ui/` (DataTable, Pagination, filters, states, dialogs, form
     controls), one folder per page area (`overview/`, `work-logs/`, `tasks/`, `people/`,
     `structure/`, `audit/`, `settings/`, `map-page/`, `report/`, `exports/`, `manage/`, `ai/`);
@@ -1583,10 +1634,15 @@ final values; they cannot change after a store release) and that deployment's
     deleted by age: only when accepted, when the worker discards them, or, for a user who chose
     "keep for later" at sign-out, after 30 days. Tokens and the offline identity stay in
     SecureStore only.
-  - **i18n** (`src/i18n/`): every sentence through `t(key)` from a typed catalogue (`en.ts`); a new
-    language is a new file added to `CATALOGUES`; the phone's language is picked with
-    `expo-localization`; styles use `start` / `end` and `applyLayoutDirection()` switches React
-    Native to right to left for an RTL language.
+  - **i18n** (`src/i18n/`, ADR-0015): every sentence through `t(key)` from typed catalogues
+    (`en.ts`, `tr.ts`, `ar.ts` in `CATALOGUES`). The language is the phone's (`expo-localization`,
+    English when none matches) unless the worker chose one in Profile → Language
+    (`components/LanguageChoice.tsx`; `i18n/languagePreference.ts`, AsyncStorage key
+    `ops.language`, per phone, never sent to the API). `LanguageProvider` (in `App.tsx`) loads the
+    choice, calls `setLanguage`, and remounts the app so every screen re-reads its text;
+    `localeTag()` is a function and the `brand` labels are getters for the same reason. Styles use
+    `start` / `end`; `applyLayoutDirection()` asks React Native for right to left for Arabic,
+    which takes effect on the next start of the app (Profile says so).
   - **Push** (`src/push/`): registers after sign-in and on cold start, again when returning to the
     foreground after 24 hours, unregisters before sign-out; skipped in Expo Go on Android and
     without `EXPO_PUBLIC_EAS_PROJECT_ID`; a tapped notification opens the task or log (ids are
@@ -1633,6 +1689,11 @@ than the refresh lifetime. Docker Compose reads `MINIO_ROOT_USER`, `MINIO_ROOT_P
 `EXPO_PUBLIC_BRAND_NAME`, `EXPO_PUBLIC_EAS_PROJECT_ID`, `EXPO_IOS_BUNDLE_IDENTIFIER`, and
 `EXPO_ANDROID_PACKAGE` (both default to `ai.kaneri.operations`), because it runs in Node before the
 bundle exists. Every app variable must also be listed in `globalPassThroughEnv` in `turbo.json`.
+The `BOOTSTRAP_*` variables (`BOOTSTRAP_ORG_NAME`, `BOOTSTRAP_ORG_SLUG`, `BOOTSTRAP_TIME_ZONE`,
+`BOOTSTRAP_LOCALE`, `BOOTSTRAP_ADMIN_NAME`, `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_PASSWORD`;
+ADR-0013) are read only by `apps/api/prisma/bootstrap.ts`: not validated at API boot and not in
+`turbo.json` (no Turbo task reads them). They are commented out in `.env.example`; set them for
+the one run and remove the password afterwards.
 
 ### Build, tooling, and tests
 
@@ -1644,13 +1705,14 @@ compiled before the apps that import it. The reasons for each tool and version a
   including the access rules, visibility, auth, storage, notifications, the outbox consumer,
   idempotency, the sync cursor, the Phase 6 helpers, the AI runner, providers, prompt loader, key
   checker, `SecretBox`, anomaly rules, summary facts and schedule, `prisma-enums.spec.ts`, and
-  `route-policies.spec.ts`), 815 in `@ops/shared` (18 files), 207 in `@ops/web` (15 files,
-  `src/lib` logic plus a render test of the management screens), 351 in `@ops/mobile` (30 suites,
+  `route-policies.spec.ts`), 829 in `@ops/shared` (18 files), 210 in `@ops/web` (16 files,
+  `src/lib` logic plus a render test of the management screens), 354 in `@ops/mobile` (31 suites,
   including the sync engine and smart capture against fakes for SQLite, files, network, clock,
-  and API). Counted on 2026-11-16 (docs-keeper).
+  and API). Counted on 2026-11-17 (docs-keeper).
 - **Integration tests** (`pnpm test:integration`) boot the real Nest application in-process and
-  call it over HTTP against a separate PostgreSQL database named by `DATABASE_URL_TEST`: 1,719
-  tests in 29 suites, all passing on 2026-11-16, about 5 minutes. They bind an in-memory `FileStorage` fake, except `storage-minio`, which uses the
+  call it over HTTP against a separate PostgreSQL database named by `DATABASE_URL_TEST`: 1,724
+  tests in 30 suites (the newest is `bootstrap`), all passing on 2026-11-17 as reported, about
+  5 minutes. They bind an in-memory `FileStorage` fake, except `storage-minio`, which uses the
   real MinIO with its own bucket `hz-attachments-test`; the outbox consumer, push, and the
   summary scheduler are off and tests call `processPending()` with a fake Expo client. The fake
   configuration holds no AI key, so the AI layer always runs on its fakes (never a network call,
@@ -1683,8 +1745,8 @@ decision changes.
 
 ### AI additions still planned
 
-Turkish and Arabic prompt review with real samples and the summary and notification
-catalogues in those languages; provider data agreements and zero data retention (Phase 8); a
+Turkish and Arabic prompt review with real samples (only one English capture has run against
+the real Claude) and the summary and notification catalogues in those languages; provider data agreements and zero data retention (Phase 8); a
 shared store for the per-user AI rate limit; live (not once a day) anomaly flags and per-reader
 recounting of flag parameters; thresholds as settings; other notification channels (email,
 WhatsApp, Telegram) through `NotificationChannel`.
@@ -1693,13 +1755,17 @@ WhatsApp, Telegram) through `NotificationChannel`.
 
 The Phase 6 dashboard exists (see Structure inside the clients and ADR-0009). Still planned:
 photo upload from the browser (Phase 8; reuses `uploadAttachment`, needs a CORS rule on the
-bucket), Turkish and Arabic catalogues with the dashboard language picked from `User.locale`, a
+bucket), a review of the Turkish and Arabic catalogues by native speakers (they exist since
+2026-11-17; the language is a per-browser choice, ADR-0015), a
 search endpoint once the directory's 5,000-entry cap is reached, and background jobs for exports
 beyond 10,000 rows.
 
 ### Before production (Phase 8)
 
-A shared rate-limit store (sign-in and upload limits, the decode limit is per process by design),
+Exists since 2026-11-17: the production bootstrap (`pnpm db:bootstrap`, ADR-0013), EAS build
+profiles `preview` (APK) and `production` (app bundle, remote version code, submit to the
+internal track as a draft) in `apps/mobile/eas.json`, and the release guide and privacy policy
+draft in `docs/release/`. Still planned: a shared rate-limit store (sign-in and upload limits, the decode limit is per process by design),
 `TRUST_PROXY_HOPS` set in deployment, a real `NotificationSender` (email or SMS), a CSP with
 `script-src` nonces on the web app, HTTPS with the web app and API on the same site, a real S3
 provider with a private bucket policy and a scoped key, a replacement for the community MinIO

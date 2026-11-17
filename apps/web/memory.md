@@ -1,6 +1,6 @@
 # apps/web memory
 
-Package `@ops/web`. Last updated: 2026-11-16.
+Package `@ops/web`. Last updated: 2026-11-17.
 
 ## Purpose
 
@@ -8,15 +8,53 @@ The manager dashboard: a web app where supervisors, managers, and admins monitor
 work that workers log. Built with Next.js (App Router) and React. The architecture is in
 [ADR-0009](../../docs/decisions/0009-web-dashboard-architecture.md); the AI screens follow
 [ADR-0011](../../docs/decisions/0011-daily-summaries-and-anomaly-rules.md) and
-[ADR-0012](../../docs/decisions/0012-organization-ai-provider-keys.md) (own AI keys).
+[ADR-0012](../../docs/decisions/0012-organization-ai-provider-keys.md) (own AI keys); the
+languages follow [ADR-0015](../../docs/decisions/0015-interface-language-per-device.md).
 
 ## Current state
 
-Phase 7 committed (`3bfad42`). Uncommitted since 2026-11-16: the "Your AI keys" card and the
-model pickers (ADR-0012), live updates, the light theme, and the product name no longer repeated
-next to the logo (below). **No browser session with data is recorded** (the development database
-was reset by 2026-11-16, so it is now possible); the browser steps are in the combined manual
-test in `docs/reports/phase-7.md`.
+Phase 7 committed (`3bfad42`). The 2026-11-16 additions are in `644b773` (pushed); the redesign
+(`2131bdf`) and Turkish and Arabic (`ffaa5d8`) were committed on 2026-11-17 and are not pushed
+yet. **No person's browser session with data is recorded**: on 2026-11-17 the dashboard was only
+checked with headless screenshots in light, dark, and Arabic. The browser steps are in the
+combined manual test in `docs/reports/phase-7.md`.
+
+**Running it on the owner's PC** (2026-11-17): open <http://127.0.0.1:3200>. The local `.env`
+has `WEB_PORT=3200` and `NEXT_PUBLIC_API_URL=http://127.0.0.1:3001` (another project listens on
+port 3001 over IPv6, so `localhost:3001` can reach it instead of the API), and the API allows
+`http://127.0.0.1:3200` and `http://localhost:3200`. The dashboard runs as a production build
+(`pnpm --filter @ops/web build`, then `start`) because the dev server lagged (Turbopack watched
+`node_modules/.pnpm-task-run-state-v1`); rebuild after every change.
+
+- **Languages (2026-11-17, ADR-0015)**:
+  - Catalogues: `src/i18n/en/`, `tr/`, `ar/` (one file per namespace each), assembled in
+    `en.ts` / `tr.ts` / `ar.ts`; Turkish and Arabic are typed against English, so a missing key
+    fails the typecheck; English is the per-key fallback.
+  - `src/i18n/index.ts`: `t()`, `setLocale(locale)`, `currentLocale()`, `localeTag()`
+    (`en-GB`, `tr-TR`, `ar-u-nu-latn`: Arabic with Latin digits), `direction()`, `formatNumber`.
+    `LOCALE` / `DIRECTION` are only what the server writes into `<html>` (English, ltr).
+  - `src/lib/language.ts` (tested in `language.test.ts`): preference `system` / `en` / `tr` /
+    `ar`, `localStorage` key `hz.language` (never sent to the API; `system` removes it),
+    `resolveLanguage` (browser languages, else English), `LANGUAGE_INIT_SCRIPT` (inline in the
+    root layout with the theme script: sets `lang` and `dir` before the first paint),
+    `applyLanguagePreference`, `subscribeLanguage`.
+  - `src/components/language-gate.tsx` (`LanguageGate`, around everything in the root layout):
+    renders nothing on the server, calls `setLocale` before its children render, remounts them
+    when the language changes.
+  - The choice: a Language section in the account menu (`shell/user-menu.tsx`) and pills on the
+    sign-in and activation pages (`language-switch.tsx`). `src/lib/auth-text.ts` routes the shared
+    sign-in wording (`AUTH_TEXT`, failure messages) through the catalogue; the Turkish and Arabic
+    sentences come from `AUTH_TRANSLATIONS` in `@ops/shared`.
+  - Fonts through `next/font/google` in `src/app/layout.tsx`: Inter (`latin`, `latin-ext`;
+    `--font-sans`) and IBM Plex Sans Arabic (`--font-arabic`), downloaded at build time.
+  - The browser-tab titles (`metadata` in the root layout) stay English.
+- **Redesign (2026-11-17)**: a black dotted sidebar (`brandInk` tokens) with an icon per entry
+  (`src/components/ui/icons.tsx`), the organization's name beside the logo and a gold marker on
+  the current page; the logo blended into the black with `mix-blend-mode: lighten`
+  (`shell.module.css`, `auth-shell.module.css`); a split sign-in page (`auth-shell.tsx`);
+  shadows, hover lift, tinted badges, a focus glow; date filters wide enough for the full date,
+  with preset pills; table dates on one line. "Powered by Kaneri.ai" was removed
+  (`src/lib/brand.ts`; `brand.test.ts` now checks the brand names no builder).
 
 - **2026-11-16 additions**:
   - Settings: `AiKeysSection` (`src/components/settings/ai-keys-section.tsx`, logic in
@@ -35,7 +73,7 @@ test in `docs/reports/phase-7.md`.
     (never sent to the API; "System" removes it). A Phase 8 nonce CSP must allow the inline
     script.
   - The brand name is no longer written next to the logo in `AuthShell` and the sidebar (the
-    logo shows it); only the app label is.
+    logo shows it).
 
 - **Phase 7 (AI)**, in `src/components/ai/`, `src/lib/ai.ts`, `src/i18n/en/ai.ts`:
   - Overview: when `aiFeatures.dailySummary` is on, `LatestSummaryPanel` (the caller's latest
@@ -73,12 +111,12 @@ test in `docs/reports/phase-7.md`.
 
 - **Shell** (`src/components/shell/`): navigation by role from `src/lib/navigation.ts` and
   `src/lib/permissions.ts` (mirrors the API policy registry; UX only), organization name and time
-  zone, the account menu (`user-menu.tsx`: name, role, sign out, sign out everywhere), skip link,
-  "Powered by Kaneri.ai". A worker sees "use the mobile app". Pages render only after the
+  zone, the account menu (`user-menu.tsx`: name, role, Theme, Language, sign out, sign out
+  everywhere), skip link. A worker sees "use the mobile app". Pages render only after the
   organization (and so its time zone) has loaded (`orgTimeGate` in `src/lib/time.ts`).
 - **Session**: `createAuthSessionManager({ mode: 'web' })` from `@ops/shared`; httpOnly cookies
-  the page cannot read, the CSRF token in memory only, `GET /auth/me` on load, one refresh on a 401. Nothing of the session in `localStorage` or `sessionStorage` (only the theme choice). The query cache is cleared when nobody is
-  signed in.
+  the page cannot read, the CSRF token in memory only, `GET /auth/me` on load, one refresh on a 401. Nothing of the session in `localStorage` or `sessionStorage` (only the theme and language
+  choices). The query cache is cleared when nobody is signed in.
 - **Live updates** (2026-11-16, `src/lib/api/live.ts`): the query client's default
   `refetchInterval` (`liveRefetchInterval`) refetches the `dashboard`, `workLogs` (not
   `attachments`: signed URLs), `tasks`, `users`, and `memberships` queries every 15 s while the
@@ -92,41 +130,46 @@ test in `docs/reports/phase-7.md`.
   referrer and permissions policies, HSTS in production, `poweredByHeader: false`. No
   `default-src`, `script-src`, `style-src`, `img-src`, or `connect-src`: the hosts a Phase 8
   nonce-based policy must allow (tiles, storage, API) are listed in the comment there.
-- **Tests**: 207 unit tests in 15 files (2026-11-16, re-run by the docs-keeper), all in
+- **Tests**: 210 unit tests in 16 files (2026-11-17, re-run by the docs-keeper), all in
   `src/**/*.test.ts` (Vitest, `node` environment): `src/lib/*.test.ts` (Phase 7 added
-  `ai.test.ts`; 2026-11-16 `ai-keys.test.ts`, `theme.test.ts`, and `api/live.test.ts`),
+  `ai.test.ts`; 2026-11-16 `ai-keys.test.ts`, `theme.test.ts`, and `api/live.test.ts`;
+  2026-11-17 `language.test.ts`),
   `src/lib/work-logs/work-logs.test.ts`, and
   `src/components/manage/screens.render.test.ts` (renders management screens to a string).
 - Not built: photo upload from the browser (deferred to Phase 8: a CORS rule on the bucket);
-  catalogues other than English; restoring archived log types (no API route).
+  restoring archived log types (no API route).
 
 ## Key files
 
-| File or folder                                           | What it does                                                                                                                                                                                              |
-| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/app/layout.tsx`                                     | Root layout: brand metadata, both themes' tokens in a `<style>` and the theme init script, `lang` / `dir` from `LOCALE`, `AuthProvider`, `QueryProvider`.                                                 |
-| `src/lib/theme.ts`                                       | Theme preference (System / Dark / Light), stylesheet, init script, `applyThemePreference`.                                                                                                                |
-| `src/app/(dashboard)/layout.tsx`                         | Wraps every dashboard page in `AppShell`.                                                                                                                                                                 |
-| `src/components/query-provider.tsx`                      | The TanStack Query client with the defaults of `src/lib/api/query.ts`.                                                                                                                                    |
-| `src/components/auth-provider.tsx`                       | Subscribes to the session manager, `RouteGuard`, `useAuth()`.                                                                                                                                             |
-| `src/components/ui/`                                     | DataTable, Pagination, filters, Loading/Empty/ErrorState, dialogs (`<dialog>`), form controls, StatusBadge, layout.                                                                                       |
-| `src/components/<area>/`                                 | One folder per page area: `overview`, `work-logs`, `tasks`, `map-page`, `report`, `exports`, `people`, `structure`, `audit`, `settings`, `manage` (shared parts of the admin screens), `ai` (Phase 7).    |
-| `src/lib/ai.ts`                                          | AI settings form state and body (with the models), summary and anomaly display helpers, `AI_USAGE_PATH` (tested in `ai.test.ts`).                                                                         |
-| `src/lib/ai-keys.ts`                                     | The AI keys card's logic: status text per source, error mapping (tested in `ai-keys.test.ts`).                                                                                                            |
-| `src/lib/api/live.ts`                                    | `liveRefetchInterval` (15 s for live query roots, backoff, stop on 4xx) and `USER_RECHECK_MS` (30 s).                                                                                                     |
-| `src/components/map/`                                    | `map-view.tsx` loads `leaflet-map.tsx` with `next/dynamic` (`ssr: false`).                                                                                                                                |
-| `src/hooks/`                                             | `use-caller` (role, capabilities), `use-organization`, `use-directory`, `use-list-params`, `use-work-logs`, sign-in and sign-out hooks.                                                                   |
-| `src/lib/api/client.ts`, `api/query.ts`, `api/errors.ts` | `authSession` and `apiClient` (null without an API URL); `queryKeys`, `unwrap`, retry rules; error to message mapping.                                                                                    |
-| `src/lib/list-params.ts`                                 | URL list state: parse and write filters, sort, page (a filter change resets to page 1).                                                                                                                   |
-| `src/lib/time.ts`                                        | `createOrgTime` / `useOrgTime`, `orgTimeGate`, day ranges over the shared time-zone helpers.                                                                                                              |
-| `src/lib/permissions.ts`, `navigation.ts`                | Capabilities per role; routes, navigation, and route access.                                                                                                                                              |
-| `src/lib/log-type-editor.ts`                             | The custom-field editor's logic (locked saved keys, `keyReused`, choices, order, validation).                                                                                                             |
-| `src/lib/` (others)                                      | `directory.ts`, `download.ts` (`saveTextFile` re-adds the CSV BOM), `exports.ts`, `map.ts`, `overview.ts`, `report.ts`, `tasks.ts`, `people.ts`, `structure.ts`, `settings.ts`, `audit.ts`, `work-logs/`. |
-| `src/i18n/index.ts`, `src/i18n/en/*.ts`                  | `t()` over the shared translator; English catalogue, one file per namespace.                                                                                                                              |
-| `src/lib/env.ts`                                         | The only place that reads environment variables.                                                                                                                                                          |
-| `src/lib/brand.ts`                                       | Name, app label, logo, "Powered by Kaneri.ai".                                                                                                                                                            |
-| `scripts/next.mjs`                                       | Copies `WEB_PORT` to `PORT`, then runs the Next.js CLI.                                                                                                                                                   |
-| `next.config.ts`                                         | Strict mode, `agentRules: false`, monorepo root, `poweredByHeader: false`, security headers.                                                                                                              |
+| File or folder                                            | What it does                                                                                                                                                                                              |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/app/layout.tsx`                                      | Root layout: brand metadata (English), both themes' tokens in a `<style>`, the theme and language init scripts, the fonts, `LanguageGate`, `AuthProvider`, `QueryProvider`.                               |
+| `src/lib/theme.ts`                                        | Theme preference (System / Dark / Light), stylesheet, init script, `applyThemePreference`.                                                                                                                |
+| `src/lib/language.ts`, `src/components/language-gate.tsx` | Language preference (System / English / Türkçe / العربية), init script, `applyLanguagePreference`; the gate that applies it before rendering (ADR-0015).                                                  |
+| `src/components/language-switch.tsx`                      | The language pills on the sign-in and activation pages (inside `AuthShell`).                                                                                                                              |
+| `src/lib/auth-text.ts`                                    | `translateAuthText`, `authFailureText`: the shared sign-in wording through the catalogue.                                                                                                                 |
+| `src/components/ui/icons.tsx`                             | The sidebar's icons (2026-11-17).                                                                                                                                                                         |
+| `src/app/(dashboard)/layout.tsx`                          | Wraps every dashboard page in `AppShell`.                                                                                                                                                                 |
+| `src/components/query-provider.tsx`                       | The TanStack Query client with the defaults of `src/lib/api/query.ts`.                                                                                                                                    |
+| `src/components/auth-provider.tsx`                        | Subscribes to the session manager, `RouteGuard`, `useAuth()`.                                                                                                                                             |
+| `src/components/ui/`                                      | DataTable, Pagination, filters, Loading/Empty/ErrorState, dialogs (`<dialog>`), form controls, StatusBadge, layout.                                                                                       |
+| `src/components/<area>/`                                  | One folder per page area: `overview`, `work-logs`, `tasks`, `map-page`, `report`, `exports`, `people`, `structure`, `audit`, `settings`, `manage` (shared parts of the admin screens), `ai` (Phase 7).    |
+| `src/lib/ai.ts`                                           | AI settings form state and body (with the models), summary and anomaly display helpers, `AI_USAGE_PATH` (tested in `ai.test.ts`).                                                                         |
+| `src/lib/ai-keys.ts`                                      | The AI keys card's logic: status text per source, error mapping (tested in `ai-keys.test.ts`).                                                                                                            |
+| `src/lib/api/live.ts`                                     | `liveRefetchInterval` (15 s for live query roots, backoff, stop on 4xx) and `USER_RECHECK_MS` (30 s).                                                                                                     |
+| `src/components/map/`                                     | `map-view.tsx` loads `leaflet-map.tsx` with `next/dynamic` (`ssr: false`).                                                                                                                                |
+| `src/hooks/`                                              | `use-caller` (role, capabilities), `use-organization`, `use-directory`, `use-list-params`, `use-work-logs`, sign-in and sign-out hooks.                                                                   |
+| `src/lib/api/client.ts`, `api/query.ts`, `api/errors.ts`  | `authSession` and `apiClient` (null without an API URL); `queryKeys`, `unwrap`, retry rules; error to message mapping.                                                                                    |
+| `src/lib/list-params.ts`                                  | URL list state: parse and write filters, sort, page (a filter change resets to page 1).                                                                                                                   |
+| `src/lib/time.ts`                                         | `createOrgTime` / `useOrgTime`, `orgTimeGate`, day ranges over the shared time-zone helpers.                                                                                                              |
+| `src/lib/permissions.ts`, `navigation.ts`                 | Capabilities per role; routes, navigation, and route access.                                                                                                                                              |
+| `src/lib/log-type-editor.ts`                              | The custom-field editor's logic (locked saved keys, `keyReused`, choices, order, validation).                                                                                                             |
+| `src/lib/` (others)                                       | `directory.ts`, `download.ts` (`saveTextFile` re-adds the CSV BOM), `exports.ts`, `map.ts`, `overview.ts`, `report.ts`, `tasks.ts`, `people.ts`, `structure.ts`, `settings.ts`, `audit.ts`, `work-logs/`. |
+| `src/i18n/index.ts`, `src/i18n/{en,tr,ar}/*.ts`           | `t()`, `setLocale`, `currentLocale`, `localeTag`, `direction` over the shared translator; English, Turkish, and Arabic catalogues, one file per namespace.                                                |
+| `src/lib/env.ts`                                          | The only place that reads environment variables.                                                                                                                                                          |
+| `src/lib/brand.ts`                                        | Name, app label, logo (no builder credit since 2026-11-17).                                                                                                                                               |
+| `scripts/next.mjs`                                        | Copies `WEB_PORT` to `PORT`, then runs the Next.js CLI.                                                                                                                                                   |
+| `next.config.ts`                                          | Strict mode, `agentRules: false`, monorepo root, `poweredByHeader: false`, security headers.                                                                                                              |
 
 `next-env.d.ts` and `.next/` are generated and git-ignored.
 
@@ -139,13 +182,13 @@ the same), React and React DOM exactly `19.2.3` (same as mobile), `@tanstack/rea
 
 ## Environment variables
 
-| Variable                        | Used by            | Notes                                                                                      |
-| ------------------------------- | ------------------ | ------------------------------------------------------------------------------------------ |
-| `WEB_PORT`                      | `scripts/next.mjs` | Port for `dev` and `start`. On the owner's PC 3000 is taken: use for example 3100.         |
-| `NEXT_PUBLIC_API_URL`           | `src/lib/env.ts`   | Must be an `http` or `https` URL. Inlined at build time.                                   |
-| `NEXT_PUBLIC_BRAND_NAME`        | `src/lib/env.ts`   | Product name. Falls back to "Operations". Inlined at build time.                           |
-| `NEXT_PUBLIC_ORGANIZATION_SLUG` | `src/lib/env.ts`   | Sent with every sign-in (`hz-demo`).                                                       |
-| `NEXT_PUBLIC_MAP_TILE_URL`      | `src/lib/env.ts`   | Optional tile template with `{z}`; anything else (or empty) means the OpenStreetMap tiles. |
+| Variable                        | Used by            | Notes                                                                                        |
+| ------------------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
+| `WEB_PORT`                      | `scripts/next.mjs` | Port for `dev` and `start`. On the owner's PC 3000 is taken: 3200 there.                     |
+| `NEXT_PUBLIC_API_URL`           | `src/lib/env.ts`   | Must be an `http` or `https` URL. Inlined at build time. `127.0.0.1:3001` on the owner's PC. |
+| `NEXT_PUBLIC_BRAND_NAME`        | `src/lib/env.ts`   | Product name. Falls back to "Operations". Inlined at build time.                             |
+| `NEXT_PUBLIC_ORGANIZATION_SLUG` | `src/lib/env.ts`   | Sent with every sign-in (`hz-demo`).                                                         |
+| `NEXT_PUBLIC_MAP_TILE_URL`      | `src/lib/env.ts`   | Optional tile template with `{z}`; anything else (or empty) means the OpenStreetMap tiles.   |
 
 The API side must match: `CORS_ORIGINS` must contain the exact origin the dashboard is opened
 from (also when `WEB_PORT` changes), and `WEB_APP_URL` is where activation links point.
@@ -173,7 +216,9 @@ Run from the repo root as `pnpm --filter @ops/web <script>`.
 - **List state lives in the URL** with the API's query parameter names (`useListParams`); a new
   filter goes into the shared filter shape first, so list, export, and links get it together.
 - **Every user-facing string through `t('...')`.** Add keys to your page's file in
-  `src/i18n/en/`; `core.ts` only for shared words. Never use a plural category name (`zero`,
+  `src/i18n/en/` and the same key in `tr/` and `ar/` (the typecheck fails otherwise); `core.ts`
+  only for shared words. Dates and numbers through `localeTag()` / `formatNumber`, never a fixed
+  locale; never read the language once at module load (it changes at runtime). Never use a plural category name (`zero`,
   `one`, `two`, `few`, `many`, `other`) as a plain key: an object holding `other` is read as
   plural forms.
 - **Logical CSS only** (`margin-inline-start`, `padding-inline`, `inset-inline-end`,
@@ -200,8 +245,16 @@ Run from the repo root as `pnpm --filter @ops/web <script>`.
 - No recorded browser session with data; loading, empty, and error states, phone widths, and
   keyboard use have not been checked by a person. The Phase 7 panels and pages have never shown
   a real summary, and the AI keys card has never checked a real key.
-- The light colours are contrast tested but not yet looked at by a person on every page; the
-  theme choice is per browser, not per user.
+- The light colours, the redesign, and the Turkish and Arabic pages are contrast and type tested
+  and seen in headless screenshots, but not yet looked at by a person on every page; the theme
+  and language choices are per browser, not per user (`User.locale` is separate and still sets
+  the notification language). No native speaker has reviewed the Turkish and Arabic texts.
+- `LanguageGate` renders nothing on the server, so every page is blank until the browser has run
+  the script.
+- `next build` downloads the Inter and IBM Plex Sans Arabic fonts (`next/font/google`), so it
+  needs an internet connection.
+- On the owner's PC the dev server lags (Turbopack watching `node_modules/.pnpm-task-run-state-v1`);
+  use a production build there.
 - The Summaries and AI usage entries are shown by role, also while the AI features are off (the
   pages then show no summaries or zero usage).
 - The API status card (`src/components/api-status.tsx`, `hooks/use-api-health.ts`) is shown on
@@ -210,8 +263,6 @@ Run from the repo root as `pnpm --filter @ops/web <script>`.
 - A 403 from `POST /auth/login` means the page's origin is not in `CORS_ORIGINS`.
 - No nonce-based CSP yet; in production the web app and the API must be same-site (or
   `AUTH_COOKIE_DOMAIN` set) and on HTTPS.
-- The dashboard language is fixed to English (`LOCALE`); per-user selection comes with a second
-  catalogue.
 - The public OpenStreetMap tiles are for development and light use only; set
   `NEXT_PUBLIC_MAP_TILE_URL` before production.
 - `NEXT_PUBLIC_*` values are inlined at build and dev-server start; restart after changing them.
