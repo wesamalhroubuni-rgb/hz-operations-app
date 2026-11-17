@@ -1,0 +1,54 @@
+# Checks every change: formatting, lint, typecheck, unit tests and the production builds.
+# The integration tests (PostgreSQL and MinIO) still run locally with `pnpm test:integration`.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Build-time values for the dashboard (placeholders: nothing is deployed from CI).
+      NEXT_PUBLIC_API_URL: https://api.example.invalid
+      NEXT_PUBLIC_ORGANIZATION_SLUG: example
+      NEXT_PUBLIC_BRAND_NAME: Operations
+      TURBO_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      # Uses the pnpm version of `packageManager` in package.json.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Format
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build

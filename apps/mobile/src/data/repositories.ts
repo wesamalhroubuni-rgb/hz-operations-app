@@ -105,7 +105,17 @@ export interface CapturesRepository {
   discard(captureClientId: string): Promise<WriteResult<{ discarded: true }>>;
 }
 
+/** The signed-in worker's own account. */
+export interface ProfileRepository {
+  /**
+   * Makes the language chosen in Profile the account's language, so the server writes their
+   * notifications and daily summaries in it. Queued: sent when there is signal.
+   */
+  setLanguage(locale: 'en' | 'tr' | 'ar'): Promise<WriteResult<{ queued: true }>>;
+}
+
 export interface Repositories {
+  profile: ProfileRepository;
   workLogs: WorkLogsRepository;
   tasks: TasksRepository;
   attachments: AttachmentsRepository;
@@ -467,5 +477,12 @@ export function createOfflineRepositories(deps: OfflineRepositoryDeps): Reposito
     },
   };
 
-  return { workLogs, tasks, attachments, notifications, captures };
+  const profile: ProfileRepository = {
+    async setLanguage(locale) {
+      await queue.enqueue({ kind: 'setLanguage', userId: deps.user.id, locale }, clock());
+      return { ok: true, data: { queued: true } };
+    },
+  };
+
+  return { profile, workLogs, tasks, attachments, notifications, captures };
 }

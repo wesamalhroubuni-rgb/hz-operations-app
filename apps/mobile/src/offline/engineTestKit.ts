@@ -45,6 +45,8 @@ export function recordKeyOf(mutation: QueuedMutation): string {
     case 'smartCapture':
     case 'discardSmartCapture':
       return `smartCapture:${mutation.captureClientId}`;
+    case 'setLanguage':
+      return `user:${mutation.userId}`;
     default:
       return `workLog:${mutation.workLogClientId}`;
   }
@@ -653,6 +655,15 @@ export class FakeApi {
           const next: SmartCapture = { ...capture, status: 'discarded' };
           this.capturesByClientId.set(next.clientId, next);
           return { ok: true, status: 200, data: next };
+        }),
+    },
+    users: {
+      /** The account's own language (Profile), the only user change the phone queues. */
+      locales: new Map<string, string>(),
+      update: (id: string, body: { locale?: string }) =>
+        this.handle('users.update', id, body, undefined, (): ApiResult<{ id: string }> => {
+          if (body.locale) this.client.users.locales.set(id, body.locale);
+          return { ok: true, status: 200, data: { id } };
         }),
     },
     sync: {

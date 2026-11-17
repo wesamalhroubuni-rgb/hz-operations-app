@@ -425,6 +425,7 @@ export const ar: CatalogueShape<EnglishCatalogue> = {
       uploadAttachment: 'صورة',
       smartCapture: 'التقاط ذكي',
       discardSmartCapture: 'التقاط ذكي متجاهَل',
+      setLanguage: 'اللغة',
     },
     savedAt: 'أُنشئ {{time}}',
     attempts: {

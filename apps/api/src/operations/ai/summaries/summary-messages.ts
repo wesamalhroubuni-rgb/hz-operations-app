@@ -75,11 +75,79 @@ const ENGLISH: Catalogue = {
   }),
 };
 
-/** Translations by locale; English is complete, the others hold what has been translated. */
+// Turkish: a noun after a number stays singular, so no plural forms are needed.
+const TURKISH: Catalogue = {
+  intro: ({ day }) => `${day} günlük özeti.`,
+  logs: ({ total, approved, submitted, rejected, draft }) =>
+    `${total} iş kaydı girildi: ${approved} onaylandı, ${submitted} gönderildi, ` +
+    `${rejected} reddedildi ve ${draft} taslak.`,
+  noLogs: () => 'İş kaydı girilmedi.',
+  reviews: ({ approved, rejected, awaiting }) =>
+    `Gün içindeki incelemeler: ${approved} onay, ${rejected} ret. ${awaiting} kayıt inceleme bekliyor.`,
+  tasks: ({ open, overdue, blocked, completed, created }) =>
+    `Görevler: ${open} açık, ${overdue} gecikmiş, ${blocked} engellenmiş; gün içinde ` +
+    `${completed} tamamlandı ve ${created} oluşturuldu.`,
+  workers: ({ active, idle }) => `Çalışanlar: ${active} kişinin kaydı var, ${idle} kişinin yok.`,
+  busiestSite: ({ name, logs }) => `En yoğun yer: ${name} (${logs} kayıt).`,
+  anomalies: ({ total, byKind }) => {
+    const parts = [
+      byKind.no_activity_site > 0 ? `${byKind.no_activity_site} kayıtsız aktif saha` : null,
+      byKind.slow_task > 0 ? `${byKind.slow_task} yavaş görev` : null,
+      byKind.repeated_rejections > 0
+        ? `${byKind.repeated_rejections} tekrar tekrar reddedilen çalışan`
+        : null,
+      byKind.far_location > 0 ? `${byKind.far_location} sahasından uzak kayıt` : null,
+    ].filter((part): part is string => part !== null);
+    return `${total} olağan dışı öğe incelenmek üzere işaretlendi: ${parts.join(', ')}.`;
+  },
+  noAnomalies: () => 'Olağan dışı öğe işaretlenmedi.',
+  dailySummary: ({ day, logs, overdue, anomalies }) => ({
+    title: `${day} günlük özeti`,
+    body:
+      `${logs} iş kaydı, ${overdue} geciken görev, ${anomalies} olağan dışı öğe. ` +
+      'Okumak için paneli açın.',
+    push: { title: 'Günlük özet', body: 'Günlük özetiniz hazır.' },
+  }),
+};
+
+// Arabic: "label: number" phrasing, correct for every count without the six plural forms.
+const ARABIC: Catalogue = {
+  intro: ({ day }) => `الملخص اليومي ليوم ${day}.`,
+  logs: ({ total, approved, submitted, rejected, draft }) =>
+    `سجلات العمل المسجّلة: ${total} (تمت الموافقة: ${approved}، مُرسلة: ${submitted}، ` +
+    `مرفوضة: ${rejected}، مسودات: ${draft}).`,
+  noLogs: () => 'لم تُسجَّل أي سجلات عمل.',
+  reviews: ({ approved, rejected, awaiting }) =>
+    `المراجعات خلال اليوم: موافقة ${approved}، رفض ${rejected}. بانتظار المراجعة: ${awaiting}.`,
+  tasks: ({ open, overdue, blocked, completed, created }) =>
+    `المهام: مفتوحة ${open}، متأخرة ${overdue}، متوقفة ${blocked}؛ وخلال اليوم أُنجزت ` +
+    `${completed} وأُنشئت ${created}.`,
+  workers: ({ active, idle }) => `العمّال: لديهم سجل ${active}، بلا سجل ${idle}.`,
+  busiestSite: ({ name, logs }) => `الأكثر نشاطًا: ${name} (السجلات: ${logs}).`,
+  anomalies: ({ total, byKind }) => {
+    const parts = [
+      byKind.no_activity_site > 0 ? `مواقع نشطة بلا سجلات: ${byKind.no_activity_site}` : null,
+      byKind.slow_task > 0 ? `مهام بطيئة: ${byKind.slow_task}` : null,
+      byKind.repeated_rejections > 0 ? `عمّال برفض متكرر: ${byKind.repeated_rejections}` : null,
+      byKind.far_location > 0 ? `سجلات بعيدة عن موقعها: ${byKind.far_location}` : null,
+    ].filter((part): part is string => part !== null);
+    return `عناصر غير معتادة للمراجعة: ${total} (${parts.join('، ')}).`;
+  },
+  noAnomalies: () => 'لم تُرصد عناصر غير معتادة.',
+  dailySummary: ({ day, logs, overdue, anomalies }) => ({
+    title: `الملخص اليومي ليوم ${day}`,
+    body:
+      `سجلات العمل: ${logs}، المهام المتأخرة: ${overdue}، العناصر غير المعتادة: ${anomalies}. ` +
+      'افتح لوحة الإدارة لقراءته.',
+    push: { title: 'الملخص اليومي', body: 'ملخصك اليومي جاهز.' },
+  }),
+};
+
+/** Translations by locale; a key missing from a catalogue falls back to English. */
 const CATALOGUES: Record<Locale, Partial<Catalogue>> = {
   en: ENGLISH,
-  tr: {},
-  ar: {},
+  tr: TURKISH,
+  ar: ARABIC,
 };
 
 function text<Key extends keyof Catalogue>(locale: string, key: Key): Catalogue[Key] {

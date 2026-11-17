@@ -1,6 +1,7 @@
 import { fontSizes, fontWeights, radii, spacing } from '@ops/shared';
 import { Pressable, Text, View } from 'react-native';
 
+import { useRepositories } from '../data/DataProvider';
 import { LANGUAGE_NAMES, t } from '../i18n';
 import { LANGUAGE_PREFERENCES } from '../i18n/languagePreference';
 import { useLanguage } from '../i18n/LanguageProvider';
@@ -17,6 +18,12 @@ import { touch } from './sizes';
 export function LanguageChoice() {
   const styles = useStyles();
   const { preference, setPreference, restartNeeded } = useLanguage();
+  const repositories = useRepositories();
+  // The screen language at once; the account's language (server texts) through the queue.
+  const choose = (value: (typeof LANGUAGE_PREFERENCES)[number]) => {
+    setPreference(value);
+    if (value !== 'system') void repositories.profile.setLanguage(value);
+  };
   const title = t('profile.language.title');
   return (
     <Card>
@@ -32,7 +39,7 @@ export function LanguageChoice() {
               accessibilityState={{ checked: selected, selected }}
               accessibilityLabel={`${title}: ${label}`}
               accessibilityHint={value === 'system' ? t('profile.language.systemHint') : undefined}
-              onPress={() => setPreference(value)}
+              onPress={() => choose(value)}
               style={({ pressed }) => [
                 styles.option,
                 selected && styles.optionSelected,

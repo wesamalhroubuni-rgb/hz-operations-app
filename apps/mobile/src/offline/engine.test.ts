@@ -264,6 +264,38 @@ describe('sync engine: pushing the queue', () => {
   });
 });
 
+describe('sync engine: the account language', () => {
+  it('sends the language chosen in Profile, in order, so the last choice wins', async () => {
+    const h = createHarness();
+    await enqueue(h, { kind: 'setLanguage', userId: 'user-1', locale: 'tr' });
+    await enqueue(h, { kind: 'setLanguage', userId: 'user-1', locale: 'ar' });
+
+    const result = await h.engine.syncNow('manual');
+
+    expect(result.sent).toBe(2);
+    expect(h.api.callsTo('users.update').map((call) => call.body)).toEqual([
+      { locale: 'tr' },
+      { locale: 'ar' },
+    ]);
+    expect(h.api.client.users.locales.get('user-1')).toBe('ar');
+    expect(h.queue.items).toEqual([]);
+  });
+
+  it('keeps the choice while offline and sends it when the connection returns', async () => {
+    const h = createHarness();
+    h.api.interceptor = () => NETWORK_DOWN;
+    await enqueue(h, { kind: 'setLanguage', userId: 'user-1', locale: 'tr' });
+
+    await h.engine.syncNow('manual');
+    expect(h.queue.items).toHaveLength(1);
+
+    h.api.interceptor = null;
+    await h.engine.syncNow('manual');
+    expect(h.api.client.users.locales.get('user-1')).toBe('tr');
+    expect(h.queue.items).toEqual([]);
+  });
+});
+
 describe('sync engine: bad networks and crashes', () => {
   it('stops at a network loss mid-run, keeps everything, and skips the pull', async () => {
     const h = createHarness();

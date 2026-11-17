@@ -716,10 +716,14 @@ The criteria below are still the plan and should be refined against the release 
       in an ADR and implemented. The audit log is append-only, so personal data in it cannot be
       erased today.
 - [ ] The audit log cannot be emptied by the application's database role (the append-only trigger
-      does not block `TRUNCATE`).
-- [ ] `pnpm db:reset` refuses to run against anything but a local development database (it has no
-      guard on its target host today).
-- [ ] CI runs lint, typecheck, test, build, and format check on every change.
+      does not block `TRUNCATE`). Decided 2026-11-17: a deployment setting, not a trigger (the
+      integration tests truncate every table); `REVOKE TRUNCATE` for the API's role is step 3 of
+      the release guide's production server section.
+- [x] `pnpm db:reset` refuses to run against anything but a local development database:
+      `apps/api/scripts/guard-local-db.mjs` runs first and refuses a non-local host, an invalid URL
+      and `NODE_ENV=production` (checked by hand 2026-11-17).
+- [ ] CI runs lint, typecheck, test, build, and format check on every change. `.github/workflows/ci.yml`
+      added 2026-11-17 (not yet run on GitHub; integration tests still local only).
 - [ ] Production deployment for the API, web app, and database, with backups and a tested restore.
 - [ ] Monitoring, alerting, and error reporting in place.
 - [ ] Mobile release builds for iOS and Android submitted for store review or internal

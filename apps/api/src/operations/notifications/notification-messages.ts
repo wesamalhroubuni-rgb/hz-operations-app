@@ -57,11 +57,47 @@ const ENGLISH: Catalogue = {
   }),
 };
 
-/** Translations by locale; English is complete, the others hold what has been translated. */
+const TURKISH: Catalogue = {
+  'task.assigned': ({ taskTitle }) => ({
+    title: `Yeni görev: ${taskTitle}`,
+    body: 'Size bir görev atandı. Ayrıntıları görmek için açın.',
+    push: { title: 'Yeni görev atandı', body: 'Görmek için uygulamayı açın.' },
+  }),
+  'work_log.approved': () => ({
+    title: 'İş kaydı onaylandı',
+    body: 'İş kaydınız onaylandı.',
+    push: { title: 'İş kaydı onaylandı', body: 'Görmek için uygulamayı açın.' },
+  }),
+  'work_log.rejected': ({ note }) => ({
+    title: 'İş kaydı reddedildi',
+    body: note ? `İş kaydınız reddedildi: ${note}` : 'İş kaydınız reddedildi.',
+    push: { title: 'İş kaydı reddedildi', body: 'Gerekçe için uygulamayı açın.' },
+  }),
+};
+
+const ARABIC: Catalogue = {
+  'task.assigned': ({ taskTitle }) => ({
+    title: `مهمة جديدة: ${taskTitle}`,
+    body: 'كُلّفت بمهمة. افتحها لرؤية التفاصيل.',
+    push: { title: 'تم تكليفك بمهمة جديدة', body: 'افتح التطبيق لرؤيتها.' },
+  }),
+  'work_log.approved': () => ({
+    title: 'تمت الموافقة على سجل العمل',
+    body: 'تمت الموافقة على سجل عملك.',
+    push: { title: 'تمت الموافقة على سجل العمل', body: 'افتح التطبيق لرؤيته.' },
+  }),
+  'work_log.rejected': ({ note }) => ({
+    title: 'رُفض سجل العمل',
+    body: note ? `رُفض سجل عملك: ${note}` : 'رُفض سجل عملك.',
+    push: { title: 'رُفض سجل العمل', body: 'افتح التطبيق لمعرفة السبب.' },
+  }),
+};
+
+/** Translations by locale; a key missing from a catalogue falls back to English. */
 const CATALOGUES: Record<Locale, Partial<Catalogue>> = {
   en: ENGLISH,
-  tr: {},
-  ar: {},
+  tr: TURKISH,
+  ar: ARABIC,
 };
 
 /**

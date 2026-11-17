@@ -51,7 +51,9 @@ function item(
         ? `task:${mutation.taskId}`
         : mutation.kind === 'smartCapture' || mutation.kind === 'discardSmartCapture'
           ? `smartCapture:${mutation.captureClientId}`
-          : `workLog:${mutation.workLogClientId}`;
+          : mutation.kind === 'setLanguage'
+            ? `user:${mutation.userId}`
+            : `workLog:${mutation.workLogClientId}`;
   return {
     id: `item-${seq}`,
     seq,

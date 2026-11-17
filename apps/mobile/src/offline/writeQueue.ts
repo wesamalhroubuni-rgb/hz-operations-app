@@ -45,6 +45,8 @@ export function recordKeyOf(mutation: QueuedMutation): string {
     case 'smartCapture':
     case 'discardSmartCapture':
       return smartCaptureRecordKey(mutation.captureClientId);
+    case 'setLanguage':
+      return `user:${mutation.userId}`;
   }
 }
 
@@ -245,6 +247,9 @@ export function defaultCopyText(item: QueueItem): string {
       if (mutation.input.kind === 'photo' && mutation.input.note) lines.push(mutation.input.note);
       break;
     case 'discardSmartCapture':
+      break;
+    case 'setLanguage':
+      lines.push(mutation.locale);
       break;
   }
   return lines.join('\n');

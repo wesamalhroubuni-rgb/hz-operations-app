@@ -188,18 +188,29 @@ describe('template narrative and notification texts', () => {
     expect(text).toContain('No unusual items were flagged.');
   });
 
-  it('falls back to English, key by key, for other and unknown locales', () => {
-    expect(templateNarrative(statsFixture(), 'tr')).toBe(templateNarrative(statsFixture(), 'en'));
-    expect(templateNarrative(statsFixture(), 'xx')).toBe(templateNarrative(statsFixture(), 'en'));
+  it('is written in Turkish and Arabic, and in English for unknown locales', () => {
+    const english = templateNarrative(statsFixture(), 'en');
+    expect(templateNarrative(statsFixture(), 'xx')).toBe(english);
+    expect(templateNarrative(statsFixture(), 'tr-TR')).toContain('günlük özeti');
+    expect(templateNarrative(statsFixture(), 'ar')).toContain('الملخص اليومي');
+    // The same numbers in every language: they come from the stats, never from a translation.
+    const numbers = (text: string) => (text.match(/\d+/g) ?? []).sort().join(',');
+    expect(numbers(templateNarrative(statsFixture(), 'tr'))).toBe(numbers(english));
+    expect(numbers(templateNarrative(statsFixture(), 'ar'))).toBe(numbers(english));
   });
 
   it('the push text is generic; the counts stay in the in-app text', () => {
-    const message = renderDailySummaryNotification(
-      { day: '2026-10-20', logs: 12, overdue: 3, anomalies: 1 },
-      'ar',
-    );
-    expect(message.push).toEqual({ title: 'Daily summary', body: 'Your daily summary is ready.' });
-    expect(message.title).toBe('Daily summary for 2026-10-20');
-    expect(message.body).toContain('12 work logs, 3 overdue tasks, 1 unusual item');
+    const vars = { day: '2026-10-20', logs: 12, overdue: 3, anomalies: 1 };
+    const english = renderDailySummaryNotification(vars, 'en');
+    expect(english.push).toEqual({ title: 'Daily summary', body: 'Your daily summary is ready.' });
+    expect(english.title).toBe('Daily summary for 2026-10-20');
+    expect(english.body).toContain('12 work logs, 3 overdue tasks, 1 unusual item');
+    for (const locale of ['tr', 'ar']) {
+      const message = renderDailySummaryNotification(vars, locale);
+      expect(message.push.body).not.toMatch(/\d/);
+      expect(message.body).toContain('12');
+      expect(message.body).toContain('3');
+      expect(message.title).toContain('2026-10-20');
+    }
   });
 });

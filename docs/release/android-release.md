@@ -26,15 +26,20 @@ How to take the worker app to Google Play and the dashboard and API to productio
 2. API environment: every required variable of `.env.example`, with `NODE_ENV=production`.
    Production refuses placeholder secrets, an http `WEB_APP_URL` or `STORAGE_PUBLIC_ENDPOINT`, and
    `AI_PROVIDER=fake`. Set a strong `AI_KEYS_ENCRYPTION_SECRET` once and never change it.
-3. `pnpm --filter @ops/api db:deploy` (migrations), then `pnpm --filter @ops/api build` and
+3. Two database accounts: an owner that runs migrations, and the account the API uses day to day,
+   which must not be able to empty the audit log (a trigger blocks changing and deleting audit
+   rows, but not `TRUNCATE`). As the owner, after the migrations:
+   `REVOKE TRUNCATE ON "AuditEvent" FROM <api_user>;` and give the API user only `SELECT`,
+   `INSERT`, `UPDATE`, `DELETE` on the tables.
+4. `pnpm --filter @ops/api db:deploy` (migrations), then `pnpm --filter @ops/api build` and
    `pnpm --filter @ops/api start` behind an https proxy (`TRUST_PROXY_HOPS=1`).
-4. **The real organization, no demo data**: set the `BOOTSTRAP_*` variables (see `.env.example`)
+5. **The real organization, no demo data**: set the `BOOTSTRAP_*` variables (see `.env.example`)
    and run `pnpm db:bootstrap` once (ADR-0013). Remove `BOOTSTRAP_ADMIN_PASSWORD` afterwards.
    **Never run `pnpm db:seed` against production**: it creates the invented demo organization.
-5. Dashboard: `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_ORGANIZATION_SLUG`, `NEXT_PUBLIC_BRAND_NAME`,
+6. Dashboard: `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_ORGANIZATION_SLUG`, `NEXT_PUBLIC_BRAND_NAME`,
    then `pnpm --filter @ops/web build` and `pnpm --filter @ops/web start` behind https. Put the
    dashboard's origin in the API's `CORS_ORIGINS` and `WEB_APP_URL`.
-6. Sign in to the dashboard as the bootstrapped administrator; add sites, teams, log types and
+7. Sign in to the dashboard as the bootstrapped administrator; add sites, teams, log types and
    people (each gets an activation code); paste the organization's AI keys in Settings if wanted.
 
 ## 4. The Android build

@@ -422,6 +422,7 @@ export const tr: CatalogueShape<EnglishCatalogue> = {
       uploadAttachment: 'Fotoğraf',
       smartCapture: 'Akıllı kayıt',
       discardSmartCapture: 'Atılan akıllı kayıt',
+      setLanguage: 'Dil',
     },
     savedAt: 'Oluşturuldu {{time}}',
     attempts: { one: '{{count}} kez denendi', other: '{{count}} kez denendi' },

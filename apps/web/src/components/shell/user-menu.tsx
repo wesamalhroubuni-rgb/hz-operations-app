@@ -4,11 +4,13 @@ import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 
 import { t, type TranslationKey } from '@/i18n';
 import { useCaller } from '@/hooks/use-caller';
+import { requireApiClient } from '@/lib/api/client';
 import { useSignOut } from '@/hooks/use-sign-out';
 import {
   applyLanguagePreference,
   LANGUAGE_NAMES,
   LANGUAGE_PREFERENCES,
+  type LanguagePreference,
   readLanguagePreference,
   subscribeLanguage,
 } from '@/lib/language';
@@ -51,6 +53,20 @@ export function UserMenu() {
     readThemePreference,
     () => 'system' as const,
   );
+
+  /**
+   * Applies the language at once, and (best effort) makes it the account's language too, so the
+   * notifications and daily summaries the server writes for this person use it. "System" leaves
+   * the account's language as it is.
+   */
+  function chooseLanguage(value: LanguagePreference) {
+    applyLanguagePreference(value);
+    if (value !== 'system') {
+      void requireApiClient()
+        .users.update(user.id, { locale: value })
+        .catch(() => undefined);
+    }
+  }
 
   useEffect(() => {
     if (!open) {
@@ -139,7 +155,7 @@ export function UserMenu() {
                 className={styles.menuItem}
                 aria-pressed={language === value}
                 lang={value === 'system' ? undefined : value}
-                onClick={() => applyLanguagePreference(value)}
+                onClick={() => chooseLanguage(value)}
               >
                 <span className={styles.menuCheck} aria-hidden="true">
                   {language === value ? '•' : ''}

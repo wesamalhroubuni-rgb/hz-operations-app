@@ -157,7 +157,8 @@ export type QueuedMutation =
       checkpoint: { attachmentId: string | null; stored: boolean };
     }
   | SmartCaptureMutation
-  | DiscardSmartCaptureMutation;
+  | DiscardSmartCaptureMutation
+  | SetLanguageMutation;
 export type QueuedMutationKind = QueuedMutation['kind'];
 
 // ---------------------------------------------------------------------------------------------
@@ -232,6 +233,17 @@ export interface DiscardSmartCaptureMutation {
   kind: 'discardSmartCapture';
   captureClientId: string;
   captureId: string;
+}
+
+/**
+ * The worker chose a language in Profile (PATCH /users/:id with locale), so the notifications
+ * and daily summaries the server writes for them use it. Record key user:<userId>; a later
+ * choice is queued after an earlier one, so the last choice wins.
+ */
+export interface SetLanguageMutation {
+  kind: 'setLanguage';
+  userId: string;
+  locale: 'en' | 'tr' | 'ar';
 }
 
 /**

@@ -417,6 +417,7 @@ export const en = {
       uploadAttachment: 'Photo',
       smartCapture: 'Smart capture',
       discardSmartCapture: 'Discarded smart capture',
+      setLanguage: 'Language',
     },
     savedAt: 'Made {{time}}',
     attempts: { one: 'Tried {{count}} time', other: 'Tried {{count}} times' },

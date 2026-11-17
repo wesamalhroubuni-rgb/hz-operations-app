@@ -36,11 +36,17 @@ describe('a user changing themselves', () => {
 });
 
 describe('notifications in the recipient locale', () => {
-  it('falls back to English for Turkish, Arabic, regional tags and unknown locales', () => {
+  it('speaks Turkish and Arabic (regional tags too), and English for unknown locales', () => {
     const english = renderNotification('work_log.rejected', { note: 'Blurry' }, 'en');
-    for (const locale of ['tr', 'ar', 'tr-TR', 'xx', '']) {
+    for (const locale of ['xx', '']) {
       expect(renderNotification('work_log.rejected', { note: 'Blurry' }, locale)).toEqual(english);
     }
+    const turkish = renderNotification('work_log.rejected', { note: 'Blurry' }, 'tr-TR');
+    expect(turkish.title).toBe('İş kaydı reddedildi');
+    expect(turkish.body).toContain('Blurry');
+    const arabic = renderNotification('work_log.rejected', { note: 'Blurry' }, 'ar');
+    expect(arabic.title).toBe('رُفض سجل العمل');
+    expect(arabic.body).toContain('Blurry');
   });
 
   it('keeps the push text generic in every locale', () => {

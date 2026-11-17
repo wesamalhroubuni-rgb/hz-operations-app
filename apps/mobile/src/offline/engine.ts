@@ -404,6 +404,12 @@ export function createSyncEngine(deps: SyncEngineDeps, options: SyncEngineOption
         const sent = await sendDiscardSmartCapture(captureDeps, item, mutation);
         return sent.ok ? { ok: true, apply: async () => undefined } : sent;
       }
+      case 'setLanguage': {
+        const result = await api.users.update(mutation.userId, { locale: mutation.locale });
+        return result.ok
+          ? { ok: true, apply: async () => undefined }
+          : { ok: false, failure: classifyApiFailure(result.failure) };
+      }
     }
   }
 

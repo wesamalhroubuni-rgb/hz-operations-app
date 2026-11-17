@@ -598,14 +598,14 @@ describe('daily summaries and anomaly flags', () => {
         expect(rows).toHaveLength(1);
         expect(rows[0]).toMatchObject({
           recipientId: w.supA,
-          title: `Daily summary for ${w.day}`,
+          title: `${w.day} günlük özeti`,
           data: { summaryId: summaryIds[0], day: w.day },
         });
-        expect(rows[0]!.body).toContain('4 work logs');
+        expect(rows[0]!.body).toContain('4 iş kaydı');
         const call = notify.mock.calls.find(([input]) => input.type === 'ai.daily_summary')!;
         expect(call[0].push).toEqual({
-          title: 'Daily summary',
-          body: 'Your daily summary is ready.',
+          title: 'Günlük özet',
+          body: 'Günlük özetiniz hazır.',
         });
         const event = await ctx.prisma.outboxEvent.findFirstOrThrow({
           where: { eventType: 'daily_summary.created' },

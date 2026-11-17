@@ -297,7 +297,8 @@ $env:Path = "C:\Program Files\nodejs;$env:APPDATA\npm;C:\Program Files\Git\cmd;$
 **Database safety**
 
 - **Never run `pnpm db:reset` (or `prisma migrate reset`) as an agent.** It wipes whatever
-  `DATABASE_URL` points at and has no guard. Prisma refuses it in an agent environment and the
+  `DATABASE_URL` points at (since 2026-11-17 `scripts/guard-local-db.mjs` first refuses a non-local
+  host or production, but it stays destructive). Prisma refuses it in an agent environment and the
   agent permission system blocks it. Ask the owner.
 - Integration tests use `DATABASE_URL_TEST` only and truncate every table. Their guard refuses a
   database whose name does not end in `_test` or equals the one in `DATABASE_URL`. Do not weaken
