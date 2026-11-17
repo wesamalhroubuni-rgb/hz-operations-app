@@ -11,7 +11,7 @@ import {
   type InstantRange,
 } from '@ops/shared';
 
-import { LOCALE_TAG } from '@/i18n';
+import { localeTag } from '@/i18n';
 
 /**
  * Times in the ORGANIZATION's time zone (ADR-0009), never the browser's: a manager in another
@@ -39,7 +39,7 @@ export interface OrgTime {
 
 export function createOrgTime(
   timeZone: string = DEFAULT_TIME_ZONE,
-  locale: string = LOCALE_TAG,
+  locale: string = localeTag(),
 ): OrgTime {
   const format = (value: string | Date | null | undefined, style: DateTimeStyle = 'dateTime') =>
     formatInTimeZone(value, { timeZone, locale, style });

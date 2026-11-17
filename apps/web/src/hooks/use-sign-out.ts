@@ -3,6 +3,7 @@
 import { useState } from 'react';
 
 import { useAuth } from '@/components/auth-provider';
+import { authFailureText } from '@/lib/auth-text';
 
 export type SignOutScope = 'device' | 'everywhere';
 
@@ -24,7 +25,7 @@ export function useSignOut() {
     const result = await (scope === 'device' ? signOut() : signOutEverywhere());
     if (!result.ok) {
       setBusy(null);
-      setFailure(result.failure.message);
+      setFailure(authFailureText(result.failure));
     }
   }
 

@@ -1,7 +1,14 @@
 // The foundation namespaces of the English catalogue (ADR-0009). Owned by the foundation; screen
 // agents add their sentences to their own namespace file in this folder, not here.
 
+import { AUTH_FAILURE_MESSAGES, AUTH_NOTICE_MESSAGES, AUTH_TEXT } from '@ops/shared';
+
 export const core = {
+  // The sign-in wording is shared with the phone (@ops/shared), wrapped so a translation can
+  // replace it like any other text (see lib/auth-text.ts).
+  auth: AUTH_TEXT,
+  authFailures: AUTH_FAILURE_MESSAGES,
+  authNotices: AUTH_NOTICE_MESSAGES,
   common: {
     appLabel: 'Manager dashboard',
     logoLabel: '{{brand}} logo',
@@ -51,6 +58,10 @@ export const core = {
     system: 'System',
     light: 'Light',
     dark: 'Dark',
+  },
+  language: {
+    label: 'Language',
+    system: 'System',
   },
   shell: {
     skipToContent: 'Skip to content',

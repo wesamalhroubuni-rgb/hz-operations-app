@@ -1,9 +1,10 @@
 'use client';
 
-import { AUTH_NOTICE_MESSAGES, AUTH_TEXT } from '@ops/shared';
 import Link from 'next/link';
 
 import { useLoginForm } from '@/hooks/use-login-form';
+import { t } from '@/i18n';
+import { translateAuthText } from '@/lib/auth-text';
 import { ACTIVATE_PATH } from '@/lib/auth/routes';
 
 import { useAuth } from './auth-provider';
@@ -19,16 +20,16 @@ export function LoginForm({ passwordSet }: Readonly<{ passwordSet: boolean }>) {
     <>
       {passwordSet && form.failure === null ? (
         <div className={styles.success} role="status">
-          <p>{AUTH_TEXT.passwordSet}</p>
+          <p>{t('auth.passwordSet')}</p>
         </div>
       ) : null}
 
       {notice !== null && form.failure === null ? (
         <div className={styles.notice} role="status">
-          <p>{AUTH_NOTICE_MESSAGES[notice]}</p>
+          <p>{t(`authNotices.${notice}`)}</p>
           {notice === 'unreachable' ? (
             <button type="button" className={styles.inline} onClick={retry}>
-              {AUTH_TEXT.retry}
+              {t('auth.retry')}
             </button>
           ) : null}
         </div>
@@ -42,7 +43,7 @@ export function LoginForm({ passwordSet }: Readonly<{ passwordSet: boolean }>) {
 
       <form className={styles.form} onSubmit={form.submit} noValidate aria-busy={form.submitting}>
         <TextField
-          label={AUTH_TEXT.identifierLabel}
+          label={t('auth.identifierLabel')}
           name="username"
           type="text"
           autoComplete="username"
@@ -53,26 +54,26 @@ export function LoginForm({ passwordSet }: Readonly<{ passwordSet: boolean }>) {
           required
           value={form.identifier}
           onValueChange={form.setIdentifier}
-          error={form.errors.identifier}
+          error={translateAuthText(form.errors.identifier)}
           inputRef={form.identifierRef}
         />
         <PasswordField
-          label={AUTH_TEXT.passwordLabel}
+          label={t('auth.passwordLabel')}
           name="password"
           autoComplete="current-password"
           required
           value={form.password}
           onValueChange={form.setPassword}
-          error={form.errors.password}
+          error={translateAuthText(form.errors.password)}
           inputRef={form.passwordRef}
         />
         <button type="submit" className={styles.primary} disabled={form.submitting}>
-          {form.submitting ? AUTH_TEXT.signingIn : AUTH_TEXT.signIn}
+          {form.submitting ? t('auth.signingIn') : t('auth.signIn')}
         </button>
       </form>
 
       <p className={styles.footerLink}>
-        <Link href={ACTIVATE_PATH}>{AUTH_TEXT.haveCode}</Link>
+        <Link href={ACTIVATE_PATH}>{t('auth.haveCode')}</Link>
       </p>
     </>
   );

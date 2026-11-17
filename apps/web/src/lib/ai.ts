@@ -17,7 +17,7 @@ import {
 } from '@ops/shared';
 
 import type { BadgeTone } from '@/components/ui/status-badge';
-import { formatNumber, t, type TranslationKey } from '@/i18n';
+import { formatNumber, localeTag, t, type TranslationKey } from '@/i18n';
 
 /**
  * Daily summaries, unusual-item flags, AI settings and usage on the dashboard (Phase 7,
@@ -201,7 +201,7 @@ export function dayRangeFrom(
 /** US dollars with cents (estimates). */
 export function formatUsd(value: number): string {
   try {
-    return new Intl.NumberFormat('en-GB', {
+    return new Intl.NumberFormat(localeTag(), {
       style: 'currency',
       currency: 'USD',
       minimumFractionDigits: 2,

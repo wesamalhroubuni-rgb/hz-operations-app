@@ -1,6 +1,6 @@
 'use client';
 
-import { AUTH_TEXT } from '@ops/shared';
+import { t } from '@/i18n';
 import { useId, useState, type InputHTMLAttributes, type Ref } from 'react';
 
 import styles from './form.module.css';
@@ -97,10 +97,10 @@ export function PasswordField({
           type="button"
           className={styles.toggle}
           aria-controls={id}
-          aria-label={`${visible ? AUTH_TEXT.hidePasswordLabel : AUTH_TEXT.showPasswordLabel}: ${label}`}
+          aria-label={`${visible ? t('auth.hidePasswordLabel') : t('auth.showPasswordLabel')}: ${label}`}
           onClick={() => setVisible((current) => !current)}
         >
-          {visible ? AUTH_TEXT.hidePassword : AUTH_TEXT.showPassword}
+          {visible ? t('auth.hidePassword') : t('auth.showPassword')}
         </button>
       </div>
       {hint ? (

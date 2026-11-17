@@ -6,6 +6,13 @@ import { t, type TranslationKey } from '@/i18n';
 import { useCaller } from '@/hooks/use-caller';
 import { useSignOut } from '@/hooks/use-sign-out';
 import {
+  applyLanguagePreference,
+  LANGUAGE_NAMES,
+  LANGUAGE_PREFERENCES,
+  readLanguagePreference,
+  subscribeLanguage,
+} from '@/lib/language';
+import {
   applyThemePreference,
   readThemePreference,
   subscribeThemePreference,
@@ -19,7 +26,8 @@ function initialOf(name: string): string {
 }
 
 /**
- * The account button of the top bar: name and role, the theme (System, Dark, Light), "Sign out"
+ * The account button of the top bar: name and role, the theme (System, Dark, Light), the
+ * language (System, English, Türkçe, العربية), "Sign out"
  * and "Sign out everywhere".
  * A disclosure (button + panel), closed by Escape, a click outside, or moving focus away.
  */
@@ -31,6 +39,12 @@ export function UserMenu() {
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const themeTitleId = useId();
+  const languageTitleId = useId();
+  const language = useSyncExternalStore(
+    subscribeLanguage,
+    readLanguagePreference,
+    () => 'system' as const,
+  );
   // The server renders the default; the browser reads the stored choice.
   const theme = useSyncExternalStore(
     subscribeThemePreference,
@@ -111,6 +125,26 @@ export function UserMenu() {
                   {theme === value ? '•' : ''}
                 </span>
                 {t(`theme.${value}`)}
+              </button>
+            ))}
+          </div>
+          <div className={styles.menuSection} role="group" aria-labelledby={languageTitleId}>
+            <p id={languageTitleId} className={styles.menuSectionTitle}>
+              {t('language.label')}
+            </p>
+            {LANGUAGE_PREFERENCES.map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={styles.menuItem}
+                aria-pressed={language === value}
+                lang={value === 'system' ? undefined : value}
+                onClick={() => applyLanguagePreference(value)}
+              >
+                <span className={styles.menuCheck} aria-hidden="true">
+                  {language === value ? '•' : ''}
+                </span>
+                {value === 'system' ? t('language.system') : LANGUAGE_NAMES[value]}
               </button>
             ))}
           </div>

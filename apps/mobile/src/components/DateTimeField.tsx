@@ -125,7 +125,7 @@ export function DateTimeField({
                 display="inline"
                 themeVariant="dark"
                 accentColor={colors.primary}
-                locale={localeTag}
+                locale={localeTag()}
                 maximumDate={maximumDate}
                 onValueChange={(_event, date) => setIosValue(date)}
               />

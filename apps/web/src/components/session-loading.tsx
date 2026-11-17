@@ -1,4 +1,4 @@
-import { AUTH_TEXT } from '@ops/shared';
+import { t } from '@/i18n';
 
 import styles from './session-loading.module.css';
 
@@ -7,7 +7,7 @@ export function SessionLoading() {
   return (
     <div className={styles.loading} role="status" aria-live="polite">
       <span className={styles.dot} aria-hidden="true" />
-      <p className={styles.text}>{AUTH_TEXT.checkingSession}</p>
+      <p className={styles.text}>{t('auth.checkingSession')}</p>
     </div>
   );
 }

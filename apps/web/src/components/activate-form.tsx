@@ -1,9 +1,10 @@
 'use client';
 
-import { AUTH_TEXT } from '@ops/shared';
 import Link from 'next/link';
 
 import { useActivateForm } from '@/hooks/use-activate-form';
+import { t } from '@/i18n';
+import { authFailureText, translateAuthText } from '@/lib/auth-text';
 import { LOGIN_PATH } from '@/lib/auth/routes';
 
 import { PasswordField, TextField } from './form-fields';
@@ -16,7 +17,7 @@ export function ActivateForm({ initialCode }: Readonly<{ initialCode: string }>)
     <>
       {form.failure !== null ? (
         <div className={styles.alert} role="alert">
-          <p>{form.failure.message}</p>
+          <p>{authFailureText(form.failure)}</p>
           {form.failure.details.length > 0 ? (
             <ul className={styles.details}>
               {form.failure.details.map((detail) => (
@@ -29,7 +30,7 @@ export function ActivateForm({ initialCode }: Readonly<{ initialCode: string }>)
 
       <form className={styles.form} onSubmit={form.submit} noValidate aria-busy={form.submitting}>
         <TextField
-          label={AUTH_TEXT.codeLabel}
+          label={t('auth.codeLabel')}
           name="code"
           type="text"
           autoComplete="one-time-code"
@@ -40,38 +41,38 @@ export function ActivateForm({ initialCode }: Readonly<{ initialCode: string }>)
           required
           value={form.code}
           onValueChange={form.setCode}
-          error={form.errors.code}
+          error={translateAuthText(form.errors.code)}
           inputRef={form.codeRef}
         />
         <PasswordField
-          label={AUTH_TEXT.newPasswordLabel}
+          label={t('auth.newPasswordLabel')}
           name="new-password"
           autoComplete="new-password"
           autoFocus={initialCode !== ''}
           required
-          hint={AUTH_TEXT.passwordPolicy}
+          hint={t('auth.passwordPolicy')}
           value={form.password}
           onValueChange={form.setPassword}
-          error={form.errors.password}
+          error={translateAuthText(form.errors.password)}
           inputRef={form.passwordRef}
         />
         <PasswordField
-          label={AUTH_TEXT.confirmPasswordLabel}
+          label={t('auth.confirmPasswordLabel')}
           name="confirm-password"
           autoComplete="new-password"
           required
           value={form.confirmation}
           onValueChange={form.setConfirmation}
-          error={form.errors.confirmation}
+          error={translateAuthText(form.errors.confirmation)}
           inputRef={form.confirmationRef}
         />
         <button type="submit" className={styles.primary} disabled={form.submitting}>
-          {form.submitting ? AUTH_TEXT.settingPassword : AUTH_TEXT.setPassword}
+          {form.submitting ? t('auth.settingPassword') : t('auth.setPassword')}
         </button>
       </form>
 
       <p className={styles.footerLink}>
-        <Link href={LOGIN_PATH}>{AUTH_TEXT.backToSignIn}</Link>
+        <Link href={LOGIN_PATH}>{t('auth.backToSignIn')}</Link>
       </p>
     </>
   );

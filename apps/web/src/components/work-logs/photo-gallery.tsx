@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/dialog';
 import { ErrorState, LoadingState } from '@/components/ui/states';
-import { DIRECTION, t } from '@/i18n';
+import { direction, t } from '@/i18n';
 import {
   afterPhotoError,
   afterPhotoLoad,
@@ -115,8 +115,8 @@ export function PhotoGallery({
             className={styles.viewer}
             onKeyDown={(event) => {
               // "Next" is towards the inline end: right in English, left in Arabic.
-              const forward = DIRECTION === 'rtl' ? 'ArrowLeft' : 'ArrowRight';
-              const backward = DIRECTION === 'rtl' ? 'ArrowRight' : 'ArrowLeft';
+              const forward = direction() === 'rtl' ? 'ArrowLeft' : 'ArrowRight';
+              const backward = direction() === 'rtl' ? 'ArrowRight' : 'ArrowLeft';
               if (event.key === forward) move(1);
               if (event.key === backward) move(-1);
             }}

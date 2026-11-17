@@ -10,6 +10,7 @@ import { AuthProvider, useAuth } from './src/auth/AuthProvider';
 import { DataProvider } from './src/data/DataProvider';
 import { deleteLocalFile } from './src/device/files';
 import { applyLayoutDirection } from './src/i18n';
+import { LanguageProvider } from './src/i18n/LanguageProvider';
 import { flushPendingTarget, navigationRef } from './src/navigation/navigationRef';
 import { rootViewFor } from './src/navigation/screen';
 import { SignedInNavigator } from './src/navigation/SignedInNavigator';
@@ -94,7 +95,8 @@ export default function App() {
       <ThemeProvider>
         <ThemedFrame>
           <AuthProvider>
-            <Root />
+            {/* A new language remounts the screens, so every text is read again. */}
+            <LanguageProvider>{(language) => <Root key={language} />}</LanguageProvider>
           </AuthProvider>
         </ThemedFrame>
       </ThemeProvider>

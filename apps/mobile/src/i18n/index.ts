@@ -1,7 +1,9 @@
 import { getLocales } from 'expo-localization';
 import { I18nManager } from 'react-native';
 
+import { ar } from './ar';
 import { en, type EnglishCatalogue } from './en';
+import { tr } from './tr';
 import {
   createTranslator,
   isRtlLanguage,
@@ -15,27 +17,36 @@ import {
 // The app's one translation layer. Every sentence a screen shows comes from a catalogue in this
 // folder; screens call `t('tasks.filters.open')` and never contain user-facing English.
 //
-// Adding a language (Turkish, Arabic, ...) is adding a file and one line:
-//   1. copy `en.ts` to `tr.ts`, translate the values, and type it
-//      `export const tr: CatalogueShape<EnglishCatalogue> = { ... }` (TypeScript then reports
-//      every missing or misspelt key);
-//   2. add `tr` to `CATALOGUES` below.
-// The phone's language picks the catalogue at start-up (`expo-localization`); English is the
-// fallback for a language without a catalogue and for any key a catalogue lacks.
+// Languages: English (`en.ts`), Turkish (`tr.ts`) and Arabic (`ar.ts`), each typed
+// `CatalogueShape<EnglishCatalogue>`, so TypeScript reports a missing or misspelt key. English is
+// the fallback for any key a catalogue lacks.
+//
+// Which language: the phone's language at start-up, unless the worker chose one in Profile
+// (`languagePreference.ts`, kept on this phone). `LanguageProvider` loads the choice, calls
+// `setLanguage` and re-renders the app.
 //
 // Right to left: styles use `start`/`end` (never `left`/`right`) and `row` directions flip on
-// their own when React Native runs in RTL. For an RTL language (Arabic) this module asks React
-// Native to switch the layout direction; the switch takes effect on the next start of the app
-// (a restart, or `Updates.reloadAsync()` once expo-updates is added). `app.config.ts` declares
-// RTL support (`extra.supportsRTL`) for development and release builds.
+// their own when React Native runs in RTL. For Arabic this module asks React Native to switch the
+// layout direction; the switch takes effect on the next start of the app (Profile says so).
+// `app.config.ts` declares RTL support (`extra.supportsRTL`).
 
 export type { EnglishCatalogue };
 export type TranslationKey = MessageKey<EnglishCatalogue>;
 
 const CATALOGUES = {
   en,
+  tr,
+  ar,
 } satisfies Record<string, CatalogueShape<EnglishCatalogue>>;
-type LanguageCode = keyof typeof CATALOGUES;
+export type LanguageCode = keyof typeof CATALOGUES;
+export const LANGUAGES = Object.keys(CATALOGUES) as LanguageCode[];
+
+/** Each language's own name, written in that language (never translated). */
+export const LANGUAGE_NAMES: Record<LanguageCode, string> = {
+  en: 'English',
+  tr: 'Türkçe',
+  ar: 'العربية',
+};
 
 function preferredLanguages(): string[] {
   try {
@@ -45,54 +56,88 @@ function preferredLanguages(): string[] {
   }
 }
 
-function preferredRegionTag(language: string): string {
+/** BCP 47 tag for dates and numbers, with the phone's region when it matches the language. */
+function regionTagFor(code: LanguageCode): string {
+  if (code === 'ar') {
+    // Latin digits, as in the records themselves (times, quantities, references).
+    return 'ar-u-nu-latn';
+  }
   try {
-    const match = getLocales().find((locale) => locale.languageCode === language);
-    return match?.languageTag ?? language;
+    const match = getLocales().find((locale) => locale.languageCode === code);
+    return match?.languageTag ?? code;
   } catch {
-    return language;
+    return code;
   }
 }
 
-export const language: LanguageCode = pickLanguage(
-  preferredLanguages(),
-  Object.keys(CATALOGUES) as LanguageCode[],
-  'en',
-);
+/** The phone's own language among the catalogues (English if none matches). */
+export function deviceLanguage(): LanguageCode {
+  return pickLanguage(preferredLanguages(), LANGUAGES, 'en');
+}
 
-/** BCP 47 tag for dates and numbers, with the phone's region when it matches the language. */
-export const localeTag: string = preferredRegionTag(language);
+let current: LanguageCode = deviceLanguage();
+let currentTag = regionTagFor(current);
+let translator = translatorFor(current, currentTag);
 
-export const isRtl = isRtlLanguage(language);
+function translatorFor(code: LanguageCode, tag: string) {
+  return createTranslator<TranslationKey>(
+    tag,
+    CATALOGUES[code] as unknown as CatalogueTree,
+    en as unknown as CatalogueTree,
+  );
+}
 
-const translator = createTranslator<TranslationKey>(
-  localeTag,
-  CATALOGUES[language] as unknown as CatalogueTree,
-  en as unknown as CatalogueTree,
-);
+/** The language in force. */
+export function currentLanguage(): LanguageCode {
+  return current;
+}
+
+/** BCP 47 tag of the language in force, for dates and numbers. */
+export function localeTag(): string {
+  return currentTag;
+}
+
+/** True when the language in force is written right to left. */
+export function isRtl(): boolean {
+  return isRtlLanguage(current);
+}
+
+/** Switches the language. Callers re-render (see `LanguageProvider`). */
+export function setLanguage(code: LanguageCode): void {
+  if (code === current) return;
+  current = code;
+  currentTag = regionTagFor(code);
+  translator = translatorFor(code, currentTag);
+}
 
 /** Translates a key of the catalogue, with `{{name}}` parameters and `count` for plurals. */
 export function t(key: TranslationKey, params?: TranslateParams): string {
   return translator.t(key, params);
 }
 
-/** Lets React Native lay out right to left for an RTL language. Call once at start-up. */
-export function applyLayoutDirection(): void {
+/**
+ * Lets React Native lay out right to left for an RTL language. React Native applies a change on
+ * the next start of the app. Returns true when a restart is needed for the layout to match.
+ */
+export function applyLayoutDirection(): boolean {
   I18nManager.allowRTL(true);
-  if (I18nManager.isRTL !== isRtl) {
-    I18nManager.forceRTL(isRtl);
+  const rtl = isRtl();
+  if (I18nManager.isRTL !== rtl) {
+    I18nManager.forceRTL(rtl);
+    return true;
   }
+  return false;
 }
 
 function format(date: Date, options: Intl.DateTimeFormatOptions): string {
   try {
-    return new Intl.DateTimeFormat(localeTag, options).format(date);
+    return new Intl.DateTimeFormat(currentTag, options).format(date);
   } catch {
     return date.toISOString().slice(0, 16).replace('T', ' ');
   }
 }
 
-/** "16 Oct 2026, 14:05" in the phone's language and region. */
+/** "16 Oct 2026, 14:05" in the app's language and the phone's region. */
 export function formatDateTime(date: Date): string {
   return format(date, {
     year: 'numeric',
@@ -113,10 +158,10 @@ export function formatTime(date: Date): string {
   return format(date, { hour: '2-digit', minute: '2-digit' });
 }
 
-/** A number with the phone's separators. */
+/** A number with the language's separators. */
 export function formatNumber(value: number, maximumFractionDigits = 2): string {
   try {
-    return new Intl.NumberFormat(localeTag, { maximumFractionDigits }).format(value);
+    return new Intl.NumberFormat(currentTag, { maximumFractionDigits }).format(value);
   } catch {
     return String(value);
   }

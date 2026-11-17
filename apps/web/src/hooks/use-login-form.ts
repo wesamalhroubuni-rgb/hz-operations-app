@@ -4,6 +4,7 @@ import { isFormValid, validateSignInForm, type SignInFormErrors } from '@ops/sha
 import { useRef, useState, type FormEvent } from 'react';
 
 import { useAuth } from '@/components/auth-provider';
+import { authFailureText } from '@/lib/auth-text';
 
 /**
  * State of the sign-in form. Validation and the meaning of failures live in `@ops/shared`; this
@@ -39,7 +40,7 @@ export function useLoginForm() {
       return;
     }
     setSubmitting(false);
-    setFailure(result.failure.message);
+    setFailure(authFailureText(result.failure));
     // The password is the likeliest thing to retype. It is kept, so a typo can be corrected.
     passwordRef.current?.focus();
     passwordRef.current?.select();

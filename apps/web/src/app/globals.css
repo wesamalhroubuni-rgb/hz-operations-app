@@ -29,6 +29,7 @@ body {
   color: var(--color-text-primary);
   font-family:
     var(--font-sans),
+    var(--font-arabic),
     system-ui,
     -apple-system,
     'Segoe UI',
@@ -47,6 +48,15 @@ h1,
 h2,
 h3 {
   letter-spacing: -0.015em;
+}
+
+/* Arabic: the Arabic face first, no letter spacing (it breaks the joined script). */
+html[lang='ar'] body {
+  font-family: var(--font-arabic), var(--font-sans), system-ui, sans-serif;
+}
+
+html[lang='ar'] * {
+  letter-spacing: 0 !important;
 }
 
 input,

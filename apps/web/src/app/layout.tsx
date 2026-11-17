@@ -1,12 +1,14 @@
 import { darkTheme, lightTheme } from '@ops/shared';
 import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
+import { IBM_Plex_Sans_Arabic, Inter } from 'next/font/google';
 import type { ReactNode } from 'react';
 
 import { AuthProvider } from '@/components/auth-provider';
+import { LanguageGate } from '@/components/language-gate';
 import { QueryProvider } from '@/components/query-provider';
 import { DIRECTION, LOCALE } from '@/i18n';
 import { brand } from '@/lib/brand';
+import { LANGUAGE_INIT_SCRIPT } from '@/lib/language';
 import { THEME_INIT_SCRIPT, themeStylesheet } from '@/lib/theme';
 
 import './globals.css';
@@ -39,19 +41,33 @@ const themeStyles = themeStylesheet();
 // Inter, self-hosted by Next.js at build time (no request to Google from the browser). Latin
 // Extended covers Turkish.
 const sans = Inter({ subsets: ['latin', 'latin-ext'], variable: '--font-sans', display: 'swap' });
+// Arabic text (the dashboard in Arabic, and Arabic names or notes in any language).
+const arabic = IBM_Plex_Sans_Arabic({
+  subsets: ['arabic'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-arabic',
+  display: 'swap',
+});
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     // The init script may set data-theme before React hydrates.
-    <html lang={LOCALE} dir={DIRECTION} className={sans.variable} suppressHydrationWarning>
+    <html
+      lang={LOCALE}
+      dir={DIRECTION}
+      className={`${sans.variable} ${arabic.variable}`}
+      suppressHydrationWarning
+    >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT + LANGUAGE_INIT_SCRIPT }} />
         <style>{themeStyles}</style>
       </head>
       <body>
-        <AuthProvider>
-          <QueryProvider>{children}</QueryProvider>
-        </AuthProvider>
+        <LanguageGate>
+          <AuthProvider>
+            <QueryProvider>{children}</QueryProvider>
+          </AuthProvider>
+        </LanguageGate>
       </body>
     </html>
   );

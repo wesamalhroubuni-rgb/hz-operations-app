@@ -341,6 +341,12 @@ export const en = {
       light: 'Light',
       systemHint: 'Follows the light or dark setting of the phone.',
     },
+    language: {
+      title: 'Language',
+      system: 'System',
+      systemHint: 'Follows the language of the phone.',
+      restartNote: 'Close and reopen the app to switch the layout direction.',
+    },
     push: {
       title: 'Push notifications',
       on: 'On for this phone.',

@@ -7,6 +7,7 @@ import { AppText } from '../components/AppText';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
+import { LanguageChoice } from '../components/LanguageChoice';
 import { Message } from '../components/Message';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { useSync } from '../components/SyncProvider';
@@ -139,6 +140,8 @@ export function ProfileScreen() {
       </Card>
 
       <ThemeChoice />
+
+      <LanguageChoice />
 
       <View style={styles.actions}>
         {failure !== null ? <Message tone="error" text={failure} /> : null}

@@ -1,0 +1,52 @@
+import type { CatalogueShape } from '@ops/shared';
+
+import type { report as enReport } from '../en/report';
+
+export const report: CatalogueShape<typeof enReport> = {
+  description: 'Bir tarih aralığındaki iş kayıtlarının yazdırmaya uygun özeti.',
+  print: 'Yazdır',
+  back: 'İş kayıtlarına dön',
+  range: '{{from}} – {{to}}',
+  generatedAt: '{{when}} tarihinde oluşturuldu',
+  timeZone: 'Saatler {{timeZone}} saat diliminde',
+  scope: 'Yalnızca görebildiğiniz kayıtlar dahildir.',
+  filtersApplied: 'Filtreler: {{filters}}',
+  needRange: 'Raporun ilk ve son gününü seçin.',
+  tooLong: 'Bir rapor en fazla {{days}} günü kapsar. Daha kısa bir aralık seçin.',
+  totals: {
+    heading: 'Toplamlar',
+    logs: 'Kayıtlar',
+    draft: 'Taslaklar',
+    submitted: 'Onay bekleyenler',
+    approved: 'Onaylananlar',
+    rejected: 'Reddedilenler',
+    withPhotos: 'Fotoğraflı',
+    withLocation: 'Konumlu',
+  },
+  byDay: { heading: 'Günlere göre kayıtlar', day: 'Gün', count: 'Kayıtlar' },
+  bySite: { heading: 'Sahaya göre', none: 'Sahasız' },
+  byTeam: { heading: 'Ekibe göre', none: 'Ekipsiz' },
+  byLogType: { heading: 'Kayıt türüne göre', none: 'Kayıt türü yok' },
+  byWorker: {
+    heading: 'Çalışana göre',
+    worker: 'Çalışan',
+    count: 'Kayıtlar',
+    approved: 'Onaylanan',
+    rejected: 'Reddedilen',
+  },
+  group: { name: 'Ad', count: 'Kayıtlar' },
+  logs: {
+    heading: 'Kayıtlar',
+    caption: 'Aralıktaki kayıtlar, en yeniden eskiye',
+    occurredAt: 'Ne zaman',
+    worker: 'Çalışan',
+    site: 'Saha',
+    team: 'Ekip',
+    logType: 'Kayıt türü',
+    status: 'Durum',
+    excerpt: 'Not',
+    photos: 'Fotoğraflar',
+    truncated: 'Yalnızca en yeni {{count}} kayıt listelenir; toplamlar tüm kayıtları sayar.',
+    empty: 'Bu aralıkta kayıt yok.',
+  },
+};

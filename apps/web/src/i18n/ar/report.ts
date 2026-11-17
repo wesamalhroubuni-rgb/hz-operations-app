@@ -1,0 +1,52 @@
+import type { CatalogueShape } from '@ops/shared';
+
+import type { report as enReport } from '../en/report';
+
+export const report: CatalogueShape<typeof enReport> = {
+  description: 'ملخص لسجلات العمل خلال فترة زمنية، مُعدّ للطباعة.',
+  print: 'طباعة',
+  back: 'العودة إلى سجلات العمل',
+  range: 'من {{from}} إلى {{to}}',
+  generatedAt: 'أُنشئ في {{when}}',
+  timeZone: 'الأوقات بتوقيت {{timeZone}}',
+  scope: 'يتضمن التقرير السجلات التي يمكنك رؤيتها فقط.',
+  filtersApplied: 'عوامل التصفية: {{filters}}',
+  needRange: 'اختر اليوم الأول والأخير للتقرير.',
+  tooLong: 'يغطي التقرير {{days}} يومًا كحد أقصى. اختر فترة أقصر.',
+  totals: {
+    heading: 'الإجماليات',
+    logs: 'السجلات',
+    draft: 'المسودات',
+    submitted: 'بانتظار الموافقة',
+    approved: 'تمت الموافقة',
+    rejected: 'مرفوضة',
+    withPhotos: 'مع صور',
+    withLocation: 'مع موقع',
+  },
+  byDay: { heading: 'السجلات حسب اليوم', day: 'اليوم', count: 'السجلات' },
+  bySite: { heading: 'حسب الموقع', none: 'بلا موقع' },
+  byTeam: { heading: 'حسب الفريق', none: 'بلا فريق' },
+  byLogType: { heading: 'حسب نوع السجل', none: 'بلا نوع' },
+  byWorker: {
+    heading: 'حسب العامل',
+    worker: 'العامل',
+    count: 'السجلات',
+    approved: 'الموافق عليها',
+    rejected: 'المرفوضة',
+  },
+  group: { name: 'الاسم', count: 'السجلات' },
+  logs: {
+    heading: 'السجلات',
+    caption: 'سجلات الفترة، الأحدث أولًا',
+    occurredAt: 'التوقيت',
+    worker: 'العامل',
+    site: 'الموقع',
+    team: 'الفريق',
+    logType: 'نوع السجل',
+    status: 'الحالة',
+    excerpt: 'الملاحظة',
+    photos: 'الصور',
+    truncated: 'تُعرض أحدث {{count}} سجلات فقط؛ والإجماليات تحسب كل السجلات.',
+    empty: 'لا توجد سجلات في هذه الفترة.',
+  },
+};

@@ -10,14 +10,20 @@ import { env } from './env';
  * `assets/brand/` (same names, same sizes). `app.config.ts` uses the same name and files for the
  * app name, icon, adaptive icon and splash screen. Colours come from the design tokens in
  * `@ops/shared`.
+ *
+ * The labels are getters, so they follow the language chosen in Profile.
  */
 export const brand = {
   /** The client's product name. */
   name: env.brandName,
   /** What this app is, shown next to the name. */
-  appLabel: t('common.appLabel'),
+  get appLabel(): string {
+    return t('common.appLabel');
+  },
   logo: {
     source: logo,
-    accessibilityLabel: t('common.logoLabel', { brand: env.brandName }),
+    get accessibilityLabel(): string {
+      return t('common.logoLabel', { brand: env.brandName });
+    },
   },
-} as const;
+};

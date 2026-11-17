@@ -14,7 +14,7 @@ export default async function LoginPage({
 }: Readonly<{ searchParams: SearchParams }>) {
   const params = await searchParams;
   return (
-    <AuthShell title={AUTH_TEXT.signInTitle}>
+    <AuthShell page="signIn">
       <LoginForm passwordSet={params[NOTICE_PARAM] === PASSWORD_SET_NOTICE} />
     </AuthShell>
   );

@@ -23,7 +23,7 @@ export default async function ActivatePage({
 }: Readonly<{ searchParams: SearchParams }>) {
   const code = (await searchParams)[CODE_PARAM];
   return (
-    <AuthShell title={AUTH_TEXT.activateTitle} intro={AUTH_TEXT.activateIntro}>
+    <AuthShell page="activate">
       <ActivateForm initialCode={typeof code === 'string' ? code.slice(0, 200) : ''} />
     </AuthShell>
   );
