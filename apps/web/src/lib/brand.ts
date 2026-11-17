@@ -21,6 +21,4 @@ export const brand = {
     height: 512,
     alt: `${env.brandName} logo`,
   },
-  /** The only mention of the company that builds the product. Keep it small. */
-  poweredBy: 'Powered by Kaneri.ai',
 } as const;

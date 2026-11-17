@@ -76,13 +76,14 @@ function Root() {
   );
 }
 
-/** The status bar icons contrast with the theme: light on dark, dark on light. */
+/** The theme's background behind every screen; light status bar icons over the brand area. */
 function ThemedFrame({ children }: Readonly<{ children: ReactNode }>) {
-  const { colors, scheme } = useTheme();
+  const { colors } = useTheme();
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {children}
-      <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
+      {/* Every screen starts with the black brand area (headers, hero), in both themes. */}
+      <StatusBar style="light" />
     </View>
   );
 }

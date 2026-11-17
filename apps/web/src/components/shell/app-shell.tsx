@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { Suspense, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { Icon } from '@/components/ui/icons';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 import { t } from '@/i18n';
 import { useCaller } from '@/hooks/use-caller';
@@ -21,7 +22,7 @@ const MAIN_ID = 'main-content';
 
 /**
  * The frame of every dashboard page (Phase 6, ADR-0009): navigation by role, the organization
- * name and time zone, the account menu, and the "Powered by Kaneri.ai" footer. It also decides,
+ * name and time zone, and the account menu. It also decides,
  * for the UX only, whether the caller's role may open the page; the API decides for real.
  *
  * Pages render inside a `<Suspense>` boundary, so they may use `useSearchParams`
@@ -81,6 +82,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
         id="dashboard-navigation"
         className={`${styles.sidebar} ${navOpen ? styles.sidebarOpen : ''}`}
       >
+        {/* The logo sits on the sidebar's own black (randInk), so it shows no tile. */}
         <Link href="/" className={styles.brand}>
           <Image
             className={styles.brandLogo}
@@ -88,11 +90,15 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
             width={brand.logo.width}
             height={brand.logo.height}
             alt={t('common.logoLabel', { brand: brand.name })}
-            sizes="36px"
+            sizes="48px"
             priority
           />
-          {/* The logo already shows the product name: only the app label is written. */}
-          <span className={styles.brandLabel}>{t('common.appLabel')}</span>
+          <span className={styles.brandText}>
+            <span className={styles.brandName}>
+              {organization.data?.name ?? t('shell.organization')}
+            </span>
+            <span className={styles.brandLabel}>{t('common.appLabel')}</span>
+          </span>
         </Link>
         <nav className={styles.nav} aria-label={t('nav.label')}>
           <ul>
@@ -103,7 +109,8 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
                   className={styles.navLink}
                   aria-current={current?.key === item.key ? 'page' : undefined}
                 >
-                  {t(item.label)}
+                  <Icon name={item.key} className={styles.navIcon} />
+                  <span>{t(item.label)}</span>
                 </Link>
               </li>
             ))}
@@ -126,14 +133,17 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
             aria-controls="dashboard-navigation"
             onClick={() => setNavOpen((open) => !open)}
           >
+            <Icon name={navOpen ? 'close' : 'menu'} size={18} />
             {navOpen ? t('nav.closeMenu') : t('nav.openMenu')}
           </Button>
           <div className={styles.organization}>
+            {/* The page names itself; the bar keeps the organization's clock in view. */}
             <span className={styles.organizationName}>
               {organization.data?.name ?? t('shell.organization')}
             </span>
             {organization.data ? (
               <span className={styles.organizationMeta}>
+                <Icon name="clock" size={14} />
                 {t('shell.timeZone', { timeZone: organization.data.timeZone })}
               </span>
             ) : null}
@@ -144,10 +154,6 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
         <main id={MAIN_ID} className={styles.main} tabIndex={-1}>
           {content}
         </main>
-
-        <footer className={styles.footer}>
-          <small>{t('common.poweredBy')}</small>
-        </footer>
       </div>
     </div>
   );

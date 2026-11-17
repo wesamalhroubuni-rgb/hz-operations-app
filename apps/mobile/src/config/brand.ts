@@ -20,6 +20,4 @@ export const brand = {
     source: logo,
     accessibilityLabel: t('common.logoLabel', { brand: env.brandName }),
   },
-  /** The only mention of the company that builds the product. Keep it small. */
-  poweredBy: t('common.poweredBy'),
 } as const;

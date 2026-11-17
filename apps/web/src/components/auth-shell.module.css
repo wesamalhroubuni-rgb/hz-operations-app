@@ -1,53 +1,74 @@
+/* Sign-in and activation: brand panel on the inline-start side, the card centred beside it. */
+
 .page {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(320px, 44%) minmax(0, 1fr);
+  min-block-size: 100vh;
+  min-block-size: 100dvh;
 }
 
-.main {
-  flex: 1;
-  width: 100%;
-  max-width: 26rem;
-  margin: 0 auto;
-  padding: var(--space-xxl) var(--space-lg);
-}
-
-.brand {
+.brandPanel {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-bottom: var(--space-xl);
+  justify-content: center;
+  gap: var(--space-lg);
+  padding: var(--space-xxl);
+  background-color: var(--color-brand-ink);
+  background-image:
+    radial-gradient(
+      circle at 50% 42%,
+      color-mix(in srgb, var(--color-brand-gold) 14%, transparent) 0,
+      transparent 55%
+    ),
+    radial-gradient(
+      color-mix(in srgb, var(--color-on-brand-ink) 9%, transparent) 1px,
+      transparent 1px
+    );
+  background-size:
+    100% 100%,
+    18px 18px;
+  color: var(--color-on-brand-ink);
   text-align: center;
 }
 
 .logo {
-  inline-size: 6rem;
-  block-size: 6rem;
-  /* The logo is a black square: a rounded tile reads well in both themes. */
-  border-radius: var(--radius-lg);
+  inline-size: 200px;
+  block-size: 200px;
+  /* The logo's black square takes the panel's own background (dots, glow): only the emblem shows. */
+  mix-blend-mode: lighten;
 }
 
 .label {
-  margin: var(--space-xs) 0 0;
-  font-size: var(--font-size-xs);
+  margin: 0;
+  color: var(--color-on-brand-ink-muted);
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
-  letter-spacing: 0.12em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--color-text-secondary);
+}
+
+.main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xxl) var(--space-lg);
 }
 
 .card {
+  inline-size: 100%;
+  max-inline-size: 26rem;
   padding: var(--space-xl);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
+  box-shadow: var(--shadow-md);
 }
 
 .title {
   margin: 0;
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-semibold);
+  font-size: 1.625rem;
+  font-weight: var(--font-weight-bold);
   line-height: 1.3;
   color: var(--color-text-primary);
 }
@@ -58,15 +79,25 @@
   color: var(--color-text-secondary);
 }
 
-.footer {
-  padding: var(--space-lg);
-  font-size: var(--font-size-xs);
-  text-align: center;
-  color: var(--color-text-muted);
-}
+@media (max-width: 860px) {
+  .page {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
 
-@media (min-width: 40rem) {
+  .brandPanel {
+    flex-direction: row;
+    gap: var(--space-md);
+    padding: var(--space-lg);
+  }
+
+  .logo {
+    inline-size: 72px;
+    block-size: 72px;
+  }
+
   .main {
-    padding-top: var(--space-xxxl);
+    align-items: flex-start;
+    padding-block-start: var(--space-xl);
   }
 }

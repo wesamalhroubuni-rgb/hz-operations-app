@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { radii, spacing } from '@ops/shared';
 import { useState } from 'react';
@@ -9,7 +10,7 @@ import { makeStyles, useTheme } from '../theme';
 import { AppText } from './AppText';
 import { Button } from './Button';
 import { FieldShell } from './FieldShell';
-import { touch } from './sizes';
+import { iconSize, touch } from './sizes';
 
 interface DateTimeFieldProps {
   label: string;
@@ -98,10 +99,10 @@ export function DateTimeField({
             pressed && styles.pressed,
           ]}
         >
-          <AppText variant="body">{shown}</AppText>
-          <AppText variant="label" style={styles.change}>
-            {t('common.change')}
+          <AppText variant="body" style={styles.value} numberOfLines={1} adjustsFontSizeToFit>
+            {shown}
           </AppText>
+          <Ionicons name="calendar-outline" size={iconSize.md} color={colors.primary} />
         </Pressable>
         {clearLabel && value !== null ? (
           <Button variant="secondary" label={clearLabel} onPress={() => onChange(null)} />
@@ -174,8 +175,8 @@ const useStyles = makeStyles((colors) => ({
   pressed: {
     borderColor: colors.primary,
   },
-  change: {
-    color: colors.primary,
+  value: {
+    flexShrink: 1,
   },
   backdrop: {
     flex: 1,

@@ -441,7 +441,7 @@ describe('smart capture safety', () => {
         traceIds: traces.map((trace) => trace.id),
         model: 'fake-llm-1',
         promptId: 'smart-capture-extract',
-        promptVersion: 2,
+        promptVersion: 3,
         keptFields: [
           'logTypeId',
           'taskId',
@@ -544,7 +544,7 @@ describe('smart capture safety', () => {
         traceIds: [],
         model: 'claude-opus-5-5',
         promptId: 'smart-capture-extract',
-        promptVersion: 2,
+        promptVersion: 3,
         keptFields: ['text'],
         changedFields: [],
         addedFields: [],

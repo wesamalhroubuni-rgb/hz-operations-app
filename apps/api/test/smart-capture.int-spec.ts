@@ -535,7 +535,7 @@ describe('smart capture', () => {
           traceIds: traces.map((trace) => trace.id),
           model: 'fake-llm-1',
           promptId: 'smart-capture-extract',
-          promptVersion: 2,
+          promptVersion: 3,
           keptFields: [
             'logTypeId',
             'taskId',

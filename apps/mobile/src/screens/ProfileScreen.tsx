@@ -1,20 +1,19 @@
-import { spacing } from '@ops/shared';
+import { fontSizes, fontWeights, spacing } from '@ops/shared';
 import Constants from 'expo-constants';
 import { useCallback, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { AppText } from '../components/AppText';
 import { Badge } from '../components/Badge';
-import { BrandHeader } from '../components/BrandHeader';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
-import { InfoRow } from '../components/InfoRow';
 import { Message } from '../components/Message';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { useSync } from '../components/SyncProvider';
 import { SyncSignOutDialog } from '../components/SyncSignOutDialog';
 import { ThemeChoice } from '../components/ThemeChoice';
 import { useAuth } from '../auth/AuthProvider';
+import { brand } from '../config/brand';
 import { useData } from '../data/DataProvider';
 import { useServerRefresh } from '../hooks/useServerRefresh';
 import type { SignOutScope } from '../hooks/useSignOut';
@@ -25,6 +24,7 @@ import { useSignOutWithChoice } from '../offline/engineIntegration';
 import type { SignOutChoice } from '../offline/types';
 import { usePushState } from '../push/usePush';
 import type { PushState } from '../push/pushService';
+import { useTheme } from '../theme';
 
 function pushText(state: PushState): string {
   switch (state.status) {
@@ -44,6 +44,16 @@ function pushText(state: PushState): string {
     case 'pending':
       return t('profile.push.pending');
   }
+}
+
+/** Up to two initials of a display name, for the avatar. */
+function initialsOf(displayName: string): string {
+  const words = displayName.trim().split(/\s+/).filter(Boolean);
+  const letters = words.length > 1 ? [words[0], words[words.length - 1]] : words;
+  return letters
+    .map((word) => Array.from(word ?? '')[0] ?? '')
+    .join('')
+    .toUpperCase();
 }
 
 /** Who is signed in, push status, the theme, the two ways to sign out, and the app version. */
@@ -99,16 +109,28 @@ export function ProfileScreen() {
     }
   }
   const push = usePushState();
+  const { colors } = useTheme();
   const version = Constants.expoConfig?.version ?? '';
 
   return (
     <ScreenContainer inTab refreshing={server.refreshing} onRefresh={server.refresh}>
       <Card>
-        <AppText variant="label">{t('profile.signedInAs')}</AppText>
-        <AppText variant="title">{user.displayName}</AppText>
-        <Badge label={roleName(user.role)} tone="primary" />
-        <InfoRow label={t('profile.organization')} value={user.organizationName} />
-        <InfoRow label={t('profile.role')} value={roleName(user.role)} />
+        <View style={styles.identity}>
+          <View style={[styles.avatar, { backgroundColor: colors.brandInk }]}>
+            <AppText style={[styles.initials, { color: colors.brandGold }]}>
+              {initialsOf(user.displayName)}
+            </AppText>
+          </View>
+          <View style={styles.flex}>
+            <AppText variant="heading" numberOfLines={2}>
+              {user.displayName}
+            </AppText>
+            <AppText variant="small" numberOfLines={1}>
+              {user.organizationName}
+            </AppText>
+          </View>
+          <Badge label={roleName(user.role)} tone="primary" />
+        </View>
       </Card>
 
       <Card>
@@ -148,15 +170,9 @@ export function ProfileScreen() {
         onCancel={() => setAsking(null)}
       />
 
-      <View style={styles.about}>
-        <BrandHeader compact />
-        <AppText variant="muted" style={styles.center}>
-          {t('profile.version', { version })}
-        </AppText>
-        <AppText variant="muted" style={styles.center}>
-          {t('common.poweredBy')}
-        </AppText>
-      </View>
+      <AppText variant="muted" style={styles.about}>
+        {brand.appLabel} · {t('profile.version', { version })}
+      </AppText>
     </ScreenContainer>
   );
 }
@@ -166,11 +182,27 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   about: {
-    gap: spacing.sm,
-    alignItems: 'center',
-    paddingTop: spacing.lg,
-  },
-  center: {
+    paddingTop: spacing.md,
     textAlign: 'center',
+  },
+  identity: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  flex: {
+    flex: 1,
+    gap: 2,
+  },
+  avatar: {
+    width: 52,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 26,
+  },
+  initials: {
+    fontSize: fontSizes.lg,
+    fontWeight: fontWeights.bold,
   },
 });

@@ -22,6 +22,12 @@
   font-weight: var(--font-weight-semibold);
   text-decoration: underline;
   text-underline-offset: 2px;
+  white-space: nowrap;
+}
+
+/* Dates and short values stay on one line in tables. */
+.nowrap {
+  white-space: nowrap;
 }
 
 .link:focus-visible,
@@ -32,7 +38,7 @@
 
 .excerpt {
   display: block;
-  max-inline-size: 28rem;
+  max-inline-size: 20rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -40,7 +46,7 @@
 
 .badges {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--space-xs);
 }
 

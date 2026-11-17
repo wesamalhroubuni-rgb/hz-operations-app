@@ -1,23 +1,31 @@
 import { fontSizes, spacing } from '@ops/shared';
-import { ActivityIndicator, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ActivityIndicator, Image, Text, View } from 'react-native';
 
-import { BrandHeader } from '../components/BrandHeader';
+import { brand } from '../config/brand';
 import { t } from '../i18n';
 import { makeStyles, useTheme } from '../theme';
 
-/** Shown while the stored session is read from SecureStore and checked with the API. */
+/**
+ * Shown while the stored session is read from SecureStore and checked with the API: the logo on
+ * the black brand background (like the splash screen), so it shows no tile.
+ */
 export function LoadingScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
   return (
-    <SafeAreaView style={styles.screen}>
-      <BrandHeader />
+    <View style={styles.screen}>
+      <Image
+        source={brand.logo.source}
+        style={styles.logo}
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel={brand.logo.accessibilityLabel}
+      />
       <View accessible accessibilityRole="progressbar" style={styles.status}>
-        <ActivityIndicator color={colors.primary} size="small" />
+        <ActivityIndicator color={colors.brandGold} size="small" />
         <Text style={styles.text}>{t('auth.checkingSession')}</Text>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -28,7 +36,11 @@ const useStyles = makeStyles((colors) => ({
     justifyContent: 'center',
     gap: spacing.xxl,
     paddingHorizontal: spacing.xl,
-    backgroundColor: colors.background,
+    backgroundColor: colors.brandInk,
+  },
+  logo: {
+    width: 140,
+    height: 140,
   },
   status: {
     flexDirection: 'row',
@@ -37,6 +49,6 @@ const useStyles = makeStyles((colors) => ({
   },
   text: {
     fontSize: fontSizes.md,
-    color: colors.textSecondary,
+    color: colors.onBrandInkMuted,
   },
 }));

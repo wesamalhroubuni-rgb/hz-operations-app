@@ -148,7 +148,7 @@ export function WorkLogListPage() {
       }),
       column.accessor('createdAt', {
         header: () => t('workLogs.table.createdAt'),
-        cell: (info) => orgTime.dateTime(info.getValue()),
+        cell: (info) => <span className={styles.nowrap}>{orgTime.dateTime(info.getValue())}</span>,
       }),
     ],
     [names, orgTime],

@@ -25,11 +25,20 @@
   text-decoration: none;
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
 }
 
 .button:hover:not(:disabled) {
   border-color: var(--color-primary);
   color: var(--color-text-primary);
+}
+
+.button:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .button:disabled {
@@ -41,6 +50,7 @@
   border-color: var(--color-primary);
   background: var(--color-primary);
   color: var(--color-on-primary);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--color-primary) 35%, transparent);
 }
 
 .primary:hover:not(:disabled) {
@@ -63,6 +73,11 @@
   border-color: transparent;
   background: none;
   color: var(--color-text-secondary);
+}
+
+.ghost:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--color-surface-raised);
 }
 
 .small {
@@ -102,11 +117,25 @@
   color: var(--color-text-primary);
   font: inherit;
   font-size: var(--font-size-sm);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.control:hover:not(:disabled) {
+  border-color: var(--color-text-secondary);
 }
 
 .control:focus-visible {
-  outline: 2px solid var(--color-primary-hover);
-  outline-offset: 1px;
+  border-color: var(--color-primary);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 28%, transparent);
+}
+
+/* Room for the whole "mm/dd/yyyy" and the calendar button. */
+.control[type='date'],
+.control[type='datetime-local'] {
+  min-inline-size: 9.75rem;
 }
 
 .control[aria-invalid='true'] {
@@ -151,32 +180,38 @@ textarea.control {
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
-  line-height: 1.6;
+  line-height: 1.7;
   white-space: nowrap;
 }
 
+/* Tinted pills: the tone colour for text and edge, a faint wash of it behind. */
 .toneSuccess {
-  border-color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 45%, transparent);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
   color: var(--color-success);
 }
 
 .toneWarning {
-  border-color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
   color: var(--color-warning);
 }
 
 .toneDanger {
-  border-color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 45%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
   color: var(--color-danger);
 }
 
 .toneInfo {
-  border-color: var(--color-info);
+  border-color: color-mix(in srgb, var(--color-info) 45%, transparent);
+  background: color-mix(in srgb, var(--color-info) 10%, transparent);
   color: var(--color-info);
 }
 
 .tonePrimary {
-  border-color: var(--color-primary);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
   color: var(--color-primary);
 }
 
@@ -257,9 +292,9 @@ textarea.control {
 
 .pageTitle {
   margin: 0;
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-semibold);
-  line-height: 1.3;
+  font-size: 1.75rem;
+  font-weight: var(--font-weight-bold);
+  line-height: 1.25;
 }
 
 .pageDescription {
@@ -296,6 +331,7 @@ textarea.control {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .filterGrid {
@@ -303,6 +339,17 @@ textarea.control {
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: var(--space-md);
   align-items: end;
+}
+
+/* The date range takes two columns: two full dates side by side, presets below. */
+.filterGrid > .fieldset {
+  grid-column: span 2;
+}
+
+@media (max-width: 520px) {
+  .filterGrid > .fieldset {
+    grid-column: auto;
+  }
 }
 
 .filterHead {
@@ -332,6 +379,20 @@ textarea.control {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-xs);
+  margin-block-start: var(--space-sm);
+}
+
+.presets .button {
+  min-block-size: 28px;
+  padding-inline: var(--space-md);
+  border-color: var(--color-border);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-xs);
+}
+
+.presets .button:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 /* ---- Pagination ------------------------------------------------------------------------- */

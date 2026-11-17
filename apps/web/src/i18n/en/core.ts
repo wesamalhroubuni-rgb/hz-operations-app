@@ -4,7 +4,6 @@
 export const core = {
   common: {
     appLabel: 'Manager dashboard',
-    poweredBy: 'Powered by Kaneri.ai',
     logoLabel: '{{brand}} logo',
     loading: 'Loading…',
     retry: 'Try again',

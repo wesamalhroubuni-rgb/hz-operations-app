@@ -23,7 +23,6 @@ export const en = {
     notSet: 'Not set',
     required: 'Required',
     optional: 'Optional',
-    poweredBy: 'Powered by Kaneri.ai',
     appLabel: 'Worker app',
     logoLabel: '{{brand}} logo',
   },
@@ -58,6 +57,7 @@ export const en = {
     recentLogsTitle: 'My recent logs',
     noLogs: 'No logs yet. Your first one takes a minute.',
     allLogs: 'All my logs',
+    seeAll: 'See all',
     newLog: 'New log',
     newLogHint: 'Opens the form to log your work',
   },
@@ -250,6 +250,8 @@ export const en = {
 
   // Smart capture (Phase 7, ADR-0010). AI text (transcripts, proposals) is shown as plain text.
   capture: {
+    quickTitle: 'Quick capture',
+    quickHint: 'Speak, snap or type. AI fills in the log for you to check.',
     speak: 'Speak',
     speakHint: 'Record a voice note; a log is proposed for you to check',
     snap: 'Snap',

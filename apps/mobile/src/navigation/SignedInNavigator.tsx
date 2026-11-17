@@ -41,13 +41,13 @@ const TAB_ICONS: Record<keyof TabParamList, [IconName, IconName]> = {
   Profile: ['person-circle', 'person-circle-outline'],
 };
 
-/** The stack headers in a theme's colours. */
+/** The stack headers: the black brand area in every theme, light title, gold back arrow. */
 export function headerOptionsFor(colors: ThemeColors): NativeStackNavigationOptions {
   return {
-    headerStyle: { backgroundColor: colors.background },
-    headerTintColor: colors.primary,
+    headerStyle: { backgroundColor: colors.brandInk },
+    headerTintColor: colors.brandGold,
     headerTitleStyle: {
-      color: colors.textPrimary,
+      color: colors.onBrandInk,
       fontWeight: fontWeights.semibold,
       fontSize: fontSizes.lg,
     },
@@ -72,14 +72,14 @@ function TabNavigator() {
   return (
     <Tabs.Navigator
       screenOptions={({ route }) => ({
-        headerStyle: { backgroundColor: colors.background },
+        headerStyle: { backgroundColor: colors.brandInk },
         headerTitleStyle: {
-          color: colors.textPrimary,
+          color: colors.onBrandInk,
           fontWeight: fontWeights.semibold,
           fontSize: fontSizes.lg,
         },
         headerShadowVisible: false,
-        headerRight: () => <SyncIndicator />,
+        headerRight: () => <SyncIndicator onBrand />,
         sceneStyle: { backgroundColor: colors.background },
         tabBarStyle: {
           height: tabBarHeight,
@@ -97,7 +97,12 @@ function TabNavigator() {
         ),
       })}
     >
-      <Tabs.Screen name="Home" component={HomeScreen} options={{ title: t('tabs.home') }} />
+      <Tabs.Screen
+        name="Home"
+        component={HomeScreen}
+        // Home draws its own brand band (logo, organization, sync status) instead of a header.
+        options={{ title: t('tabs.home'), headerShown: false }}
+      />
       <Tabs.Screen
         name="Tasks"
         component={TasksScreen}

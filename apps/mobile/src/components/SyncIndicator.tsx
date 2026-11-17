@@ -16,7 +16,7 @@ import { useSync } from './SyncProvider';
  * waiting N / sending / not accepted N / offline / sign in again. Nothing while everything is
  * sent and online. Tapping it opens the Sync screen. Hidden without an offline layer.
  */
-export function SyncIndicator() {
+export function SyncIndicator({ onBrand = false }: Readonly<{ onBrand?: boolean }>) {
   const { available, status } = useSync();
   const navigation = useNavigation();
   const { colors } = useTheme();
@@ -31,7 +31,13 @@ export function SyncIndicator() {
       accessibilityLiveRegion="polite"
       hitSlop={spacing.sm}
       onPress={() => navigation.navigate('Sync')}
-      style={({ pressed }) => [styles.box, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.box,
+        // On the black brand band the status sits on a pill of the theme's surface, where its
+        // colours keep their contrast.
+        onBrand && [styles.pill, { backgroundColor: colors.surface }],
+        pressed && styles.pressed,
+      ]}
     >
       <Ionicons name={view.icon} size={iconSize.sm} color={color} />
       <Text style={[styles.label, { color }]} numberOfLines={1}>
@@ -49,6 +55,10 @@ const styles = StyleSheet.create({
     minHeight: touch.min,
     paddingHorizontal: spacing.md,
     maxWidth: 200,
+  },
+  pill: {
+    minHeight: 36,
+    borderRadius: 999,
   },
   pressed: {
     opacity: 0.7,

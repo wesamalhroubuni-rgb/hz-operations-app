@@ -7,6 +7,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 import { AnomalyPanel, LatestSummaryPanel } from '@/components/ai/summary-panels';
 import { Button } from '@/components/ui/button';
+import { Icon, type IconName } from '@/components/ui/icons';
 import { FormField, Input } from '@/components/ui/form-field';
 import { PageHeader } from '@/components/ui/layout';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
@@ -16,7 +17,13 @@ import { requireApiClient } from '@/lib/api/client';
 import { unwrap } from '@/lib/api/errors';
 import { queryKeys } from '@/lib/api/query';
 import { hrefWithFilter } from '@/lib/list-params';
-import { overviewCards, placeRows, WORK_LOGS_LIST_PATH, type PlaceRow } from '@/lib/overview';
+import {
+  overviewCards,
+  placeRows,
+  WORK_LOGS_LIST_PATH,
+  type OverviewCardKey,
+  type PlaceRow,
+} from '@/lib/overview';
 
 import styles from './overview.module.css';
 
@@ -111,6 +118,9 @@ function OverviewContent({ data }: Readonly<{ data: DashboardOverview }>) {
                   count: formatNumber(card.count),
                 })}
               >
+                <span className={styles.cardIcon}>
+                  <Icon name={CARD_ICONS[card.key]} size={18} />
+                </span>
                 <span className={styles.cardCount}>{formatNumber(card.count)}</span>
                 <span className={styles.cardLabel}>{card.label}</span>
               </Link>
@@ -132,6 +142,14 @@ function OverviewContent({ data }: Readonly<{ data: DashboardOverview }>) {
     </>
   );
 }
+
+const CARD_ICONS: Record<OverviewCardKey, IconName> = {
+  logsToday: 'workLogs',
+  logsAwaitingApproval: 'inbox',
+  tasksOpen: 'tasks',
+  tasksOverdue: 'clock',
+  tasksBlocked: 'blocked',
+};
 
 function PlaceTable({ title, rows }: Readonly<{ title: string; rows: PlaceRow[] }>) {
   return (

@@ -1,5 +1,6 @@
 import { darkTheme, lightTheme } from '@ops/shared';
 import type { Metadata, Viewport } from 'next';
+import { Inter } from 'next/font/google';
 import type { ReactNode } from 'react';
 
 import { AuthProvider } from '@/components/auth-provider';
@@ -35,10 +36,14 @@ export const viewport: Viewport = {
 // (`lib/theme.ts`), applied before the first paint by the inline script.
 const themeStyles = themeStylesheet();
 
+// Inter, self-hosted by Next.js at build time (no request to Google from the browser). Latin
+// Extended covers Turkish.
+const sans = Inter({ subsets: ['latin', 'latin-ext'], variable: '--font-sans', display: 'swap' });
+
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     // The init script may set data-theme before React hydrates.
-    <html lang={LOCALE} dir={DIRECTION} suppressHydrationWarning>
+    <html lang={LOCALE} dir={DIRECTION} className={sans.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <style>{themeStyles}</style>

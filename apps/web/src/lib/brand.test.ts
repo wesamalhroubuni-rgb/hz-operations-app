@@ -27,12 +27,11 @@ describe('brand', () => {
     expect(brand.name).toBe('Operations');
   });
 
-  it('credits the builder only in the powered-by line', async () => {
+  it('names only the client: no builder credit in the published app', async () => {
     vi.stubEnv('NEXT_PUBLIC_BRAND_NAME', 'Acme');
 
     const brand = await loadBrand();
 
-    expect(brand.poweredBy).toBe('Powered by Kaneri.ai');
-    expect(JSON.stringify({ ...brand, poweredBy: '' })).not.toMatch(/kaneri/i);
+    expect(JSON.stringify(brand)).not.toMatch(/kaneri|powered by/i);
   });
 });

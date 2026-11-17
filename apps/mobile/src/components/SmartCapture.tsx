@@ -1,55 +1,77 @@
-import { spacing } from '@ops/shared';
-import { View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { radii, spacing } from '@ops/shared';
+import { Pressable, View } from 'react-native';
 
 import type { CaptureView } from '../data/queries';
 import { formatDateTime, t, type TranslationKey } from '../i18n';
 import { syncText } from '../i18n/syncText';
 import { captureState, transcriptOf, type CaptureState } from '../logic/smartCapture';
 import { reasonText } from '../logic/sync';
-import { makeStyles } from '../theme';
+import { makeStyles, useTheme } from '../theme';
 import { AppText } from './AppText';
 import { Badge } from './Badge';
-import { Button } from './Button';
+import { Button, type IconName } from './Button';
 import { Card } from './Card';
+import { iconSize } from './sizes';
 
 // Smart capture pieces (Phase 7, ADR-0010). Whatever the AI produced (transcripts, proposals) is
 // rendered as plain text, never as markup or links.
 
 export type CaptureKind = 'voice' | 'photo' | 'text';
 
-/** "Speak", "Snap" and "Type a note". Shown only when the organization switched them on. */
+const CAPTURE_TILES: readonly {
+  kind: CaptureKind;
+  icon: IconName;
+  label: TranslationKey;
+  hint: TranslationKey;
+}[] = [
+  { kind: 'voice', icon: 'mic-outline', label: 'capture.speak', hint: 'capture.speakHint' },
+  { kind: 'photo', icon: 'camera-outline', label: 'capture.snap', hint: 'capture.snapHint' },
+  { kind: 'text', icon: 'create-outline', label: 'capture.type', hint: 'capture.typeHint' },
+];
+
+/**
+ * "Speak", "Snap" and "Type a note" as one card of three equal tiles (icon above a one-line
+ * label). Shown only when the organization switched smart capture on.
+ */
 export function SmartCaptureButtons({ onPick }: Readonly<{ onPick: (kind: CaptureKind) => void }>) {
   const styles = useStyles();
+  const { colors } = useTheme();
   return (
-    <View style={styles.buttons}>
-      <View style={styles.flex}>
-        <Button
-          variant="secondary"
-          icon="mic-outline"
-          label={t('capture.speak')}
-          accessibilityHint={t('capture.speakHint')}
-          onPress={() => onPick('voice')}
-        />
+    <Card>
+      <View style={styles.row}>
+        <Ionicons name="sparkles-outline" size={iconSize.sm} color={colors.primary} />
+        <AppText variant="bodyStrong" style={styles.flex}>
+          {t('capture.quickTitle')}
+        </AppText>
       </View>
-      <View style={styles.flex}>
-        <Button
-          variant="secondary"
-          icon="camera-outline"
-          label={t('capture.snap')}
-          accessibilityHint={t('capture.snapHint')}
-          onPress={() => onPick('photo')}
-        />
+      <AppText variant="small">{t('capture.quickHint')}</AppText>
+      <View style={styles.tiles}>
+        {CAPTURE_TILES.map((tile) => (
+          <Pressable
+            key={tile.kind}
+            accessibilityRole="button"
+            accessibilityLabel={t(tile.label)}
+            accessibilityHint={t(tile.hint)}
+            onPress={() => onPick(tile.kind)}
+            style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
+          >
+            <View style={[styles.tileIcon, { backgroundColor: `${colors.primary}1F` }]}>
+              <Ionicons name={tile.icon} size={iconSize.md} color={colors.primary} />
+            </View>
+            <AppText
+              variant="label"
+              style={styles.tileLabel}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
+            >
+              {t(tile.label)}
+            </AppText>
+          </Pressable>
+        ))}
       </View>
-      <View style={styles.flex}>
-        <Button
-          variant="secondary"
-          icon="create-outline"
-          label={t('capture.type')}
-          accessibilityHint={t('capture.typeHint')}
-          onPress={() => onPick('text')}
-        />
-      </View>
-    </View>
+    </Card>
   );
 }
 
@@ -163,9 +185,38 @@ const useStyles = makeStyles((colors) => ({
   flex: {
     flex: 1,
   },
-  buttons: {
+  tiles: {
     flexDirection: 'row',
     gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  tile: {
+    flex: 1,
+    minHeight: 88,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    backgroundColor: colors.background,
+  },
+  tilePressed: {
+    borderColor: colors.primary,
+    backgroundColor: colors.surfaceRaised,
+  },
+  tileIcon: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.pill,
+  },
+  tileLabel: {
+    color: colors.textPrimary,
+    textAlign: 'center',
   },
   row: {
     flexDirection: 'row',

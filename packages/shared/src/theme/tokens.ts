@@ -50,6 +50,18 @@ export interface ThemeColors {
   danger: string;
   /** Informational and "in progress / pending" states. */
   info: string;
+
+  /**
+   * The brand area (the dashboard's sidebar, the phone's top band and sign-in hero): the logo's
+   * own black in every theme, so the logo sits on it without a visible tile.
+   */
+  brandInk: string;
+  /** Text and icons on randInk. */
+  onBrandInk: string;
+  /** Secondary text on randInk. */
+  onBrandInkMuted: string;
+  /** A raised or selected item on randInk (the active sidebar link). */
+  brandInkRaised: string;
 }
 
 export interface Theme {
@@ -87,6 +99,11 @@ export const darkTheme: Theme = {
     warning: '#F5A04A',
     danger: '#FF6B6E',
     info: '#6CB6FF',
+
+    brandInk: '#000000',
+    onBrandInk: '#F5F1E8',
+    onBrandInkMuted: '#B3AC9F',
+    brandInkRaised: '#1C1A17',
   },
 };
 
@@ -124,6 +141,11 @@ export const lightTheme: Theme = {
     warning: '#9A4F06',
     danger: '#B42318',
     info: '#1F64AD',
+
+    brandInk: '#000000',
+    onBrandInk: '#F5F1E8',
+    onBrandInkMuted: '#B3AC9F',
+    brandInkRaised: '#1C1A17',
   },
 };
 
@@ -227,6 +249,15 @@ export const CONTRAST_REQUIREMENTS: readonly ContrastRequirement[] = [
     minimum: WCAG_AA.normalText,
     use: 'text on a hovered primary button',
   },
+  ...(['onBrandInk', 'onBrandInkMuted', 'brandGold'] as const).flatMap(
+    (foreground): ContrastRequirement[] =>
+      (['brandInk', 'brandInkRaised'] as const).map((background) => ({
+        foreground,
+        background,
+        minimum: WCAG_AA.normalText,
+        use: 'text in the brand area',
+      })),
+  ),
   ...(['background', 'surface'] as const).flatMap((background): ContrastRequirement[] => [
     {
       foreground: 'borderStrong',
